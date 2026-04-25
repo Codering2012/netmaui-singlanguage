@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 18
+VisualStudioVersion = 18.4.11620.152
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SignLanguageApi", "SignLanguageApi.csproj", "{C20E6426-1363-4B88-8F65-71CEBDEDF1A1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SignLanguageApi.UnitTests", "..\SignLanguageApi.UnitTests\SignLanguageApi.UnitTests.csproj", "{E3E0EE9B-BF73-48EB-9269-1D23BFC2341B}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{C20E6426-1363-4B88-8F65-71CEBDEDF1A1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C20E6426-1363-4B88-8F65-71CEBDEDF1A1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C20E6426-1363-4B88-8F65-71CEBDEDF1A1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C20E6426-1363-4B88-8F65-71CEBDEDF1A1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E3E0EE9B-BF73-48EB-9269-1D23BFC2341B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E3E0EE9B-BF73-48EB-9269-1D23BFC2341B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E3E0EE9B-BF73-48EB-9269-1D23BFC2341B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E3E0EE9B-BF73-48EB-9269-1D23BFC2341B}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {685D92E3-CA6D-46D2-A9FC-7B21B9311A92}
+	EndGlobalSection
+EndGlobal

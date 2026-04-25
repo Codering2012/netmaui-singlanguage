@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:SignLanguageApp.ViewModels"
+             xmlns:toolkit="http://schemas.microsoft.com/dotnet/2022/maui/toolkit"
+             x:Class="SignLanguageApp.Pages.CameraTranslationPage"
+             x:Name="PageRoot"
+             x:DataType="vm:CameraTranslationViewModel"
+             Title="Camera"
+             BackgroundColor="#000000">
+
+    <Grid RowDefinitions="*,Auto" RowSpacing="0">
+
+        <Grid Grid.Row="0" x:Name="CameraContainer" BackgroundColor="Black">
+            <toolkit:CameraView x:Name="CameraView"
+                                VerticalOptions="Fill"
+                                HorizontalOptions="Fill" />
+
+            <GraphicsView x:Name="SkeletalOverlay"
+                          VerticalOptions="Fill"
+                          HorizontalOptions="Fill"
+                          BackgroundColor="Transparent"
+                          Drawable="{Binding Drawable}" />
+
+            <VerticalStackLayout Padding="14,18,14,10" Spacing="8" VerticalOptions="Start">
+                <Border StrokeThickness="0" Background="#8A06111C" StrokeShape="RoundRectangle 10" Padding="12,8">
+                    <Label Text="{Binding TranslatedText}"
+                           FontSize="18"
+                           FontAttributes="Bold"
+                           TextColor="White"
+                           LineBreakMode="TailTruncation" />
+                </Border>
+
+                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                    <Border Grid.Column="0" StrokeThickness="0" Background="#8A06111C" StrokeShape="RoundRectangle 8" Padding="10,6">
+                        <Label Text="Live" FontSize="11" TextColor="#D0E5F3" FontAttributes="Bold" />
+                    </Border>
+                    <Border Grid.Column="1" StrokeThickness="0" Background="#8A06111C" StrokeShape="RoundRectangle 8" Padding="10,6">
+                        <Label Text="{Binding ConfidenceText, TargetNullValue='Confidence: --'}" FontSize="11" TextColor="#D0E5F3" />
+                    </Border>
+                </Grid>
+            </VerticalStackLayout>
+
+            <ActivityIndicator IsRunning="{Binding IsProcessing}"
+                               IsVisible="{Binding IsProcessing}"
+                               Color="White"
+                               HorizontalOptions="Center"
+                               VerticalOptions="Center" />
+        </Grid>
+
+        <Border Grid.Row="1"
+                StrokeThickness="0"
+                Background="#CC0C1C2C"
+                StrokeShape="RoundRectangle 0"
+                Padding="12,10">
+            <VerticalStackLayout Spacing="10">
+                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+                    <Label Grid.Column="0"
+                           Text="NPU"
+                           FontSize="11"
+                           TextColor="#C4DCED"
+                           VerticalOptions="Center" />
+                    <Switch Grid.Column="1"
+                            HorizontalOptions="Start"
+                            IsToggled="{Binding UseNpuAcceleration}"
+                            OnColor="{StaticResource Primary}" />
+                    <Label Grid.Column="2"
+                           Text="{Binding FrameRate}"
+                           FontSize="11"
+                           TextColor="#A7C7DC"
+                           VerticalOptions="Center" />
+                </Grid>
+
+                <Grid ColumnDefinitions="*,*,*" ColumnSpacing="8">
+                    <Button Grid.Column="0"
+                            x:Name="StartButton"
+                            Text="Start"
+                            Clicked="OnStartClicked"
+                            BackgroundColor="{StaticResource Primary}"
+                            TextColor="White"
+                            FontAttributes="Bold"
+                            FontSize="11"
+                            Padding="12,8" />
+                    <Button Grid.Column="1"
+                            Text="{Binding IsFrameFrozen, Converter={StaticResource BoolToTextConverter}}"
+                            Command="{Binding FreezeFrameCommand}"
+                            BackgroundColor="{Binding IsFrameFrozen, Converter={StaticResource BoolToColorConverter}}"
+                            TextColor="White"
+                            FontAttributes="Bold"
+                            FontSize="11"
+                            Padding="12,8" />
+                    <Button Grid.Column="2"
+                            x:Name="StopButton"
+                            Text="Stop"
+                            Clicked="OnStopClicked"
+                            BackgroundColor="#C2410C"
+                            TextColor="White"
+                            FontAttributes="Bold"
+                            FontSize="11"
+                            Padding="12,8" />
+                </Grid>
+            </VerticalStackLayout>
+        </Border>
+    </Grid>
+</ContentPage>

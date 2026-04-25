@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:SignLanguageApp.ViewModels"
+             x:Class="SignLanguageApp.Pages.RegisterPage"
+             x:DataType="vm:RegisterViewModel"
+             Title="Register"
+             BackgroundColor="{StaticResource ColorBackgroundDark}">
+
+    <Grid>
+        <Grid.Background>
+            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                <GradientStop Color="#06101A" Offset="0" />
+                <GradientStop Color="#132A3C" Offset="0.6" />
+                <GradientStop Color="#1D4A61" Offset="1" />
+            </LinearGradientBrush>
+        </Grid.Background>
+
+        <ScrollView>
+            <VerticalStackLayout Padding="22,36,22,24" Spacing="16">
+                <Border StrokeThickness="0" Background="#183148CC" StrokeShape="RoundRectangle 22" Padding="22">
+                    <VerticalStackLayout Spacing="12">
+                        <VerticalStackLayout Spacing="6">
+                            <Label Text="Create account" FontSize="30" FontAttributes="Bold" TextColor="White" />
+                            <Label Text="Join and keep your learning streak active" FontSize="13" TextColor="#BFD7E8" />
+                        </VerticalStackLayout>
+
+                        <VerticalStackLayout Spacing="4">
+                            <Label Text="Full name" TextColor="#D7E8F5" FontAttributes="Bold" FontSize="12" />
+                            <Border Background="#0D1A28" Stroke="#26435E" StrokeThickness="1" StrokeShape="RoundRectangle 10" Padding="12,8">
+                                <Entry Text="{Binding Name}"
+                                       Placeholder="Your name"
+                                       TextColor="White"
+                                       PlaceholderColor="#7FA0B7"
+                                       BackgroundColor="Transparent"
+                                       IsTextPredictionEnabled="False"
+                                       IsSpellCheckEnabled="False" />
+                            </Border>
+                        </VerticalStackLayout>
+
+                        <VerticalStackLayout Spacing="4">
+                            <Label Text="Email" TextColor="#D7E8F5" FontAttributes="Bold" FontSize="12" />
+                            <Border Background="#0D1A28" Stroke="#26435E" StrokeThickness="1" StrokeShape="RoundRectangle 10" Padding="12,8">
+                                <Entry Text="{Binding Email}"
+                                       Placeholder="name@example.com"
+                                       Keyboard="Email"
+                                       TextColor="White"
+                                       PlaceholderColor="#7FA0B7"
+                                       BackgroundColor="Transparent"
+                                       IsTextPredictionEnabled="False"
+                                       IsSpellCheckEnabled="False" />
+                            </Border>
+                        </VerticalStackLayout>
+
+                        <VerticalStackLayout Spacing="4">
+                            <Label Text="Password" TextColor="#D7E8F5" FontAttributes="Bold" FontSize="12" />
+                            <Border Background="#0D1A28" Stroke="#26435E" StrokeThickness="1" StrokeShape="RoundRectangle 10" Padding="12,8">
+                                <Entry Text="{Binding Password}"
+                                       Placeholder="At least 6 characters"
+                                       IsPassword="True"
+                                       TextColor="White"
+                                       PlaceholderColor="#7FA0B7"
+                                       BackgroundColor="Transparent"
+                                       IsTextPredictionEnabled="False"
+                                       IsSpellCheckEnabled="False" />
+                            </Border>
+                        </VerticalStackLayout>
+
+                        <VerticalStackLayout Spacing="4">
+                            <Label Text="Confirm password" TextColor="#D7E8F5" FontAttributes="Bold" FontSize="12" />
+                            <Border Background="#0D1A28" Stroke="#26435E" StrokeThickness="1" StrokeShape="RoundRectangle 10" Padding="12,8">
+                                <Entry Text="{Binding ConfirmPassword}"
+                                       Placeholder="Re-enter password"
+                                       IsPassword="True"
+                                       TextColor="White"
+                                       PlaceholderColor="#7FA0B7"
+                                       BackgroundColor="Transparent"
+                                       IsTextPredictionEnabled="False"
+                                       IsSpellCheckEnabled="False" />
+                            </Border>
+                        </VerticalStackLayout>
+
+                        <Label Text="{Binding ErrorMessage}"
+                               TextColor="#FCA5A5"
+                               FontSize="12"
+                               IsVisible="{Binding HasError}"
+                               LineBreakMode="WordWrap" />
+
+                        <Label Text="{Binding SuccessMessage}"
+                               TextColor="#86EFAC"
+                               FontSize="12"
+                               IsVisible="{Binding HasSuccess}"
+                               LineBreakMode="WordWrap" />
+
+                        <Button Text="Create account"
+                                Command="{Binding RegisterCommand}"
+                                BackgroundColor="{StaticResource Primary}"
+                                TextColor="White"
+                                FontAttributes="Bold"
+                                Margin="0,4,0,0" />
+
+                        <ActivityIndicator IsVisible="{Binding IsLoading}"
+                                           IsRunning="{Binding IsLoading}"
+                                           HorizontalOptions="Center"
+                                           Color="White" />
+                    </VerticalStackLayout>
+                </Border>
+
+                <Border StrokeThickness="0" Background="#0D2234B3" StrokeShape="RoundRectangle 16" Padding="14,10">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10" VerticalOptions="Center">
+                        <Label Grid.Column="0"
+                               Text="Already have an account?"
+                               TextColor="#BFD7E8"
+                               VerticalOptions="Center"
+                               FontSize="12" />
+                        <Button Grid.Column="1"
+                                Text="Login"
+                                Command="{Binding LoginCommand}"
+                                BackgroundColor="#1E8B8A"
+                                TextColor="White"
+                                FontSize="12"
+                                FontAttributes="Bold"
+                                Padding="14,8" />
+                    </Grid>
+                </Border>
+            </VerticalStackLayout>
+        </ScrollView>
+    </Grid>
+</ContentPage>

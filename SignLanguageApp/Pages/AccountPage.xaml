@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:SignLanguageApp.ViewModels"
+             x:Class="SignLanguageApp.Pages.AccountPage"
+             x:DataType="vm:AccountViewModel"
+             Title="Profile"
+             BackgroundColor="{StaticResource ColorBackgroundDark}">
+
+    <Grid>
+        <ScrollView>
+            <VerticalStackLayout Spacing="16" Padding="16,10,16,24">
+
+                <Border StrokeThickness="0" Background="#123247" StrokeShape="RoundRectangle 20" Padding="18">
+                    <VerticalStackLayout Spacing="12">
+                        <Grid ColumnDefinitions="70,*" ColumnSpacing="12">
+                            <Border Grid.Column="0" StrokeThickness="0" Background="#0B1F2F" StrokeShape="RoundRectangle 35" HeightRequest="70" WidthRequest="70">
+                                <Image Source="{Binding UserAvatar}" Aspect="AspectFill" />
+                            </Border>
+                            <VerticalStackLayout Grid.Column="1" Spacing="2" VerticalOptions="Center">
+                                <Label Text="{Binding UserName, TargetNullValue='Learner'}" FontSize="20" FontAttributes="Bold" TextColor="White" />
+                                <Label Text="{Binding UserEmail, TargetNullValue='user@domain.com'}" FontSize="12" TextColor="#BFD7E8" />
+                            </VerticalStackLayout>
+                        </Grid>
+
+                        <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
+                            <Button Grid.Column="0" Text="Edit profile" Command="{Binding EditProfileCommand}" BackgroundColor="White" TextColor="#0D2A3E" FontAttributes="Bold" FontSize="12" />
+                            <Button Grid.Column="1" Text="Logout" Command="{Binding LogoutCommand}" BackgroundColor="#C2410C" TextColor="White" FontAttributes="Bold" FontSize="12" />
+                        </Grid>
+                    </VerticalStackLayout>
+                </Border>
+
+                <Grid ColumnDefinitions="*,*,*" ColumnSpacing="10">
+                    <Border Grid.Column="0" StrokeThickness="0" Background="#0D2335" StrokeShape="RoundRectangle 12" Padding="10">
+                        <VerticalStackLayout Spacing="2">
+                            <Label Text="Streak" FontSize="11" TextColor="#87A7BE" />
+                            <Label Text="{Binding CurrentStreak, StringFormat='{0} days'}" FontSize="16" FontAttributes="Bold" TextColor="White" />
+                        </VerticalStackLayout>
+                    </Border>
+                    <Border Grid.Column="1" StrokeThickness="0" Background="#0D2335" StrokeShape="RoundRectangle 12" Padding="10">
+                        <VerticalStackLayout Spacing="2">
+                            <Label Text="XP" FontSize="11" TextColor="#87A7BE" />
+                            <Label Text="{Binding TotalXp, StringFormat='{0:N0}'}" FontSize="16" FontAttributes="Bold" TextColor="White" />
+                        </VerticalStackLayout>
+                    </Border>
+                    <Border Grid.Column="2" StrokeThickness="0" Background="#0D2335" StrokeShape="RoundRectangle 12" Padding="10">
+                        <VerticalStackLayout Spacing="2">
+                            <Label Text="Signs" FontSize="11" TextColor="#87A7BE" />
+                            <Label Text="{Binding TotalSignsLearned}" FontSize="16" FontAttributes="Bold" TextColor="White" />
+                        </VerticalStackLayout>
+                    </Border>
+                </Grid>
+
+                <Border StrokeThickness="0" Background="#10283A" StrokeShape="RoundRectangle 14" Padding="14">
+                    <VerticalStackLayout Spacing="10">
+                        <Label Text="Diagnostics" FontSize="15" FontAttributes="Bold" TextColor="White" />
+                        <Label Text="{Binding LastSyncTime, StringFormat='Last sync: {0}'}" FontSize="12" TextColor="#98B8CD" />
+
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                            <Label Grid.Column="0" Text="CPU usage" FontSize="12" TextColor="#A4C3D7" VerticalOptions="Center" />
+                            <Label Grid.Column="1" Text="{Binding CpuUsage, StringFormat='{0:P0}'}" FontSize="12" TextColor="White" VerticalOptions="Center" />
+                        </Grid>
+                        <ProgressBar Progress="{Binding CpuUsage}" ProgressColor="{StaticResource Accent}" BackgroundColor="#2B4359" HeightRequest="6" />
+
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                            <Label Grid.Column="0" Text="NPU usage" FontSize="12" TextColor="#A4C3D7" VerticalOptions="Center" />
+                            <Label Grid.Column="1" Text="{Binding NpuUsage, StringFormat='{0:P0}'}" FontSize="12" TextColor="White" VerticalOptions="Center" />
+                        </Grid>
+                        <ProgressBar Progress="{Binding NpuUsage}" ProgressColor="{StaticResource Primary}" BackgroundColor="#2B4359" HeightRequest="6" />
+
+                        <Button Text="Refresh diagnostics" Command="{Binding RefreshDiagnosticsCommand}" BackgroundColor="#1D4A61" TextColor="White" FontAttributes="Bold" FontSize="12" HorizontalOptions="Start" Padding="14,8" />
+                    </VerticalStackLayout>
+                </Border>
+
+                <Border StrokeThickness="0" Background="#0F2233" StrokeShape="RoundRectangle 14" Padding="14">
+                    <VerticalStackLayout Spacing="12">
+                        <Label Text="Preferences" FontSize="15" FontAttributes="Bold" TextColor="White" />
+
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                            <Label Grid.Column="0" Text="High contrast mode" FontSize="12" TextColor="#A4C3D7" VerticalOptions="Center" />
+                            <Switch Grid.Column="1" IsToggled="{Binding IsHighContrastEnabled}" OnColor="{StaticResource Primary}" />
+                        </Grid>
+
+                        <VerticalStackLayout Spacing="4">
+                            <Label Text="Haptic intensity" FontSize="12" TextColor="#A4C3D7" />
+                            <Slider Minimum="0" Maximum="1" Value="{Binding HapticIntensity}" />
+                        </VerticalStackLayout>
+
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                            <Label Grid.Column="0" Text="Strict local processing" FontSize="12" TextColor="#A4C3D7" VerticalOptions="Center" />
+                            <Switch Grid.Column="1" IsToggled="{Binding IsStrictLocalProcessing}" OnColor="{StaticResource Primary}" />
+                        </Grid>
+
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                            <Label Grid.Column="0" Text="Gesture data contribution" FontSize="12" TextColor="#A4C3D7" VerticalOptions="Center" />
+                            <Switch Grid.Column="1" IsToggled="{Binding IsGestureContributionEnabled}" OnColor="{StaticResource Primary}" />
+                        </Grid>
+                    </VerticalStackLayout>
+                </Border>
+
+                <Border StrokeThickness="0" Background="#0C1A29" StrokeShape="RoundRectangle 14" Padding="14">
+                    <VerticalStackLayout Spacing="10">
+                        <Label Text="Data and privacy" FontSize="15" FontAttributes="Bold" TextColor="White" />
+                        <Button Text="Export learning data" Command="{Binding ExportDataCommand}" BackgroundColor="#1D4A61" TextColor="White" FontSize="12" FontAttributes="Bold" HorizontalOptions="Fill" />
+                        <Button Text="Privacy policy" Command="{Binding ViewPrivacyPolicyCommand}" BackgroundColor="Transparent" TextColor="#9EC0D7" BorderColor="#27445E" BorderWidth="1" FontSize="12" />
+                    </VerticalStackLayout>
+                </Border>
+
+            </VerticalStackLayout>
+        </ScrollView>
+
+        <ActivityIndicator IsVisible="{Binding IsLoading}"
+                           IsRunning="{Binding IsLoading}"
+                           HorizontalOptions="Center"
+                           VerticalOptions="Center"
+                           Color="{StaticResource Primary}"
+                           Scale="1.3" />
+    </Grid>
+</ContentPage>

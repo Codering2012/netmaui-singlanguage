@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<Shell
+    x:Class="SignLanguageApp.AppShell"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:pages="clr-namespace:SignLanguageApp.Pages"
+    Title="SignLanguageApp"
+    FlyoutBehavior="Disabled"
+    BackgroundColor="#07121D"
+    ForegroundColor="White"
+    Shell.NavBarHasShadow="False"
+    Shell.TabBarBackgroundColor="#0A1A29"
+    Shell.TabBarForegroundColor="#0EA5A4"
+    Shell.TabBarTitleColor="#E6F1FA"
+    Shell.TabBarUnselectedColor="#86A7BE">
+
+    <TabBar>
+        <Tab Title="Home" Icon="home.png">
+            <ShellContent Title="Home" ContentTemplate="{DataTemplate pages:HomePage}" Route="home" />
+        </Tab>
+        <Tab Title="Videos" Icon="videos.png">
+            <ShellContent Title="Videos" ContentTemplate="{DataTemplate pages:VideosPage}" Route="videos" />
+        </Tab>
+        <Tab Title="Profile" Icon="profile.png">
+            <ShellContent Title="Profile" ContentTemplate="{DataTemplate pages:AccountPage}" Route="profile" />
+        </Tab>
+        <Tab Title="Learn" Icon="learn.png">
+            <ShellContent Title="Learn" ContentTemplate="{DataTemplate pages:LearnPage}" Route="learn" />
+        </Tab>
+        <Tab Title="Translation" Icon="translate.png">
+            <ShellContent Title="Translation" ContentTemplate="{DataTemplate pages:CameraTranslationPage}" Route="translation" />
+        </Tab>
+    </TabBar>
+
+</Shell>

@@ -1,0 +1,80 @@
+﻿<?xml version="1.0" encoding="UTF-8" ?>
+<?xaml-comp compile="true" ?>
+<ResourceDictionary 
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml">
+
+    <!-- Modern Gradient Color Palette -->
+    <Color x:Key="Primary">#0EA5A4</Color>
+    <Color x:Key="PrimaryLight">#2DD4BF</Color>
+    <Color x:Key="Secondary">#FB923C</Color>
+    <Color x:Key="SecondaryLight">#FDBA74</Color>
+    <Color x:Key="Accent">#38BDF8</Color>
+    <Color x:Key="AccentLight">#7DD3FC</Color>
+
+    <!-- Backgrounds -->
+    <Color x:Key="ColorBackgroundLight">#FFFFFF</Color>
+    <Color x:Key="ColorBackgroundDark">#07121D</Color>
+    <Color x:Key="ColorCardLight">#F8FAFC</Color>
+    <Color x:Key="ColorCardDark">#132235</Color>
+
+    <!-- Text Colors -->
+    <Color x:Key="ColorTextLight">#1E293B</Color>
+    <Color x:Key="ColorTextDark">#E6F1FA</Color>
+    <Color x:Key="White">#FFFFFF</Color>
+
+    <!-- Grays -->
+    <Color x:Key="Gray100">#F8FAFC</Color>
+    <Color x:Key="Gray200">#E2E8F0</Color>
+    <Color x:Key="Gray300">#CBD5E1</Color>
+    <Color x:Key="Gray400">#94A3B8</Color>
+    <Color x:Key="Gray500">#64748B</Color>
+    <Color x:Key="Gray600">#35506A</Color>
+    <Color x:Key="Gray900">#0B1A29</Color>
+    <Color x:Key="Gray950">#05101A</Color>
+
+    <!-- Legacy Support -->
+    <Color x:Key="MidnightBlue">#0B1A29</Color>
+    <Color x:Key="PrimaryDark">#123549</Color>
+    <Color x:Key="PrimaryDarkText">#D9ECF7</Color>
+    <Color x:Key="SecondaryDarkText">#86A7BE</Color>
+    <Color x:Key="Magenta">#FB923C</Color>
+    <Color x:Key="OffBlack">#07121D</Color>
+    <Color x:Key="Black">#000000</Color>
+    <Color x:Key="SlateBlueDark">#132235</Color>
+    <Color x:Key="IcyGray">#07121D</Color>
+    <Color x:Key="OffWhite">#F1F5F9</Color>
+
+    <!-- Gradient Palette -->
+    <Color x:Key="SpaceCadet">#07121D</Color>
+    <Color x:Key="SlateGray">#35506A</Color>
+    <Color x:Key="TanColor">#86A7BE</Color>
+    <Color x:Key="WhiteColor">#FFFFFF</Color>
+
+    <!-- Brushes -->
+    <SolidColorBrush x:Key="PrimaryBrush" Color="{StaticResource Primary}"/>
+    <SolidColorBrush x:Key="BackgroundBrush" Color="{AppThemeBinding Light={StaticResource ColorBackgroundLight}, Dark={StaticResource ColorBackgroundDark}}"/>
+    <SolidColorBrush x:Key="CardBrush" Color="{AppThemeBinding Light={StaticResource ColorCardLight}, Dark={StaticResource ColorCardDark}}"/>
+    <SolidColorBrush x:Key="TextBrush" Color="{AppThemeBinding Light={StaticResource ColorTextLight}, Dark={StaticResource ColorTextDark}}"/>
+
+    <!-- Styles -->
+    <Style x:Key="AppShellStyle" TargetType="Shell">
+        <Setter Property="BackgroundColor" Value="{StaticResource BackgroundBrush}" />
+        <Setter Property="ForegroundColor" Value="{StaticResource TextBrush}" />
+    </Style>
+
+    <Style TargetType="ContentPage">
+        <Setter Property="BackgroundColor" Value="{StaticResource BackgroundBrush}" />
+    </Style>
+
+    <Style x:Key="CardFrame" TargetType="Border">
+        <Setter Property="Background" Value="{StaticResource CardBrush}" />
+        <Setter Property="Padding" Value="12" />
+        <Setter Property="StrokeShape">
+            <Setter.Value>
+                <RoundRectangle CornerRadius="12" />
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+</ResourceDictionary>

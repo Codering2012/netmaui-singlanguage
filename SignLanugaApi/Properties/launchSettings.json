@@ -1,0 +1,30 @@
+  {
+    "profiles": {
+      "http": {
+        "commandName": "Project",
+        "environmentVariables": {
+          "ASPNETCORE_ENVIRONMENT": "Development"
+        },
+        "dotnetRunMessages": true,
+        "applicationUrl": "http://0.0.0.0:5179"
+      },
+      "https": {
+        "commandName": "Project",
+        "environmentVariables": {
+          "ASPNETCORE_ENVIRONMENT": "Development"
+        },
+        "dotnetRunMessages": true,
+        "applicationUrl": "https://0.0.0.0:7084;http://0.0.0.0:5179"
+      },
+      "WSL": {
+        "commandName": "WSL2",
+        "launchUrl": "https://localhost:7084",
+        "environmentVariables": {
+          "ASPNETCORE_ENVIRONMENT": "Development",
+          "ASPNETCORE_URLS": "https://0.0.0.0:7084;http://0.0.0.0:5179"
+        },
+        "distributionName": ""
+      }
+    },
+    "$schema": "https://json.schemastore.org/launchsettings.json"
+  }

@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:SignLanguageApp.ViewModels"
+             x:Class="SignLanguageApp.Pages.LearnPage"
+             x:DataType="vm:LearnViewModel"
+             Title="Learn"
+             BackgroundColor="{StaticResource ColorBackgroundDark}">
+
+    <Grid>
+        <ScrollView>
+            <VerticalStackLayout Spacing="16" Padding="16,10,16,24">
+
+                <Border StrokeThickness="0" Background="#123247" StrokeShape="RoundRectangle 20" Padding="18">
+                    <VerticalStackLayout Spacing="8">
+                        <Label Text="Learning center" FontSize="28" FontAttributes="Bold" TextColor="White" />
+                        <Label Text="Choose a category, open a lesson, and keep your streak alive" FontSize="13" TextColor="#BBD5E8" />
+                    </VerticalStackLayout>
+                </Border>
+
+                <Grid ColumnDefinitions="*,*,*" ColumnSpacing="10">
+                    <Border Grid.Column="0" StrokeThickness="0" Background="#0D2335" StrokeShape="RoundRectangle 12" Padding="10">
+                        <VerticalStackLayout Spacing="2">
+                            <Label Text="Progress" FontSize="11" TextColor="#87A7BE" />
+                            <Label Text="{Binding ProgressPercentage, StringFormat='{0:P0}'}" FontSize="18" FontAttributes="Bold" TextColor="White" />
+                        </VerticalStackLayout>
+                    </Border>
+                    <Border Grid.Column="1" StrokeThickness="0" Background="#0D2335" StrokeShape="RoundRectangle 12" Padding="10">
+                        <VerticalStackLayout Spacing="2">
+                            <Label Text="Streak" FontSize="11" TextColor="#87A7BE" />
+                            <Label Text="{Binding CurrentStreak, StringFormat='{0} days'}" FontSize="18" FontAttributes="Bold" TextColor="White" />
+                        </VerticalStackLayout>
+                    </Border>
+                    <Border Grid.Column="2" StrokeThickness="0" Background="#0D2335" StrokeShape="RoundRectangle 12" Padding="10">
+                        <VerticalStackLayout Spacing="2">
+                            <Label Text="XP" FontSize="11" TextColor="#87A7BE" />
+                            <Label Text="{Binding TotalXp, StringFormat='{0:N0}'}" FontSize="18" FontAttributes="Bold" TextColor="White" />
+                        </VerticalStackLayout>
+                    </Border>
+                </Grid>
+
+                <Border StrokeThickness="0" Background="#14384F" StrokeShape="RoundRectangle 16" Padding="14">
+                    <VerticalStackLayout Spacing="8">
+                        <Label Text="Recommended next step" FontSize="15" FontAttributes="Bold" TextColor="White" />
+                        <Label Text="{Binding RecommendationTitle, TargetNullValue='Pick up your next lesson'}" FontSize="14" TextColor="#D1E6F5" />
+                        <Label Text="{Binding RecommendationReason, TargetNullValue='Continue from where you left off.'}" FontSize="12" TextColor="#A7C4D9" LineBreakMode="WordWrap" />
+                        <Button Text="Open recommendation"
+                                Command="{Binding StartLessonFromRecommendationCommand}"
+                                BackgroundColor="{StaticResource Secondary}"
+                                TextColor="White"
+                                FontAttributes="Bold"
+                                HorizontalOptions="Start"
+                                Padding="14,8" />
+                    </VerticalStackLayout>
+                </Border>
+
+                <VerticalStackLayout Spacing="10">
+                    <Label Text="Categories" FontSize="16" FontAttributes="Bold" TextColor="White" />
+                    <CollectionView ItemsSource="{Binding Categories}" SelectionMode="Single" SelectedItem="{Binding SelectedCategory}">
+                        <CollectionView.ItemsLayout>
+                            <GridItemsLayout Orientation="Vertical" Span="2" HorizontalItemSpacing="10" VerticalItemSpacing="10" />
+                        </CollectionView.ItemsLayout>
+                        <CollectionView.ItemTemplate>
+                            <DataTemplate x:DataType="vm:LessonCategory">
+                                <Border StrokeThickness="0" Background="#0F2233" StrokeShape="RoundRectangle 12" Padding="12">
+                                    <VerticalStackLayout Spacing="8">
+                                        <Label Text="{Binding Title}" FontSize="13" FontAttributes="Bold" TextColor="White" MaxLines="2" LineBreakMode="TailTruncation" />
+                                        <Label Text="{Binding Description}" FontSize="11" TextColor="#8AABC2" MaxLines="2" LineBreakMode="TailTruncation" />
+                                        <ProgressBar Progress="{Binding Progress}" ProgressColor="{StaticResource Primary}" BackgroundColor="#2B4359" HeightRequest="6" />
+                                        <Label Text="{Binding Difficulty}" FontSize="10" TextColor="{StaticResource Secondary}" />
+                                    </VerticalStackLayout>
+                                </Border>
+                            </DataTemplate>
+                        </CollectionView.ItemTemplate>
+                    </CollectionView>
+                </VerticalStackLayout>
+
+                <VerticalStackLayout Spacing="10">
+                    <Label Text="Lessons" FontSize="16" FontAttributes="Bold" TextColor="White" />
+                    <CollectionView ItemsSource="{Binding SelectedLessons}" SelectionMode="None">
+                        <CollectionView.ItemTemplate>
+                            <DataTemplate x:DataType="vm:Lesson">
+                                <Border StrokeThickness="0" Background="#0D1F30" StrokeShape="RoundRectangle 12" Padding="12" Margin="0,0,0,8">
+                                    <VerticalStackLayout Spacing="8">
+                                        <Label Text="{Binding Title}" FontSize="14" FontAttributes="Bold" TextColor="White" />
+                                        <Label Text="{Binding Description}" FontSize="12" TextColor="#89AAC1" MaxLines="2" LineBreakMode="TailTruncation" />
+                                        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8" VerticalOptions="Center">
+                                            <Label Grid.Column="0" Text="{Binding DurationSeconds, StringFormat='Duration: {0} s'}" FontSize="10" TextColor="#7D9DB4" VerticalOptions="Center" />
+                                            <Button Grid.Column="1"
+                                                    Text="Open"
+                                                    Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.OpenLessonCommand}"
+                                                    CommandParameter="{Binding .}"
+                                                    BackgroundColor="{StaticResource Primary}"
+                                                    TextColor="White"
+                                                    FontSize="11"
+                                                    Padding="12,6" />
+                                            <Button Grid.Column="2"
+                                                    Text="Complete"
+                                                    Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.CompleteLessonCommand}"
+                                                    CommandParameter="{Binding .}"
+                                                    BackgroundColor="#1F3E57"
+                                                    TextColor="White"
+                                                    FontSize="11"
+                                                    Padding="12,6" />
+                                        </Grid>
+                                    </VerticalStackLayout>
+                                </Border>
+                            </DataTemplate>
+                        </CollectionView.ItemTemplate>
+                    </CollectionView>
+                </VerticalStackLayout>
+
+                <VerticalStackLayout Spacing="10">
+                    <Label Text="Daily reviews" FontSize="16" FontAttributes="Bold" TextColor="White" />
+                    <Border StrokeThickness="0" Background="#10283A" StrokeShape="RoundRectangle 12" Padding="12">
+                        <VerticalStackLayout Spacing="6">
+                            <Label Text="{Binding DailyGoalMessage, TargetNullValue='Review sessions keep memory fresh.'}" FontSize="12" TextColor="#9FBCD1" />
+                            <ProgressBar Progress="{Binding DailyGoalProgress}" ProgressColor="{StaticResource Secondary}" BackgroundColor="#2B4359" HeightRequest="6" />
+                            <Label Text="{Binding DailyGoalCompleted, StringFormat='Completed today: {0}'}" FontSize="11" TextColor="#8FAEC4" />
+                        </VerticalStackLayout>
+                    </Border>
+
+                    <CollectionView ItemsSource="{Binding DailyReviewLessons}" SelectionMode="None">
+                        <CollectionView.ItemTemplate>
+                            <DataTemplate x:DataType="vm:SpacedRepetitionLesson">
+                                <Border StrokeThickness="0" Background="#0D1F30" StrokeShape="RoundRectangle 12" Padding="12" Margin="0,0,0,8">
+                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                                        <VerticalStackLayout Grid.Column="0" Spacing="2">
+                                            <Label Text="{Binding Title}" FontSize="13" FontAttributes="Bold" TextColor="White" />
+                                            <Label Text="{Binding DueDate, StringFormat='Due: {0}'}" FontSize="11" TextColor="#84A3B9" />
+                                        </VerticalStackLayout>
+                                        <Button Grid.Column="1"
+                                                Text="Review"
+                                                Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.SubmitDailyReviewCommand}"
+                                                CommandParameter="{Binding .}"
+                                                BackgroundColor="{StaticResource Secondary}"
+                                                TextColor="White"
+                                                FontSize="11"
+                                                Padding="12,6" />
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </CollectionView.ItemTemplate>
+                    </CollectionView>
+                </VerticalStackLayout>
+
+                <VerticalStackLayout Spacing="8" IsVisible="{Binding HasSelectedLessonDetail}">
+                    <Label Text="Template diagnostics" FontSize="15" FontAttributes="Bold" TextColor="White" />
+                    <Border StrokeThickness="0" Background="#0C1A29" StrokeShape="RoundRectangle 12" Padding="12">
+                        <VerticalStackLayout Spacing="4">
+                            <Label Text="{Binding SelectedLessonLayoutFile, StringFormat='File: {0}'}" FontSize="11" TextColor="#8FAEC4" />
+                            <Label Text="{Binding IsLessonLayoutTrusted, StringFormat='Trusted: {0}'}" FontSize="11" TextColor="#8FAEC4" />
+                            <Label Text="{Binding IsCameraPracticeLesson, StringFormat='Camera lesson: {0}'}" FontSize="11" TextColor="#8FAEC4" />
+                            <Label Text="{Binding LessonLayoutSecurityMessage}" FontSize="11" TextColor="#8FAEC4" />
+                        </VerticalStackLayout>
+                    </Border>
+                </VerticalStackLayout>
+
+            </VerticalStackLayout>
+        </ScrollView>
+
+        <ActivityIndicator IsVisible="{Binding IsLoading}"
+                           IsRunning="{Binding IsLoading}"
+                           HorizontalOptions="Center"
+                           VerticalOptions="Center"
+                           Color="{StaticResource Primary}"
+                           Scale="1.3" />
+    </Grid>
+</ContentPage>

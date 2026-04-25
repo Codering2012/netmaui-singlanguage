@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="SignLanguageApp.MainPage"
+             Title="Translate"
+             BackgroundColor="{StaticResource ColorBackgroundDark}">
+
+    <ScrollView>
+        <VerticalStackLayout Padding="16,12,16,24" Spacing="14">
+            <Border StrokeThickness="0" Background="#123247" StrokeShape="RoundRectangle 20" Padding="18">
+                <VerticalStackLayout Spacing="8">
+                    <Label Text="Translation tools" FontSize="28" FontAttributes="Bold" TextColor="White" />
+                    <Label Text="Use camera translation for real-time sign detection." FontSize="13" TextColor="#BBD5E8" />
+                </VerticalStackLayout>
+            </Border>
+
+            <Border StrokeThickness="0" Background="{StaticResource ColorCardDark}" StrokeShape="RoundRectangle 16" Padding="16">
+                <VerticalStackLayout Spacing="10">
+                    <Label Text="Quick check" FontSize="16" FontAttributes="Bold" TextColor="White" />
+                    <Label Text="Tap the button to verify this page is responsive." FontSize="12" TextColor="#95B5CB" />
+                    <Button x:Name="CounterBtn"
+                            Text="Run quick check"
+                            Clicked="OnCounterClicked"
+                            BackgroundColor="{StaticResource Primary}"
+                            TextColor="White"
+                            FontAttributes="Bold" />
+                </VerticalStackLayout>
+            </Border>
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

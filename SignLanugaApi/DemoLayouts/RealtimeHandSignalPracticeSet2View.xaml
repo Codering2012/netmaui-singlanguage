@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="App.RealtimeHandSignalPracticeSet2View"
+             Title="Camera Practice Set 2">
+    <Grid RowDefinitions="Auto,*,Auto" Padding="16" RowSpacing="12">
+        <Label Text="Set 2: Greeting Signs"
+               FontSize="22"
+               FontAttributes="Bold" />
+
+        <VerticalStackLayout Grid.Row="1" Spacing="10">
+            <Label Text="Practice greeting phrases and get instant feedback." />
+            <Border StrokeThickness="1" Stroke="#BDBDBD" HeightRequest="320">
+                <Label Text="[Camera Preview Placeholder]"
+                       HorizontalOptions="Center"
+                       VerticalOptions="Center" />
+            </Border>
+        </VerticalStackLayout>
+
+        <HorizontalStackLayout Grid.Row="2" Spacing="10">
+            <Button Text="Start Camera" />
+            <Button Text="Capture &amp; Predict" />
+            <Label Text="Prediction: -" VerticalOptions="Center" />
+        </HorizontalStackLayout>
+    </Grid>
+</ContentPage>

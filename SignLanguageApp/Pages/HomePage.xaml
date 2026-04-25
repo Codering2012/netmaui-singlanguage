@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:SignLanguageApp.ViewModels"
+             x:Class="SignLanguageApp.Pages.HomePage"
+             x:DataType="vm:HomeViewModel"
+             Title="Home"
+             BackgroundColor="{StaticResource ColorBackgroundDark}">
+
+    <Grid>
+        <ScrollView>
+            <VerticalStackLayout Spacing="16" Padding="16,10,16,24">
+
+                <Border StrokeThickness="0" Background="#123247" StrokeShape="RoundRectangle 20" Padding="18">
+                    <VerticalStackLayout Spacing="10">
+                        <Label Text="{Binding GreetingMessage}" FontSize="28" FontAttributes="Bold" TextColor="White" />
+                        <Label Text="Practice a little every day to keep momentum" FontSize="13" TextColor="#BBD5E8" />
+                        <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12" Margin="0,6,0,0">
+                            <Border Grid.Column="0" Background="#0B1F2F" StrokeThickness="0" StrokeShape="RoundRectangle 12" Padding="10,8">
+                                <VerticalStackLayout Spacing="2">
+                                    <Label Text="Streak" FontSize="11" TextColor="#86A7BE" />
+                                    <Label Text="{Binding LearningStreak, StringFormat='{0} days'}" FontSize="16" FontAttributes="Bold" TextColor="White" />
+                                </VerticalStackLayout>
+                            </Border>
+                            <Border Grid.Column="1" Background="#0B1F2F" StrokeThickness="0" StrokeShape="RoundRectangle 12" Padding="10,8">
+                                <Label Text="Consistency beats intensity" VerticalOptions="Center" TextColor="#CFE5F3" FontSize="12" />
+                            </Border>
+                            <Button Grid.Column="2"
+                                    Text="Camera"
+                                    Command="{Binding OpenCameraCommand}"
+                                    BackgroundColor="{StaticResource Secondary}"
+                                    TextColor="White"
+                                    FontSize="12"
+                                    FontAttributes="Bold"
+                                    Padding="12,8" />
+                        </Grid>
+                    </VerticalStackLayout>
+                </Border>
+
+                <Border StrokeThickness="0" Background="{StaticResource ColorCardDark}" StrokeShape="RoundRectangle 18" Padding="16">
+                    <VerticalStackLayout Spacing="10">
+                        <Label Text="Sign of the day" FontSize="16" FontAttributes="Bold" TextColor="White" />
+                        <Label Text="{Binding SignOfTheDay.SignName, StringFormat='Focus: {0}', TargetNullValue='Focus: Hello'}"
+                               FontSize="20"
+                               FontAttributes="Bold"
+                               TextColor="{StaticResource PrimaryLight}" />
+                        <Label Text="{Binding SignOfTheDay.Description, TargetNullValue='Learn one practical sign today and use it in context.'}"
+                               FontSize="13"
+                               TextColor="{StaticResource SecondaryDarkText}"
+                               LineBreakMode="WordWrap" />
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                            <Label Grid.Column="0"
+                                   Text="Tap to mark this lesson as reviewed"
+                                   FontSize="11"
+                                   TextColor="#9FC0D7"
+                                   VerticalOptions="Center" />
+                            <Button Grid.Column="1"
+                                    Text="Practice"
+                                    Command="{Binding ToggleSignOfTheDayCommand}"
+                                    BackgroundColor="{StaticResource Primary}"
+                                    TextColor="White"
+                                    FontAttributes="Bold"
+                                    FontSize="12"
+                                    Padding="14,8" />
+                        </Grid>
+                    </VerticalStackLayout>
+                </Border>
+
+                <VerticalStackLayout Spacing="10">
+                    <Label Text="Quick clips" FontSize="16" FontAttributes="Bold" TextColor="White" />
+                    <CollectionView ItemsSource="{Binding Shorts}" SelectionMode="None" HeightRequest="188">
+                        <CollectionView.ItemsLayout>
+                            <LinearItemsLayout Orientation="Horizontal" ItemSpacing="10" />
+                        </CollectionView.ItemsLayout>
+                        <CollectionView.ItemTemplate>
+                            <DataTemplate x:DataType="vm:ShortItem">
+                                <Border WidthRequest="170" Padding="12" StrokeThickness="0" Background="#11263A" StrokeShape="RoundRectangle 14">
+                                    <VerticalStackLayout Spacing="8">
+                                        <Border HeightRequest="90" StrokeThickness="0" Background="#17324B" StrokeShape="RoundRectangle 10">
+                                            <Grid>
+                                                <Image Source="{Binding Thumbnail}" Aspect="AspectFill" />
+                                                <BoxView BackgroundColor="#66000000" />
+                                                <Label Text="PLAY" HorizontalOptions="Center" VerticalOptions="Center" TextColor="White" FontAttributes="Bold" FontSize="12" />
+                                            </Grid>
+                                        </Border>
+                                        <Label Text="{Binding Title}" FontSize="13" FontAttributes="Bold" TextColor="White" MaxLines="2" LineBreakMode="TailTruncation" />
+                                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                            <Label Grid.Column="0" Text="{Binding ViewCount, StringFormat='{0:N0} views'}" FontSize="10" TextColor="#93B5CB" />
+                                            <Label Grid.Column="1" Text="{Binding Duration}" FontSize="10" TextColor="#93B5CB" />
+                                        </Grid>
+                                    </VerticalStackLayout>
+                                </Border>
+                            </DataTemplate>
+                        </CollectionView.ItemTemplate>
+                    </CollectionView>
+                </VerticalStackLayout>
+
+                <VerticalStackLayout Spacing="10">
+                    <Label Text="Recommended lessons" FontSize="16" FontAttributes="Bold" TextColor="White" />
+                    <CollectionView ItemsSource="{Binding RecommendedLessons}" SelectionMode="None" RemainingItemsThreshold="2" RemainingItemsThresholdReachedCommand="{Binding LoadMoreLessonsCommand}">
+                        <CollectionView.ItemTemplate>
+                            <DataTemplate x:DataType="vm:LessonItem">
+                                <Border StrokeThickness="0" Background="#102336" StrokeShape="RoundRectangle 14" Padding="12" Margin="0,0,0,10">
+                                    <Grid ColumnDefinitions="86,*" ColumnSpacing="12">
+                                        <Border Grid.Column="0" StrokeThickness="0" Background="#17324B" StrokeShape="RoundRectangle 10" HeightRequest="66">
+                                            <Grid>
+                                                <Image Source="{Binding Thumbnail}" Aspect="AspectFill" />
+                                                <Label Text="LESSON" HorizontalOptions="Center" VerticalOptions="Center" FontAttributes="Bold" FontSize="10" TextColor="White" />
+                                            </Grid>
+                                        </Border>
+                                        <VerticalStackLayout Grid.Column="1" Spacing="4">
+                                            <Label Text="{Binding Title}" FontSize="14" FontAttributes="Bold" TextColor="White" />
+                                            <Label Text="{Binding Subtitle}" FontSize="12" TextColor="#92B2C9" MaxLines="2" LineBreakMode="TailTruncation" />
+                                            <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="8">
+                                                <Label Grid.Column="0" Text="{Binding Difficulty}" FontSize="10" FontAttributes="Bold" TextColor="{StaticResource Secondary}" />
+                                                <Label Grid.Column="1" Text="|" FontSize="10" TextColor="#7C9AB0" />
+                                                <Label Grid.Column="2" Text="{Binding ViewCount, StringFormat='{0:N0} views'}" FontSize="10" TextColor="#7C9AB0" />
+                                            </Grid>
+                                            <Button Text="Open lesson"
+                                                    Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.NavigateToLessonCommand}"
+                                                    CommandParameter="{Binding .}"
+                                                    HorizontalOptions="Start"
+                                                    BackgroundColor="{StaticResource Primary}"
+                                                    TextColor="White"
+                                                    FontSize="11"
+                                                    Padding="12,6" />
+                                        </VerticalStackLayout>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </CollectionView.ItemTemplate>
+                    </CollectionView>
+                </VerticalStackLayout>
+
+                <VerticalStackLayout Spacing="10">
+                    <Label Text="Community" FontSize="16" FontAttributes="Bold" TextColor="White" />
+                    <CollectionView ItemsSource="{Binding Community}" SelectionMode="None">
+                        <CollectionView.ItemTemplate>
+                            <DataTemplate x:DataType="vm:CommunityItem">
+                                <Border StrokeThickness="0" Background="#0F2031" StrokeShape="RoundRectangle 12" Padding="12" Margin="0,0,0,8">
+                                    <Grid ColumnDefinitions="72,*" ColumnSpacing="12">
+                                        <Border Grid.Column="0" StrokeThickness="0" Background="#17324B" StrokeShape="RoundRectangle 8" HeightRequest="54">
+                                            <Image Source="{Binding Thumbnail}" Aspect="AspectFill" />
+                                        </Border>
+                                        <VerticalStackLayout Grid.Column="1" Spacing="2">
+                                            <Label Text="{Binding Title}" FontSize="13" FontAttributes="Bold" TextColor="White" />
+                                            <Label Text="{Binding Contributor}" FontSize="11" TextColor="#88A9C0" />
+                                        </VerticalStackLayout>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </CollectionView.ItemTemplate>
+                    </CollectionView>
+                </VerticalStackLayout>
+
+            </VerticalStackLayout>
+        </ScrollView>
+    </Grid>
+</ContentPage>
