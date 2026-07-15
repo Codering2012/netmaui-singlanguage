@@ -11,6 +11,7 @@ os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
+os.environ["OPENCV_FFMPEG_THREADS"] = "1"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 os.environ["GLOG_minloglevel"] = "3"
@@ -1665,6 +1666,7 @@ def _mp_pool_worker_init():
     """Assign each ProcessPool worker to a GPU if available, and pre-warm MediaPipe landmark models."""
     try:
         cv2.setNumThreads(1)
+        os.environ["OPENCV_FFMPEG_THREADS"] = "1"
     except Exception:
         pass
 
