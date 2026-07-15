@@ -1827,22 +1827,54 @@ _GPU_POOLS: dict = {}
 _GPU_POOL_LOCK = threading.Lock()
 
 
-def _get_mp_context():
-    """Return 'fork' on Linux (safe + fast), 'spawn' everywhere else."""
+def _get_mp_context(gpu_isolated: bool = False):
+    """Return the correct multiprocessing start-method context.
+
+    GPU pools (gpu_isolated=True) — always 'spawn'
+    -----------------------------------------------
+    ``torch.cuda.is_available()`` (called from ``main()`` via ``_init_torch``)
+    initialises the CUDA runtime in the *parent* process before any workers
+    are created.  After ``fork()``, the child inherits an already-initialised
+    CUDA context whose default device is GPU 0.  Setting
+    ``CUDA_VISIBLE_DEVICES`` *inside* the forked worker has no effect because
+    NVIDIA's driver selects the device at CUDA init time, not at env-var read
+    time.
+
+    ``spawn`` starts a *fresh* Python interpreter with zero CUDA state.  The
+    initialiser then sets ``CUDA_VISIBLE_DEVICES=<gpu_id>`` **before** any
+    CUDA/EGL code runs, so the driver sees only the intended GPU.
+
+    Note: spawn children inherit the parent's environment variables.  The
+    parent sets ``NUM_AVAILABLE_GPUS`` before any worker is created, so the
+    worker's module-level ``get_num_gpus()`` reads the cached value instead
+    of calling ``torch.cuda.device_count()`` again.  This avoids a second
+    CUDA init in the worker before ``CUDA_VISIBLE_DEVICES`` takes effect.
+
+    CPU pool (gpu_isolated=False) — 'fork' on Linux, 'spawn' elsewhere
+    -------------------------------------------------------------------
+    No CUDA context is used; fork is safe and much faster to start.
+    """
     import platform as _platform
+    if gpu_isolated:
+        return get_context("spawn")   # CUDA isolation: must be spawn
     return get_context("fork" if _platform.system() == "Linux" else "spawn")
 
 
 def get_or_create_gpu_pool(gpu_id: int) -> ProcessPoolExecutor:
     """Return (creating if needed) a ProcessPoolExecutor whose workers are
-    all pinned to *gpu_id* via CUDA_VISIBLE_DEVICES."""
+    all pinned to *gpu_id* via CUDA_VISIBLE_DEVICES.
+
+    Uses 'spawn' (via gpu_isolated=True) so each worker starts with a clean
+    CUDA runtime.  The initialiser sets CUDA_VISIBLE_DEVICES before importing
+    MediaPipe, guaranteeing EGL device selection hits the right GPU.
+    """
     with _GPU_POOL_LOCK:
         if gpu_id not in _GPU_POOLS:
             n_gpus = max(1, get_num_gpus())
             workers_per_gpu = max(1, NUM_MP_GPU_WORKERS // n_gpus)
             _GPU_POOLS[gpu_id] = ProcessPoolExecutor(
                 max_workers=workers_per_gpu,
-                mp_context=_get_mp_context(),
+                mp_context=_get_mp_context(gpu_isolated=True),  # spawn for CUDA isolation
                 initializer=_mp_pool_worker_init_gpu,
                 initargs=(gpu_id,),
             )
