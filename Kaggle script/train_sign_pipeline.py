@@ -1759,6 +1759,18 @@ def get_shared_pool() -> ProcessPoolExecutor:
         return _SHARED_POOL
 
 
+def reset_shared_pool() -> ProcessPoolExecutor:
+    global _SHARED_POOL
+    with _POOL_LOCK:
+        if _SHARED_POOL is not None:
+            try:
+                _SHARED_POOL.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                pass
+            _SHARED_POOL = None
+        return get_shared_pool()
+
+
 def bounded_as_completed(executor, fn, tasks, max_in_flight=None):
     """Yields (future.result()) as tasks complete, maintaining at most max_in_flight in the queue."""
     if max_in_flight is None:
@@ -1773,7 +1785,11 @@ def bounded_as_completed(executor, fn, tasks, max_in_flight=None):
 
     # Prime the queue
     for task in task_iter:
-        fut = executor.submit(fn, *task)
+        try:
+            fut = executor.submit(fn, *task)
+        except Exception:
+            executor = SharedExecutorProxy(reset_shared_pool())
+            fut = executor.submit(fn, *task)
         futures[fut] = task
         if len(futures) >= max_in_flight:
             break
@@ -1781,7 +1797,11 @@ def bounded_as_completed(executor, fn, tasks, max_in_flight=None):
     from concurrent.futures import wait, FIRST_COMPLETED
 
     while futures:
-        done, _ = wait(futures.keys(), return_when=FIRST_COMPLETED)
+        try:
+            done, _ = wait(futures.keys(), return_when=FIRST_COMPLETED)
+        except Exception:
+            done = [f for f in list(futures.keys()) if f.done()]
+
         for fut in done:
             try:
                 res = fut.result()
@@ -1797,10 +1817,15 @@ def bounded_as_completed(executor, fn, tasks, max_in_flight=None):
                     },
                 )
             yield res
-            del futures[fut]
+            if fut in futures:
+                del futures[fut]
 
         for task in task_iter:
-            fut = executor.submit(fn, *task)
+            try:
+                fut = executor.submit(fn, *task)
+            except Exception:
+                executor = SharedExecutorProxy(reset_shared_pool())
+                fut = executor.submit(fn, *task)
             futures[fut] = task
             if len(futures) >= max_in_flight:
                 break
