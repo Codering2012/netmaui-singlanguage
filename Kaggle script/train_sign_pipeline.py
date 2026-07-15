@@ -1134,12 +1134,28 @@ class MediaPipeExtractor:
         return cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
 
     def _run_tasks(self, rgb: np.ndarray, timestamp_ms: int | None):
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+        # IMPORTANT: each model call gets its OWN mp.Image instance.
+        #
+        # With the GPU delegate, mp.Image wraps a GPU texture.  MediaPipe
+        # tracks writes to that texture and raises a synchronisation error
+        # (tensor.cc:404 "Tensors are designed for single writes") if the
+        # SAME mp.Image object is passed to more than one model.  The GPU
+        # driver then stalls to force re-synchronisation, causing 3-6× speed
+        # drops that correlate exactly with the E0000 log lines.
+        #
+        # Creating a new wrapper for each model costs only a tiny Python
+        # object allocation; the underlying RGB numpy buffer is NOT copied.
         if self._static_mode:
-            hand_result = self._hand.detect(mp_image)
-            pose_result = self._pose.detect(mp_image)
+            hand_result = self._hand.detect(
+                mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+            )
+            pose_result = self._pose.detect(
+                mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+            )
             if hand_result.hand_landmarks or pose_result.pose_landmarks:
-                face_result = self._face.detect(mp_image)
+                face_result = self._face.detect(
+                    mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+                )
             else:
                 face_result = type("DummyFaceResult", (), {"face_landmarks": None})()
         else:
@@ -1148,10 +1164,16 @@ class MediaPipeExtractor:
             if ts <= self._last_ts:
                 ts = self._last_ts + 1
             self._last_ts = ts
-            hand_result = self._hand.detect_for_video(mp_image, ts)
-            pose_result = self._pose.detect_for_video(mp_image, ts)
+            hand_result = self._hand.detect_for_video(
+                mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), ts
+            )
+            pose_result = self._pose.detect_for_video(
+                mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), ts
+            )
             if hand_result.hand_landmarks or pose_result.pose_landmarks:
-                face_result = self._face.detect_for_video(mp_image, ts)
+                face_result = self._face.detect_for_video(
+                    mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), ts
+                )
             else:
                 face_result = type("DummyFaceResult", (), {"face_landmarks": None})()
         return hand_result, pose_result, face_result
