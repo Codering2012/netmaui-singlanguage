@@ -221,10 +221,10 @@ MEDIAPIPE_USE_GPU = os.environ.get(
 
 cpu_threads = os.cpu_count() or 8
 if NUM_AVAILABLE_GPUS > 0:
-    # 16 workers per GPU (32 total for 2x RTX 3060 12GB) to saturate VRAM & CPU
-    DEFAULT_GPU_WORKERS = min(32, max(16, NUM_AVAILABLE_GPUS * 16))
+    # 8 workers per GPU (16 total) for rock-solid EGL stability & max dual-GPU throughput
+    DEFAULT_GPU_WORKERS = min(16, max(8, NUM_AVAILABLE_GPUS * 8))
 else:
-    DEFAULT_GPU_WORKERS = min(32, max(4, cpu_threads))
+    DEFAULT_GPU_WORKERS = min(16, max(4, cpu_threads))
 
 NUM_MP_GPU_WORKERS = int(os.environ.get("NUM_MP_GPU_WORKERS", str(DEFAULT_GPU_WORKERS)))
 
@@ -1682,10 +1682,6 @@ def _mp_pool_worker_init():
             _mp_gpu_worker_counter.value += 1
         gpu_id = worker_idx % NUM_AVAILABLE_GPUS
         os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-        os.environ["EGL_DEVICE_ID"] = str(gpu_id)
-        os.environ["DRI_PRIME"] = str(gpu_id)
-        os.environ["__NV_PRIME_RENDER_OFFLOAD"] = "1"
-        os.environ["__NV_PRIME_RENDER_OFFLOAD_PROVIDER"] = f"NVIDIA-{gpu_id}"
         try:
             import torch
 
