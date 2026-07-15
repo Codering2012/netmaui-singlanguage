@@ -221,10 +221,10 @@ MEDIAPIPE_USE_GPU = os.environ.get(
 
 cpu_threads = os.cpu_count() or 8
 if NUM_AVAILABLE_GPUS > 0:
-    # Cap at 8 workers per GPU (16 max for 2x GPUs) to prevent EGL context exhaustion
-    DEFAULT_GPU_WORKERS = min(16, max(8, NUM_AVAILABLE_GPUS * 8))
+    # 16 workers per GPU (32 total for 2x RTX 3060 12GB) to saturate VRAM & CPU
+    DEFAULT_GPU_WORKERS = min(32, max(16, NUM_AVAILABLE_GPUS * 16))
 else:
-    DEFAULT_GPU_WORKERS = min(16, max(4, cpu_threads))
+    DEFAULT_GPU_WORKERS = min(32, max(4, cpu_threads))
 
 NUM_MP_GPU_WORKERS = int(os.environ.get("NUM_MP_GPU_WORKERS", str(DEFAULT_GPU_WORKERS)))
 
@@ -1671,6 +1671,11 @@ _mp_gpu_worker_counter = MPValue("i", 0)
 
 def _mp_pool_worker_init():
     """Assign each ProcessPool worker to a GPU if available, and pre-warm MediaPipe landmark models."""
+    try:
+        cv2.setNumThreads(1)
+    except Exception:
+        pass
+
     if MEDIAPIPE_USE_GPU and NUM_AVAILABLE_GPUS > 0:
         with _mp_gpu_worker_counter.get_lock():
             worker_idx = _mp_gpu_worker_counter.value
@@ -1750,11 +1755,11 @@ def get_shared_pool() -> ProcessPoolExecutor:
 def bounded_as_completed(executor, fn, tasks, max_in_flight=None):
     """Yields (future.result()) as tasks complete, maintaining at most max_in_flight in the queue."""
     if max_in_flight is None:
-        # Default to 4 * number of workers
+        # Default to 8 * number of workers for high pipeline saturation
         max_workers = getattr(executor, "_max_workers", None) or getattr(
             getattr(executor, "_executor", None), "_max_workers", 4
         )
-        max_in_flight = max(16, max_workers * 4)
+        max_in_flight = max(32, max_workers * 8)
 
     task_iter = iter(tasks)
     futures = {}
