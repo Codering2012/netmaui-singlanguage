@@ -219,10 +219,11 @@ MEDIAPIPE_USE_GPU = os.environ.get(
     "MEDIAPIPE_USE_GPU", "1" if NUM_AVAILABLE_GPUS > 0 else ("0" if _IS_KAGGLE else "1")
 ).lower() not in ("0", "false", "no")
 
+cpu_threads = os.cpu_count() or 8
 if NUM_AVAILABLE_GPUS > 0:
-    DEFAULT_GPU_WORKERS = max(8, NUM_AVAILABLE_GPUS * 4)
+    DEFAULT_GPU_WORKERS = max(cpu_threads, NUM_AVAILABLE_GPUS * 6)
 else:
-    DEFAULT_GPU_WORKERS = max(4, os.cpu_count() or 4)
+    DEFAULT_GPU_WORKERS = max(4, cpu_threads)
 
 NUM_MP_GPU_WORKERS = int(os.environ.get("NUM_MP_GPU_WORKERS", str(DEFAULT_GPU_WORKERS)))
 
