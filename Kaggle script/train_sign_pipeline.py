@@ -256,10 +256,12 @@ MEDIAPIPE_USE_GPU = os.environ.get(
 
 cpu_threads = os.cpu_count() or 8
 if get_num_gpus() > 0:
-    # 8 workers per GPU (16 total) for rock-solid EGL stability & max dual-GPU throughput
-    DEFAULT_GPU_WORKERS = min(16, max(8, get_num_gpus() * 8))
+    # 4 workers per GPU keeps concurrent EGL context count (4 workers × 3 models = 12)
+    # safely within RTX-class driver limits (~16 max). 8 workers/GPU was creating 24
+    # contexts per GPU, causing silent CPU fallback or EGL stalls and killing throughput.
+    DEFAULT_GPU_WORKERS = min(8, max(2, get_num_gpus() * 4))
 else:
-    DEFAULT_GPU_WORKERS = min(16, max(4, cpu_threads))
+    DEFAULT_GPU_WORKERS = min(cpu_threads, max(4, cpu_threads // 2))
 
 NUM_MP_GPU_WORKERS = int(os.environ.get("NUM_MP_GPU_WORKERS", str(DEFAULT_GPU_WORKERS)))
 
@@ -1242,12 +1244,20 @@ class MediaPipeExtractor:
 
         return buf.copy(), quality, confidence
 
-    def extract_image(self, image_path, max_dim=320):
+    def extract_image(self, image_path, max_dim=320, enhance: bool = True):
         frame = cv2.imread(str(image_path))
         if frame is None:
             return None, 0.0, {}
         frame = resize_frame_to_max_dimension(frame, max_dim=max_dim)
-        landmarks, quality, confidence = self.extract_frame(frame, timestamp_ms=0)
+        # Pre-enhance before inference so we only run the models once.
+        # We never trigger the cascade retry here (that would call
+        # _get_process_extractor(static_mode=True) which is *this* extractor,
+        # doubling inference cost for every low-quality static image).
+        if enhance:
+            frame = enhance_frame_adaptive(frame)
+        landmarks, quality, confidence = self.extract_frame(
+            frame, timestamp_ms=0, allow_cascade_retry=False
+        )
         return landmarks.reshape(1, NUM_LANDMARKS, 3), quality, confidence
 
     def extract_video(self, video_path, start_frame=None, end_frame=None, max_dim=320):
@@ -1693,25 +1703,31 @@ def compute_occlusion_score(seq: np.ndarray) -> float:
 
 # PID-keyed extractor cache: each worker holds one Tasks Vision bundle per mode.
 _process_extractor_cache: dict = {}
-_mp_gpu_worker_counter = MPValue("i", 0)
 
 
-def _mp_pool_worker_init():
-    """Assign each ProcessPool worker to a GPU if available, and pre-warm MediaPipe landmark models."""
-    if MEDIAPIPE_USE_GPU and get_num_gpus() > 0:
-        with _mp_gpu_worker_counter.get_lock():
-            worker_idx = _mp_gpu_worker_counter.value
-            _mp_gpu_worker_counter.value += 1
-        gpu_id = worker_idx % get_num_gpus()
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-        os.environ["EGL_DEVICE_ID"] = str(gpu_id)
-        os.environ["DRI_PRIME"] = str(gpu_id)
+def _mp_pool_worker_init_gpu(gpu_id: int):
+    """Worker initialiser pinned to a specific GPU.
 
-    # Initialize CV2 and MediaPipe *after* the environment variables are set
+    *gpu_id* is passed as an initarg so every worker in a pool gets an
+    identical, deterministic assignment — no shared-counter races.
+    Setting CUDA_VISIBLE_DEVICES here (before any EGL context is opened)
+    makes NVIDIA's driver associate the new EGL display with that GPU.
+    """
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    # EGL_DEVICE_ID is honoured by some driver stacks; harmless otherwise.
+    os.environ["EGL_DEVICE_ID"] = str(gpu_id)
+    os.environ["DRI_PRIME"] = str(gpu_id)
+
+    # Import CV2 / MediaPipe *after* the env vars are set so any lazy
+    # driver init inside those libraries sees the right device.
     _init_mediapipe()
 
     try:
-        cv2.setNumThreads(1)
+        # Allow each worker a proportional slice of available cores so MediaPipe's
+        # TFLite interpreter and OpenCV can use more than 1 thread on 56-core machines.
+        # Cap at 2 to avoid oversubscription when many workers run concurrently.
+        _cv_threads = max(1, min(2, (os.cpu_count() or 1) // max(1, NUM_MP_GPU_WORKERS)))
+        cv2.setNumThreads(_cv_threads)
         os.environ["OPENCV_FFMPEG_THREADS"] = "1"
     except Exception:
         pass
@@ -1723,8 +1739,62 @@ def _mp_pool_worker_init():
         pass
 
 
+def _mp_pool_worker_init_cpu():
+    """Worker initialiser for CPU-only machines (no GPU available)."""
+    _init_mediapipe()
+    try:
+        _cv_threads = max(1, min(2, (os.cpu_count() or 1) // max(1, NUM_MP_GPU_WORKERS)))
+        cv2.setNumThreads(_cv_threads)
+        os.environ["OPENCV_FFMPEG_THREADS"] = "1"
+    except Exception:
+        pass
+    try:
+        _get_process_extractor(static_mode=False)
+        _get_process_extractor(static_mode=True)
+    except Exception:
+        pass
+
+
 _SHARED_POOL = None
 _POOL_LOCK = threading.Lock()
+
+# Per-GPU pools: keyed by integer GPU index.
+_GPU_POOLS: dict = {}
+_GPU_POOL_LOCK = threading.Lock()
+
+
+def _get_mp_context():
+    """Return 'fork' on Linux (safe + fast), 'spawn' everywhere else."""
+    import platform as _platform
+    return get_context("fork" if _platform.system() == "Linux" else "spawn")
+
+
+def get_or_create_gpu_pool(gpu_id: int) -> ProcessPoolExecutor:
+    """Return (creating if needed) a ProcessPoolExecutor whose workers are
+    all pinned to *gpu_id* via CUDA_VISIBLE_DEVICES."""
+    with _GPU_POOL_LOCK:
+        if gpu_id not in _GPU_POOLS:
+            n_gpus = max(1, get_num_gpus())
+            workers_per_gpu = max(1, NUM_MP_GPU_WORKERS // n_gpus)
+            _GPU_POOLS[gpu_id] = ProcessPoolExecutor(
+                max_workers=workers_per_gpu,
+                mp_context=_get_mp_context(),
+                initializer=_mp_pool_worker_init_gpu,
+                initargs=(gpu_id,),
+            )
+        return _GPU_POOLS[gpu_id]
+
+
+def reset_gpu_pools() -> "MultiGPUExecutorProxy":
+    """Tear down all GPU-specific pools and return a fresh MultiGPUExecutorProxy."""
+    with _GPU_POOL_LOCK:
+        for pool in list(_GPU_POOLS.values()):
+            try:
+                pool.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                pass
+        _GPU_POOLS.clear()
+    return MultiGPUExecutorProxy()
 
 
 def _close_local_mediapipe_extractors():
@@ -1772,15 +1842,15 @@ class SharedExecutorProxy:
 
 
 def get_shared_pool() -> ProcessPoolExecutor:
+    """CPU-only fallback pool (used when no GPUs are available)."""
     global _SHARED_POOL
     with _POOL_LOCK:
         if _SHARED_POOL is None:
             workers = max(1, int(NUM_MP_GPU_WORKERS))
-            mp_context = get_context("spawn")
             _SHARED_POOL = ProcessPoolExecutor(
                 max_workers=workers,
-                mp_context=mp_context,
-                initializer=_mp_pool_worker_init,
+                mp_context=_get_mp_context(),
+                initializer=_mp_pool_worker_init_cpu,
             )
         return _SHARED_POOL
 
@@ -1797,14 +1867,23 @@ def reset_shared_pool() -> ProcessPoolExecutor:
         return get_shared_pool()
 
 
+def _reset_executor(executor):
+    """Recreate whichever pool type backs *executor* after a submit failure."""
+    if isinstance(executor, MultiGPUExecutorProxy):
+        return reset_gpu_pools()
+    return SharedExecutorProxy(reset_shared_pool())
+
+
 def bounded_as_completed(executor, fn, tasks, max_in_flight=None):
     """Yields (future.result()) as tasks complete, maintaining at most max_in_flight in the queue."""
     if max_in_flight is None:
-        # Default to 8 * number of workers for high pipeline saturation
+        # 2× workers is enough to keep the queue saturated without flooding the IPC
+        # pipe at startup (the old 8× caused a thundering herd of 128 pickled tasks
+        # hitting the pipe while workers were still initialising MediaPipe models).
         max_workers = getattr(executor, "_max_workers", None) or getattr(
             getattr(executor, "_executor", None), "_max_workers", 4
         )
-        max_in_flight = max(32, max_workers * 8)
+        max_in_flight = max(16, max_workers * 2)
 
     task_iter = iter(tasks)
     futures = {}
@@ -1814,7 +1893,7 @@ def bounded_as_completed(executor, fn, tasks, max_in_flight=None):
         try:
             fut = executor.submit(fn, *task)
         except Exception:
-            executor = SharedExecutorProxy(reset_shared_pool())
+            executor = _reset_executor(executor)
             fut = executor.submit(fn, *task)
         futures[fut] = task
         if len(futures) >= max_in_flight:
@@ -1850,21 +1929,77 @@ def bounded_as_completed(executor, fn, tasks, max_in_flight=None):
             try:
                 fut = executor.submit(fn, *task)
             except Exception:
-                executor = SharedExecutorProxy(reset_shared_pool())
+                executor = _reset_executor(executor)
                 fut = executor.submit(fn, *task)
             futures[fut] = task
             if len(futures) >= max_in_flight:
                 break
 
 
-def _create_mediapipe_pool() -> SharedExecutorProxy:
-    """Return a context-friendly proxy for the shared process pool."""
-    return SharedExecutorProxy(get_shared_pool())
+class MultiGPUExecutorProxy:
+    """Distributes task submissions round-robin across one ProcessPoolExecutor
+    per available GPU.  Falls back to the CPU shared pool when no GPUs exist.
+
+    Each GPU's pool has its workers *pinned* to that GPU via initargs so
+    CUDA_VISIBLE_DEVICES is set before any EGL context is created — the only
+    reliable way to steer NVIDIA's driver to the right device on Linux.
+    """
+
+    def __init__(self):
+        n_gpus = get_num_gpus()
+        if n_gpus >= 1:
+            self._pools = [get_or_create_gpu_pool(i) for i in range(n_gpus)]
+        else:
+            # CPU-only: delegate to the existing shared pool
+            self._pools = [get_shared_pool()]
+        self._n = len(self._pools)
+        self._rr = 0
+        self._lock = threading.Lock()
+
+    @property
+    def _max_workers(self) -> int:
+        """Total worker count across all pools (used by bounded_as_completed)."""
+        return sum(getattr(p, "_max_workers", 1) for p in self._pools)
+
+    def _next_pool(self) -> ProcessPoolExecutor:
+        with self._lock:
+            pool = self._pools[self._rr % self._n]
+            self._rr += 1
+        return pool
+
+    def submit(self, fn, *args, **kwargs):
+        return self._next_pool().submit(fn, *args, **kwargs)
+
+    def map(self, fn, *iterables, timeout=None, chunksize=1):
+        # map doesn't split across pools; use pool 0 for simplicity
+        return self._pools[0].map(fn, *iterables, timeout=timeout, chunksize=chunksize)
+
+    def shutdown(self, wait=True, *, cancel_futures=False):
+        # Deliberately no-op: pools are torn down at exit via _shutdown_mediapipe_pool.
+        return None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+def _create_mediapipe_pool() -> MultiGPUExecutorProxy:
+    """Return a proxy that distributes work across all available GPUs."""
+    return MultiGPUExecutorProxy()
 
 
 def _shutdown_mediapipe_pool():
-    """Explicit cleanup at exit."""
+    """Explicit cleanup at exit — tears down both per-GPU and shared CPU pools."""
     _close_local_mediapipe_extractors()
+    with _GPU_POOL_LOCK:
+        for pool in list(_GPU_POOLS.values()):
+            try:
+                pool.shutdown(wait=True, cancel_futures=False)
+            except Exception:
+                pass
+        _GPU_POOLS.clear()
     global _SHARED_POOL
     with _POOL_LOCK:
         if _SHARED_POOL is not None:
@@ -2106,11 +2241,21 @@ def _process_sequence(sequence, source_fps: float = 30.0, target_frames=None):
 
 
 def _proc_alphabet_image(img_path_str, label, split, quality_threshold):
-    """Worker: extract one ASL Alphabet static image."""
+    """Worker: extract one ASL Alphabet static image.
+
+    Enhancement is done inside extract_image (pre-inference) so we run
+    MediaPipe exactly once per image regardless of quality.  The old cascade
+    retry path was effectively calling the static-mode extractor on itself,
+    doubling inference time for every low-quality frame.
+    """
     try:
         t0_mp = time.perf_counter()
         extractor = _get_process_extractor(static_mode=True)
-        raw_arr, base_q, confidence = extractor.extract_image(img_path_str)
+        # enhance=True (default): CLAHE / log-compression / DoG applied BEFORE
+        # the single MediaPipe inference call, not after.
+        raw_arr, base_q, confidence = extractor.extract_image(
+            img_path_str, enhance=True
+        )
         t_mp = time.perf_counter() - t0_mp
 
         if raw_arr is None:
