@@ -1681,11 +1681,7 @@ def _mp_pool_worker_init():
         pass
 
     if MEDIAPIPE_USE_GPU and get_num_gpus() > 0:
-        with _mp_gpu_worker_counter.get_lock():
-            worker_idx = _mp_gpu_worker_counter.value
-            _mp_gpu_worker_counter.value += 1
-        gpu_id = worker_idx % get_num_gpus()
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+        os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
     try:
         _get_process_extractor(static_mode=False)
