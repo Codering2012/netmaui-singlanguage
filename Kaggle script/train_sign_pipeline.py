@@ -1705,6 +1705,37 @@ def compute_occlusion_score(seq: np.ndarray) -> float:
 _process_extractor_cache: dict = {}
 
 
+def _suppress_worker_stderr():
+    """Permanently redirect C++ stderr (fd 2) to /dev/null in this worker.
+
+    glog and absl-log read their minimum-log-level configuration at library
+    initialisation time.  When using ``fork``, the C++ MediaPipe layer is
+    already initialised in the parent process before the workers are created,
+    so environment variables like ``GLOG_minloglevel`` have no effect on the
+    forked children.  The only reliable way to silence the C++ logging is to
+    redirect the raw file descriptor.
+
+    This is safe in workers because:
+    - Worker results / exceptions travel through ``Future.result()``, not stderr.
+    - Python's ``sys.stderr`` object is updated to point at /dev/null too so
+      any Python-level write that goes through the high-level object also
+      stays quiet.  Genuine tracebacks inside workers are wrapped and
+      returned as error records by the ``try/except`` blocks in each _proc_*
+      function.
+    """
+    try:
+        devnull_fd = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull_fd, 2)   # replace C++ fd 2
+        os.close(devnull_fd)
+    except Exception:
+        pass
+    try:
+        import sys
+        sys.stderr = open(os.devnull, "w")  # keep Python layer in sync
+    except Exception:
+        pass
+
+
 def _mp_pool_worker_init_gpu(gpu_id: int):
     """Worker initialiser pinned to a specific GPU.
 
@@ -1713,6 +1744,12 @@ def _mp_pool_worker_init_gpu(gpu_id: int):
     Setting CUDA_VISIBLE_DEVICES here (before any EGL context is opened)
     makes NVIDIA's driver associate the new EGL display with that GPU.
     """
+    # Silence all MediaPipe C++ logging (glog / absl-log) before anything
+    # else.  With fork the C++ layer is already initialised from the parent,
+    # so env-var overrides are too late; fd-level redirection is the only
+    # reliable suppression mechanism.
+    _suppress_worker_stderr()
+
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
     # EGL_DEVICE_ID is honoured by some driver stacks; harmless otherwise.
     os.environ["EGL_DEVICE_ID"] = str(gpu_id)
@@ -1732,8 +1769,13 @@ def _mp_pool_worker_init_gpu(gpu_id: int):
     except Exception:
         pass
 
+    # Pre-warm ONLY the static (IMAGE-mode) extractor.
+    # Pre-warming both static AND video GPU delegates in the same process
+    # shares MediaPipe's internal GPU tensor buffer pool, causing the
+    # tensor.cc "multiple writes" synchronisation warning (E0000).  The
+    # video extractor is lazily created on first use when video datasets
+    # are processed, at which point it gets its own clean tensor pool.
     try:
-        _get_process_extractor(static_mode=False)
         _get_process_extractor(static_mode=True)
     except Exception:
         pass
@@ -1741,6 +1783,7 @@ def _mp_pool_worker_init_gpu(gpu_id: int):
 
 def _mp_pool_worker_init_cpu():
     """Worker initialiser for CPU-only machines (no GPU available)."""
+    _suppress_worker_stderr()
     _init_mediapipe()
     try:
         _cv_threads = max(1, min(2, (os.cpu_count() or 1) // max(1, NUM_MP_GPU_WORKERS)))
@@ -1749,7 +1792,6 @@ def _mp_pool_worker_init_cpu():
     except Exception:
         pass
     try:
-        _get_process_extractor(static_mode=False)
         _get_process_extractor(static_mode=True)
     except Exception:
         pass
