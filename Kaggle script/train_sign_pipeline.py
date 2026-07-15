@@ -1674,13 +1674,6 @@ def _mp_pool_worker_init():
             _mp_gpu_worker_counter.value += 1
         gpu_id = worker_idx % NUM_AVAILABLE_GPUS
         os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-        try:
-            import torch
-
-            if torch.cuda.is_available():
-                torch.cuda.set_device(0)  # Always device 0 inside CUDA_VISIBLE_DEVICES namespace
-        except Exception:
-            pass
 
     try:
         _get_process_extractor(static_mode=False)
