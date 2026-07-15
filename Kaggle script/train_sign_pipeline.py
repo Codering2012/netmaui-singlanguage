@@ -221,9 +221,10 @@ MEDIAPIPE_USE_GPU = os.environ.get(
 
 cpu_threads = os.cpu_count() or 8
 if NUM_AVAILABLE_GPUS > 0:
-    DEFAULT_GPU_WORKERS = max(cpu_threads, NUM_AVAILABLE_GPUS * 6)
+    # Cap at 8 workers per GPU (16 max for 2x GPUs) to prevent EGL context exhaustion
+    DEFAULT_GPU_WORKERS = min(16, max(8, NUM_AVAILABLE_GPUS * 8))
 else:
-    DEFAULT_GPU_WORKERS = max(4, cpu_threads)
+    DEFAULT_GPU_WORKERS = min(16, max(4, cpu_threads))
 
 NUM_MP_GPU_WORKERS = int(os.environ.get("NUM_MP_GPU_WORKERS", str(DEFAULT_GPU_WORKERS)))
 
