@@ -208,22 +208,32 @@ MAX_WORKERS = 4
 # On Kaggle's headless P100 environment, EGL is unavailable and MediaPipe's GPU
 # delegate always fails. Default to CPU so we skip the wasted GPU attempt.
 # Override by setting MEDIAPIPE_USE_GPU=1 in the environment.
-try:
-    import torch
+_NUM_AVAILABLE_GPUS = -1
 
-    NUM_AVAILABLE_GPUS = torch.cuda.device_count() if torch.cuda.is_available() else 0
-except Exception:
-    NUM_AVAILABLE_GPUS = 0
+def get_num_gpus() -> int:
+    global _NUM_AVAILABLE_GPUS
+    if _NUM_AVAILABLE_GPUS == -1:
+        env_val = os.environ.get("NUM_AVAILABLE_GPUS")
+        if env_val is not None:
+            _NUM_AVAILABLE_GPUS = int(env_val)
+        else:
+            try:
+                import torch
+                _NUM_AVAILABLE_GPUS = torch.cuda.device_count() if torch.cuda.is_available() else 0
+            except Exception:
+                _NUM_AVAILABLE_GPUS = 0
+            os.environ["NUM_AVAILABLE_GPUS"] = str(_NUM_AVAILABLE_GPUS)
+    return _NUM_AVAILABLE_GPUS
 
 _IS_KAGGLE = os.path.exists("/kaggle/working") and not os.path.exists("/workspace")
 MEDIAPIPE_USE_GPU = os.environ.get(
-    "MEDIAPIPE_USE_GPU", "1" if NUM_AVAILABLE_GPUS > 0 else ("0" if _IS_KAGGLE else "1")
+    "MEDIAPIPE_USE_GPU", "1" if get_num_gpus() > 0 else ("0" if _IS_KAGGLE else "1")
 ).lower() not in ("0", "false", "no")
 
 cpu_threads = os.cpu_count() or 8
-if NUM_AVAILABLE_GPUS > 0:
+if get_num_gpus() > 0:
     # 8 workers per GPU (16 total) for rock-solid EGL stability & max dual-GPU throughput
-    DEFAULT_GPU_WORKERS = min(16, max(8, NUM_AVAILABLE_GPUS * 8))
+    DEFAULT_GPU_WORKERS = min(16, max(8, get_num_gpus() * 8))
 else:
     DEFAULT_GPU_WORKERS = min(16, max(4, cpu_threads))
 
@@ -1670,11 +1680,11 @@ def _mp_pool_worker_init():
     except Exception:
         pass
 
-    if MEDIAPIPE_USE_GPU and NUM_AVAILABLE_GPUS > 0:
+    if MEDIAPIPE_USE_GPU and get_num_gpus() > 0:
         with _mp_gpu_worker_counter.get_lock():
             worker_idx = _mp_gpu_worker_counter.value
             _mp_gpu_worker_counter.value += 1
-        gpu_id = worker_idx % NUM_AVAILABLE_GPUS
+        gpu_id = worker_idx % get_num_gpus()
         os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
         os.environ["EGL_DEVICE_ID"] = str(gpu_id)
         os.environ["DRI_PRIME"] = str(gpu_id)
