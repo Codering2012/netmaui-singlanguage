@@ -207,10 +207,6 @@ MAX_WORKERS = 4
 # On Kaggle's headless P100 environment, EGL is unavailable and MediaPipe's GPU
 # delegate always fails. Default to CPU so we skip the wasted GPU attempt.
 # Override by setting MEDIAPIPE_USE_GPU=1 in the environment.
-_IS_KAGGLE = os.path.exists("/kaggle/working")
-MEDIAPIPE_USE_GPU = os.environ.get(
-    "MEDIAPIPE_USE_GPU", "0" if _IS_KAGGLE else "1"
-).lower() not in ("0", "false", "no")
 try:
     import torch
 
@@ -218,8 +214,13 @@ try:
 except Exception:
     NUM_AVAILABLE_GPUS = 0
 
+_IS_KAGGLE = os.path.exists("/kaggle/working") and not os.path.exists("/workspace")
+MEDIAPIPE_USE_GPU = os.environ.get(
+    "MEDIAPIPE_USE_GPU", "1" if NUM_AVAILABLE_GPUS > 0 else ("0" if _IS_KAGGLE else "1")
+).lower() not in ("0", "false", "no")
+
 if NUM_AVAILABLE_GPUS > 0:
-    DEFAULT_GPU_WORKERS = max(8, NUM_AVAILABLE_GPUS * 2)
+    DEFAULT_GPU_WORKERS = max(8, NUM_AVAILABLE_GPUS * 4)
 else:
     DEFAULT_GPU_WORKERS = max(4, os.cpu_count() or 4)
 
