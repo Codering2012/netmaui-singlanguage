@@ -3177,20 +3177,20 @@ class FrankensteinDataProcessor:
 
         row_dicts = [r.to_dict() for _, r in df.iterrows()]
         tasks = []
-        with ThreadPoolExecutor(max_workers=16) as tpool:
-            for task, discard in tpool.map(_parse_citizen_row, row_dicts):
-                if task is not None:
-                    tasks.append(task)
-                elif discard is not None:
-                    self._discard(
-                        split=split,
-                        source="ASL_Citizen",
-                        task="isolated_gloss",
-                        label=discard["label"],
-                        quality=0.0,
-                        reason=discard["reason"],
-                        meta=discard.get("meta"),
-                    )
+        for row_dict in row_dicts:
+            task, discard = _parse_citizen_row(row_dict)
+            if task is not None:
+                tasks.append(task)
+            elif discard is not None:
+                self._discard(
+                    split=split,
+                    source="ASL_Citizen",
+                    task="isolated_gloss",
+                    label=discard["label"],
+                    quality=0.0,
+                    reason=discard["reason"],
+                    meta=discard.get("meta"),
+                )
         profiler.add_timing("metadata_parsing", time.perf_counter() - t0_parse)
 
         if getattr(self, "is_test", False):
@@ -3324,20 +3324,20 @@ class FrankensteinDataProcessor:
             return (str(npy_target), sentence, video_id, split, threshold), None
 
         tasks = []
-        with ThreadPoolExecutor(max_workers=16) as tpool:
-            for task, discard in tpool.map(_parse_how2sign_row, rows):
-                if task is not None:
-                    tasks.append(task)
-                elif discard is not None:
-                    self._discard(
-                        split=split,
-                        source="How2Sign_Holistic",
-                        task="sentence_translation",
-                        label=discard["sentence"],
-                        quality=0.0,
-                        reason=discard["reason"],
-                        meta=discard.get("meta"),
-                    )
+        for r_dict in rows:
+            task, discard = _parse_how2sign_row(r_dict)
+            if task is not None:
+                tasks.append(task)
+            elif discard is not None:
+                self._discard(
+                    split=split,
+                    source="How2Sign_Holistic",
+                    task="sentence_translation",
+                    label=discard["sentence"],
+                    quality=0.0,
+                    reason=discard["reason"],
+                    meta=discard.get("meta"),
+                )
         profiler.add_timing("metadata_parsing", time.perf_counter() - t0_parse)
 
         if getattr(self, "is_test", False):
@@ -3625,23 +3625,23 @@ class FrankensteinDataProcessor:
 
         row_dicts = [r.to_dict() for _, r in partition_df.iterrows()]
         tasks = []
-        with ThreadPoolExecutor(max_workers=16) as tpool:
-            for task, discard in tpool.map(_parse_chicago_row, row_dicts):
-                if task is not None:
-                    tasks.append(task)
-                elif discard is not None:
-                    self._discard(
-                        split=split,
-                        source="ChicagoFSWild",
-                        task="isolated_gloss",
-                        label=discard["label"],
-                        quality=0.0,
-                        reason=discard["reason"],
-                        meta={
-                            "filename": discard.get("filename"),
-                            "num_frames": discard.get("num_frames"),
-                        },
-                    )
+        for row_dict in row_dicts:
+            task, discard = _parse_chicago_row(row_dict)
+            if task is not None:
+                tasks.append(task)
+            elif discard is not None:
+                self._discard(
+                    split=split,
+                    source="ChicagoFSWild",
+                    task="isolated_gloss",
+                    label=discard["label"],
+                    quality=0.0,
+                    reason=discard["reason"],
+                    meta={
+                        "filename": discard.get("filename"),
+                        "num_frames": discard.get("num_frames"),
+                    },
+                )
         profiler.add_timing("metadata_parsing", time.perf_counter() - t0_parse)
 
         if getattr(self, "is_test", False):
@@ -3814,19 +3814,19 @@ class FrankensteinDataProcessor:
             return entry_tasks, entry_discards
 
         tasks = []
-        with ThreadPoolExecutor(max_workers=16) as tpool:
-            for e_tasks, e_discards in tpool.map(_parse_wlasl_entry, wlasl_data):
-                tasks.extend(e_tasks)
-                for discard in e_discards:
-                    self._discard(
-                        split=split,
-                        source="WLASL_v0.3",
-                        task="isolated_gloss",
-                        label=discard["label"],
-                        quality=0.0,
-                        reason=discard["reason"],
-                        meta=discard["meta"],
-                    )
+        for entry in wlasl_data:
+            e_tasks, e_discards = _parse_wlasl_entry(entry)
+            tasks.extend(e_tasks)
+            for discard in e_discards:
+                self._discard(
+                    split=split,
+                    source="WLASL_v0.3",
+                    task="isolated_gloss",
+                    label=discard["label"],
+                    quality=0.0,
+                    reason=discard["reason"],
+                    meta=discard["meta"],
+                )
         profiler.add_timing("metadata_parsing", time.perf_counter() - t0_parse)
 
         if getattr(self, "is_test", False):
