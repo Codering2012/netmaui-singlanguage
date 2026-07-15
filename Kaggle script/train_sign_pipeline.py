@@ -1676,6 +1676,8 @@ def _mp_pool_worker_init():
             _mp_gpu_worker_counter.value += 1
         gpu_id = worker_idx % NUM_AVAILABLE_GPUS
         os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+        os.environ["EGL_DEVICE_ID"] = str(gpu_id)
+        os.environ["DRI_PRIME"] = str(gpu_id)
 
     try:
         _get_process_extractor(static_mode=False)
