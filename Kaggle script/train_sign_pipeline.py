@@ -45,24 +45,33 @@ import torch
 from torch.utils.data import Dataset
 from pathlib import Path
 from scipy.interpolate import interp1d, CubicSpline
-import cv2
-import mediapipe as mp
+cv2 = None
+mp = None
 
-# Monkeypatch MediaPipe landmarker destructors to swallow shutdown errors safely
-try:
 
-    def _safe_landmarker_del(self):
+def _init_mediapipe():
+    global mp, cv2
+    if mp is None:
+        import cv2 as _cv2
+        import mediapipe as _mp
+
+        cv2 = _cv2
+        mp = _mp
+        # Monkeypatch MediaPipe landmarker destructors to swallow shutdown errors safely
         try:
-            if hasattr(self, "close"):
-                self.close()
+
+            def _safe_landmarker_del(self):
+                try:
+                    if hasattr(self, "close"):
+                        self.close()
+                except Exception:
+                    pass
+
+            mp.tasks.vision.HandLandmarker.__del__ = _safe_landmarker_del
+            mp.tasks.vision.PoseLandmarker.__del__ = _safe_landmarker_del
+            mp.tasks.vision.FaceLandmarker.__del__ = _safe_landmarker_del
         except Exception:
             pass
-
-    mp.tasks.vision.HandLandmarker.__del__ = _safe_landmarker_del
-    mp.tasks.vision.PoseLandmarker.__del__ = _safe_landmarker_del
-    mp.tasks.vision.FaceLandmarker.__del__ = _safe_landmarker_del
-except Exception:
-    pass
 
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -1674,14 +1683,23 @@ _mp_gpu_worker_counter = MPValue("i", 0)
 
 def _mp_pool_worker_init():
     """Assign each ProcessPool worker to a GPU if available, and pre-warm MediaPipe landmark models."""
+    if MEDIAPIPE_USE_GPU and get_num_gpus() > 0:
+        with _mp_gpu_worker_counter.get_lock():
+            worker_idx = _mp_gpu_worker_counter.value
+            _mp_gpu_worker_counter.value += 1
+        gpu_id = worker_idx % get_num_gpus()
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+        os.environ["EGL_DEVICE_ID"] = str(gpu_id)
+        os.environ["DRI_PRIME"] = str(gpu_id)
+
+    # Initialize CV2 and MediaPipe *after* the environment variables are set
+    _init_mediapipe()
+
     try:
         cv2.setNumThreads(1)
         os.environ["OPENCV_FFMPEG_THREADS"] = "1"
     except Exception:
         pass
-
-    if MEDIAPIPE_USE_GPU and get_num_gpus() > 0:
-        os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
     try:
         _get_process_extractor(static_mode=False)
@@ -4143,6 +4161,8 @@ def main(argv=None):
 
     KAGGLE_OUTPUT_DIR = Path(args.output_dir)
     KAGGLE_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    _init_mediapipe()
 
     log_msg("======================================================================")
     log_msg("      ASL RECOGNITION: PHASE 1 COMPREHENSIVE FRANKENSTEIN ENGINE     ")
