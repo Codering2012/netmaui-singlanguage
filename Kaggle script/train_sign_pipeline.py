@@ -41,8 +41,23 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_compl
 from multiprocessing import Value as MPValue, get_context
 import numpy as np
 import pandas as pd
-import torch
-from torch.utils.data import Dataset
+Dataset = object
+torch = None
+
+
+def _init_torch():
+    global torch, Dataset
+    if torch is None:
+        import torch as _torch
+        from torch.utils.data import Dataset as _Dataset
+
+        torch = _torch
+        Dataset = _Dataset
+        try:
+            OnlineASLDataset.__bases__ = (Dataset,)
+            FusedASLDataset.__bases__ = (Dataset,)
+        except Exception:
+            pass
 from pathlib import Path
 from scipy.interpolate import interp1d, CubicSpline
 cv2 = None
@@ -4163,6 +4178,7 @@ def main(argv=None):
     KAGGLE_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     _init_mediapipe()
+    _init_torch()
 
     log_msg("======================================================================")
     log_msg("      ASL RECOGNITION: PHASE 1 COMPREHENSIVE FRANKENSTEIN ENGINE     ")
