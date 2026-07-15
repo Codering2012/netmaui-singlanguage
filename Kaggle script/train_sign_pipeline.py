@@ -1094,15 +1094,7 @@ class MediaPipeExtractor:
             pass
 
     def _bgr_to_rgb(self, frame_bgr: np.ndarray) -> np.ndarray:
-        h, w = frame_bgr.shape[:2]
-        if (
-            self._rgb_buf is None
-            or self._rgb_buf.shape[0] != h
-            or self._rgb_buf.shape[1] != w
-        ):
-            self._rgb_buf = np.empty((h, w, 3), dtype=np.uint8)
-        cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB, dst=self._rgb_buf)
-        return self._rgb_buf
+        return cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
 
     def _run_tasks(self, rgb: np.ndarray, timestamp_ms: int | None):
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
