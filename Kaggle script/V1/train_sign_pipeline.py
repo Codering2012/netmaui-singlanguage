@@ -1796,6 +1796,10 @@ def _mp_pool_worker_init_gpu(gpu_id: int):
     # reliable suppression mechanism.
     _suppress_worker_stderr()
 
+    assigned_gpu = os.environ.get("ASSIGNED_GPU_ID")
+    if assigned_gpu is not None:
+        gpu_id = int(assigned_gpu)
+
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     # EGL_VISIBLE_DEVICES and NVIDIA_VISIBLE_DEVICES force NVIDIA EGL (libEGL_nvidia.so)
@@ -4779,6 +4783,7 @@ def main(argv=None):
         procs = []
         for i in range(n_gpus):
             env = os.environ.copy()
+            env["ASSIGNED_GPU_ID"] = str(i)
             env["CUDA_VISIBLE_DEVICES"] = str(i)
             env["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
             env["EGL_VISIBLE_DEVICES"] = str(i)
