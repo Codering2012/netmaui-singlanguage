@@ -1797,9 +1797,16 @@ def _mp_pool_worker_init_gpu(gpu_id: int):
     _suppress_worker_stderr()
 
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    # EGL_VISIBLE_DEVICES and NVIDIA_VISIBLE_DEVICES force NVIDIA EGL (libEGL_nvidia.so)
+    # to only enumerate the assigned GPU during eglQueryDevicesEXT / eglGetDisplay.
+    os.environ["EGL_VISIBLE_DEVICES"] = str(gpu_id)
+    os.environ["NVIDIA_VISIBLE_DEVICES"] = str(gpu_id)
     # EGL_DEVICE_ID is honoured by some driver stacks; harmless otherwise.
     os.environ["EGL_DEVICE_ID"] = str(gpu_id)
     os.environ["DRI_PRIME"] = str(gpu_id)
+    # DRM_DEVICE directs headless Mesa/DRM EGL to the exact render node (/dev/dri/renderD128 for GPU 0, renderD129 for GPU 1).
+    os.environ["DRM_DEVICE"] = f"/dev/dri/renderD{128 + gpu_id}"
     # Isolate the child worker so any code calling get_num_gpus() inside the worker
     # sees exactly 1 GPU (its pinned device 0).
     os.environ["NUM_AVAILABLE_GPUS"] = "1"
