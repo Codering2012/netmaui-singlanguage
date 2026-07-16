@@ -1786,8 +1786,8 @@ def _ensure_egl_device_hook():
     """Ensure our EGL device enumeration interceptor exists so MediaPipe C++ respects ASSIGNED_GPU_ID."""
     if not sys.platform.startswith("linux"):
         return None
-    hook_path = Path("/tmp/_egl_hook.so")
-    c_path = Path("/tmp/_egl_hook.c")
+    hook_path = Path("/tmp/_egl_hook_v2.so")
+    c_path = Path("/tmp/_egl_hook_v2.c")
     if hook_path.exists():
         return str(hook_path)
     try:
@@ -1796,18 +1796,33 @@ def _ensure_egl_device_hook():
 #include <dlfcn.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 
 typedef void* EGLDeviceEXT;
-typedef int (*eglQueryDevicesEXT_t)(int max_devices, EGLDeviceEXT *devices, int *num_devices);
+typedef int (*eglQueryDevices_t)(int max_devices, EGLDeviceEXT *devices, int *num_devices);
+typedef void* (*eglGetProcAddress_t)(const char *procname);
+
+static eglQueryDevices_t real_eglQueryDevicesEXT = NULL;
+static eglQueryDevices_t real_eglQueryDevicesKHR = NULL;
+static eglGetProcAddress_t real_eglGetProcAddress = NULL;
+
+static void init_real_funcs(void) {
+    if (!real_eglQueryDevicesEXT) {
+        real_eglQueryDevicesEXT = (eglQueryDevices_t)dlsym(RTLD_NEXT, "eglQueryDevicesEXT");
+    }
+    if (!real_eglQueryDevicesKHR) {
+        real_eglQueryDevicesKHR = (eglQueryDevices_t)dlsym(RTLD_NEXT, "eglQueryDevicesKHR");
+    }
+    if (!real_eglGetProcAddress) {
+        real_eglGetProcAddress = (eglGetProcAddress_t)dlsym(RTLD_NEXT, "eglGetProcAddress");
+    }
+}
 
 int eglQueryDevicesEXT(int max_devices, EGLDeviceEXT *devices, int *num_devices) {
-    static eglQueryDevicesEXT_t real_fn = NULL;
-    if (!real_fn) {
-        real_fn = (eglQueryDevicesEXT_t)dlsym(RTLD_NEXT, "eglQueryDevicesEXT");
-    }
-    if (!real_fn) return 0;
+    init_real_funcs();
+    if (!real_eglQueryDevicesEXT) return 0;
 
-    int res = real_fn(max_devices, devices, num_devices);
+    int res = real_eglQueryDevicesEXT(max_devices, devices, num_devices);
     if (res && num_devices && *num_devices > 0 && devices) {
         char *gpu_env = getenv("ASSIGNED_GPU_ID");
         if (!gpu_env) gpu_env = getenv("CUDA_VISIBLE_DEVICES");
@@ -1820,6 +1835,40 @@ int eglQueryDevicesEXT(int max_devices, EGLDeviceEXT *devices, int *num_devices)
         }
     }
     return res;
+}
+
+int eglQueryDevicesKHR(int max_devices, EGLDeviceEXT *devices, int *num_devices) {
+    init_real_funcs();
+    if (!real_eglQueryDevicesKHR) return 0;
+
+    int res = real_eglQueryDevicesKHR(max_devices, devices, num_devices);
+    if (res && num_devices && *num_devices > 0 && devices) {
+        char *gpu_env = getenv("ASSIGNED_GPU_ID");
+        if (!gpu_env) gpu_env = getenv("CUDA_VISIBLE_DEVICES");
+        if (gpu_env) {
+            int target_id = atoi(gpu_env);
+            if (target_id >= 0 && target_id < *num_devices) {
+                devices[0] = devices[target_id];
+                *num_devices = 1;
+            }
+        }
+    }
+    return res;
+}
+
+void* eglGetProcAddress(const char *procname) {
+    init_real_funcs();
+    if (!procname) return NULL;
+    if (strcmp(procname, "eglQueryDevicesEXT") == 0) {
+        return (void*)eglQueryDevicesEXT;
+    }
+    if (strcmp(procname, "eglQueryDevicesKHR") == 0) {
+        return (void*)eglQueryDevicesKHR;
+    }
+    if (real_eglGetProcAddress) {
+        return real_eglGetProcAddress(procname);
+    }
+    return dlsym(RTLD_NEXT, procname);
 }
 """
         c_path.write_text(c_code, encoding="utf-8")
@@ -2249,6 +2298,8 @@ _thread_extractor_cache = threading.local()
 
 def _get_process_extractor(static_mode: bool = False) -> "MediaPipeExtractor":
     """Return a thread-local long-lived MediaPipeExtractor."""
+    if mp is None:
+        _init_mediapipe()
     key = f"extractor_{static_mode}"
     if not hasattr(_thread_extractor_cache, key):
         setattr(
