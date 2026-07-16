@@ -1782,6 +1782,59 @@ def _suppress_worker_stderr():
         pass
 
 
+def _ensure_egl_device_hook():
+    """Ensure our EGL device enumeration interceptor exists so MediaPipe C++ respects ASSIGNED_GPU_ID."""
+    if not sys.platform.startswith("linux"):
+        return None
+    hook_path = Path("/tmp/_egl_hook.so")
+    c_path = Path("/tmp/_egl_hook.c")
+    if hook_path.exists():
+        return str(hook_path)
+    try:
+        c_code = """
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <stdlib.h>
+#include <stdio.h>
+
+typedef void* EGLDeviceEXT;
+typedef int (*eglQueryDevicesEXT_t)(int max_devices, EGLDeviceEXT *devices, int *num_devices);
+
+int eglQueryDevicesEXT(int max_devices, EGLDeviceEXT *devices, int *num_devices) {
+    static eglQueryDevicesEXT_t real_fn = NULL;
+    if (!real_fn) {
+        real_fn = (eglQueryDevicesEXT_t)dlsym(RTLD_NEXT, "eglQueryDevicesEXT");
+    }
+    if (!real_fn) return 0;
+
+    int res = real_fn(max_devices, devices, num_devices);
+    if (res && num_devices && *num_devices > 0 && devices) {
+        char *gpu_env = getenv("ASSIGNED_GPU_ID");
+        if (!gpu_env) gpu_env = getenv("CUDA_VISIBLE_DEVICES");
+        if (gpu_env) {
+            int target_id = atoi(gpu_env);
+            if (target_id >= 0 && target_id < *num_devices) {
+                devices[0] = devices[target_id];
+                *num_devices = 1;
+            }
+        }
+    }
+    return res;
+}
+"""
+        c_path.write_text(c_code, encoding="utf-8")
+        import subprocess
+        subprocess.run(
+            ["gcc", "-shared", "-fPIC", "-o", str(hook_path), str(c_path), "-ldl"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return str(hook_path)
+    except Exception:
+        return None
+
+
 def _mp_pool_worker_init_gpu(gpu_id: int):
     """Worker initialiser pinned to a specific GPU.
 
@@ -1790,15 +1843,19 @@ def _mp_pool_worker_init_gpu(gpu_id: int):
     Setting CUDA_VISIBLE_DEVICES here (before any EGL context is opened)
     makes NVIDIA's driver associate the new EGL display with that GPU.
     """
-    # Silence all MediaPipe C++ logging (glog / absl-log) before anything
-    # else.  With fork the C++ layer is already initialised from the parent,
-    # so env-var overrides are too late; fd-level redirection is the only
-    # reliable suppression mechanism.
     _suppress_worker_stderr()
 
     assigned_gpu = os.environ.get("ASSIGNED_GPU_ID")
     if assigned_gpu is not None:
         gpu_id = int(assigned_gpu)
+
+    hook_so = _ensure_egl_device_hook()
+    if hook_so and os.path.exists(hook_so):
+        try:
+            ctypes.CDLL(hook_so, mode=ctypes.RTLD_GLOBAL)
+            os.environ["LD_PRELOAD"] = hook_so + (":" + os.environ.get("LD_PRELOAD", "") if os.environ.get("LD_PRELOAD") else "")
+        except Exception:
+            pass
 
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
@@ -4780,9 +4837,12 @@ def main(argv=None):
         total_workers = args.workers if args.workers is not None else NUM_MP_GPU_WORKERS
         workers_per_gpu = max(1, total_workers // n_gpus)
 
+        hook_so = _ensure_egl_device_hook()
         procs = []
         for i in range(n_gpus):
             env = os.environ.copy()
+            if hook_so and os.path.exists(hook_so):
+                env["LD_PRELOAD"] = hook_so + (":" + env.get("LD_PRELOAD", "") if env.get("LD_PRELOAD") else "")
             env["ASSIGNED_GPU_ID"] = str(i)
             env["CUDA_VISIBLE_DEVICES"] = str(i)
             env["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
