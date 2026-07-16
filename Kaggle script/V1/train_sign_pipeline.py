@@ -3261,6 +3261,17 @@ class FrankensteinDataProcessor:
         self.quality_stats = defaultdict(int)
         self.active_split = "unknown"
         self.is_test = False
+        self.gpu_id = None
+        self.num_gpus = 1
+        self.phase = "all"
+
+    def _shard_tasks(self, tasks: list) -> list:
+        """Slice task list for multi-process GPU sharding if active."""
+        if self.gpu_id is not None and self.num_gpus > 1 and tasks:
+            sharded = [t for i, t in enumerate(tasks) if i % self.num_gpus == self.gpu_id]
+            log_msg(f"[*] Shard {self.gpu_id}/{self.num_gpus}: processing {len(sharded)}/{len(tasks)} tasks.")
+            return sharded
+        return tasks
 
     def _get_quality_threshold(self, source: str) -> float:
         """Return the quality acceptance threshold for a given dataset source."""
@@ -3459,6 +3470,7 @@ class FrankensteinDataProcessor:
         # The file-scan cache was populated above. Clear it now so the
         # Path objects (potentially tens of thousands) can be GC'd.
         _DIR_FILE_CACHE.clear()
+        tasks = self._shard_tasks(tasks)
         if getattr(self, "is_test", False):
             tasks = tasks[:100]
         records = []
@@ -3550,6 +3562,7 @@ class FrankensteinDataProcessor:
                 )
         profiler.add_timing("metadata_parsing", time.perf_counter() - t0_parse)
 
+        tasks = self._shard_tasks(tasks)
         if getattr(self, "is_test", False):
             tasks = tasks[:100]
         records = []
@@ -3629,6 +3642,7 @@ class FrankensteinDataProcessor:
         threshold = self._get_quality_threshold("How2Sign_Holistic")
 
         rows = [row.to_dict() for _, row in df.iterrows()]
+        rows = self._shard_tasks(rows)
         if limit is not None:
             rows = rows[:limit]
 
@@ -3697,6 +3711,7 @@ class FrankensteinDataProcessor:
                 )
         profiler.add_timing("metadata_parsing", time.perf_counter() - t0_parse)
 
+        tasks = self._shard_tasks(tasks)
         if getattr(self, "is_test", False):
             tasks = tasks[:100]
         records = []
@@ -4001,6 +4016,7 @@ class FrankensteinDataProcessor:
                 )
         profiler.add_timing("metadata_parsing", time.perf_counter() - t0_parse)
 
+        tasks = self._shard_tasks(tasks)
         if getattr(self, "is_test", False):
             tasks = tasks[:100]
         records = []
@@ -4068,6 +4084,7 @@ class FrankensteinDataProcessor:
                 tasks.append((str(p), lbl, split, threshold))
         # Clear the file-scan cache — paths are now captured in `tasks`.
         _DIR_FILE_CACHE.clear()
+        tasks = self._shard_tasks(tasks)
         if getattr(self, "is_test", False):
             tasks = tasks[:100]
         records = []
@@ -4188,6 +4205,7 @@ class FrankensteinDataProcessor:
                 )
         profiler.add_timing("metadata_parsing", time.perf_counter() - t0_parse)
 
+        tasks = self._shard_tasks(tasks)
         if getattr(self, "is_test", False):
             tasks = tasks[:100]
         records = []
@@ -4490,8 +4508,9 @@ def build_split(processor, split, normalizer, augment=False, label_to_idx=None):
         """Write *records* to a temp shard and log the flush."""
         if not records:
             return
+        gpu_suffix = f"_gpu{processor.gpu_id}" if getattr(processor, "gpu_id", None) is not None else ""
         idx = len(temp_shard_paths)
-        sp = temp_shard_dir / f"shard_{idx:03d}_{tag}.pt"
+        sp = temp_shard_dir / f"shard_{idx:03d}_{tag}{gpu_suffix}.pt"
         torch.save(records, sp)
         temp_shard_paths.append(sp)
         log_msg(f"[GC] Flushed {len(records)} {tag} records \u2192 {sp.name}")
@@ -4499,30 +4518,44 @@ def build_split(processor, split, normalizer, augment=False, label_to_idx=None):
     sentence_records: list = []
 
     try:
-        # ── Phase A: process all datasets — one at a time —————————————
-        recs = processor.process_asl_alphabet(split=split)
-        _flush_temp(recs, "alphabet"); del recs
-        _release_mediapipe_worker_pool()
+        # Phase A: process all datasets — one at a time —————————————
+        if getattr(processor, "phase", "all") in ("all", "extract"):
+            recs = processor.process_asl_alphabet(split=split)
+            _flush_temp(recs, "alphabet"); del recs
+            _release_mediapipe_worker_pool()
 
-        recs = processor.process_asl_citizen(split=split)
-        _flush_temp(recs, "citizen"); del recs
-        _release_mediapipe_worker_pool()
+            recs = processor.process_asl_citizen(split=split)
+            _flush_temp(recs, "citizen"); del recs
+            _release_mediapipe_worker_pool()
 
-        recs = processor.process_chicago_fswild(split=split)
-        _flush_temp(recs, "chicago"); del recs
-        _release_mediapipe_worker_pool()
+            recs = processor.process_chicago_fswild(split=split)
+            _flush_temp(recs, "chicago"); del recs
+            _release_mediapipe_worker_pool()
 
-        recs = processor.process_synthetic_numbers(split=split)
-        _flush_temp(recs, "numbers"); del recs
-        _release_mediapipe_worker_pool()
+            recs = processor.process_synthetic_numbers(split=split)
+            _flush_temp(recs, "numbers"); del recs
+            _release_mediapipe_worker_pool()
 
-        recs = processor.process_wlasl(split=split)
-        _flush_temp(recs, "wlasl"); del recs
-        _release_mediapipe_worker_pool()
+            recs = processor.process_wlasl(split=split)
+            _flush_temp(recs, "wlasl"); del recs
+            _release_mediapipe_worker_pool()
 
-        # How2Sign is sentence-level and much smaller; kept in RAM.
-        sentence_records = processor.process_how2sign_holistic(split=split)
-        _release_mediapipe_worker_pool()
+            sentence_records = processor.process_how2sign_holistic(split=split)
+            _release_mediapipe_worker_pool()
+
+            if getattr(processor, "phase", "all") == "extract":
+                if sentence_records:
+                    _flush_temp(sentence_records, "how2sign_holistic"); del sentence_records
+                log_msg(f"[+] GPU Shard Process {processor.gpu_id} completed extraction for split {split}.")
+                return None, None
+        else:
+            log_msg(f"[*] Phase A skipped (merge mode). Discovering temp shards across all GPUs...")
+            temp_shard_paths = sorted(temp_shard_dir.glob("shard_*.pt"))
+            log_msg(f"[*] Found {len(temp_shard_paths)} temp shards for Phase B & Phase C merge.")
+            for sp in list(temp_shard_paths):
+                if "how2sign_holistic" in sp.name:
+                    sentence_records.extend(torch.load(sp, map_location="cpu"))
+                    temp_shard_paths.remove(sp)
 
         # ── Phase B: label-only scan — build vocabulary ——————————————
         if label_to_idx is None:
@@ -4720,12 +4753,78 @@ def main(argv=None):
         default=None,
         help="Number of multi-processing workers (overrides NUM_MP_GPU_WORKERS)",
     )
+    parser.add_argument(
+        "--gpu-id", type=int, default=None, help="Assigned GPU ID for multi-process sharding"
+    )
+    parser.add_argument(
+        "--num-gpus", type=int, default=1, help="Total number of GPU shard processes"
+    )
+    parser.add_argument(
+        "--phase", type=str, default="all", choices=["all", "extract", "merge"], help="Execution phase when sharding"
+    )
     args = parser.parse_args(argv)
 
     global NUM_MP_GPU_WORKERS
     if args.workers is not None and args.workers > 0:
         NUM_MP_GPU_WORKERS = int(args.workers)
         os.environ["NUM_MP_GPU_WORKERS"] = str(NUM_MP_GPU_WORKERS)
+
+    n_gpus = get_num_gpus()
+    if args.gpu_id is None and n_gpus > 1 and args.phase in ("all", "extract"):
+        import subprocess
+        log_msg(f"[*] Master Orchestrator: Detected {n_gpus} GPUs. Launching {n_gpus} independent OS processes (1 per GPU) for sector sharding...")
+        total_workers = args.workers if args.workers is not None else NUM_MP_GPU_WORKERS
+        workers_per_gpu = max(1, total_workers // n_gpus)
+
+        procs = []
+        for i in range(n_gpus):
+            env = os.environ.copy()
+            env["CUDA_VISIBLE_DEVICES"] = str(i)
+            env["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+            env["EGL_VISIBLE_DEVICES"] = str(i)
+            env["NVIDIA_VISIBLE_DEVICES"] = str(i)
+            env["EGL_DEVICE_ID"] = str(i)
+            env["DRI_PRIME"] = str(i)
+            env["DRM_DEVICE"] = f"/dev/dri/renderD{128 + i}"
+            env["NUM_AVAILABLE_GPUS"] = "1"
+            env["NUM_MP_GPU_WORKERS"] = str(workers_per_gpu)
+
+            cmd = [
+                sys.executable,
+                sys.argv[0],
+                "--phase", "extract",
+                "--gpu-id", str(i),
+                "--num-gpus", str(n_gpus),
+                "--workers", str(workers_per_gpu),
+            ]
+            if args.split:
+                cmd.extend(["--split", args.split])
+            if args.test:
+                cmd.append("--test")
+            if args.augment:
+                cmd.append("--augment")
+            if args.output_dir:
+                cmd.extend(["--output-dir", str(args.output_dir)])
+            if args.shard_size:
+                cmd.extend(["--shard-size", str(args.shard_size)])
+
+            log_msg(f"[*] Launching GPU Shard Process {i}: {' '.join(cmd)}")
+            procs.append((i, subprocess.Popen(cmd, env=env)))
+
+        failed = False
+        for i, p in procs:
+            ret = p.wait()
+            if ret != 0:
+                log_msg(f"[!] Error: GPU Shard Process {i} exited with error code {ret}")
+                failed = True
+            else:
+                log_msg(f"[+] GPU Shard Process {i} completed extraction successfully.")
+
+        if failed:
+            raise RuntimeError("One or more GPU shard processes failed during Phase A extraction.")
+
+        args.phase = "merge"
+        log_msg("[*] All GPU shard extractions finished. Master Orchestrator starting Phase B & C merge...")
 
     KAGGLE_OUTPUT_DIR = Path(args.output_dir)
     KAGGLE_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -4747,6 +4846,9 @@ def main(argv=None):
     )
     processor = FrankensteinDataProcessor(normalizer=normalizer)
     processor.is_test = args.test
+    processor.gpu_id = args.gpu_id
+    processor.num_gpus = args.num_gpus
+    processor.phase = args.phase
     processor.aslex_alias_map = load_aslex_alias_map()
     if processor.aslex_alias_map:
         log_msg(f"[*] Loaded {len(processor.aslex_alias_map)} ASLEX alias entries.")
@@ -4781,6 +4883,8 @@ def main(argv=None):
             augment=args.augment,
             label_to_idx=master_label_to_idx,
         )
+        if payload is None:
+            continue
 
         if split == "train" and master_label_to_idx is None:
             master_label_to_idx = fused_dataset.label_to_idx
