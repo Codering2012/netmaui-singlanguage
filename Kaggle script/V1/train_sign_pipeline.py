@@ -1782,127 +1782,11 @@ def _suppress_worker_stderr():
         pass
 
 
-def _ensure_egl_device_hook():
-    """Ensure our EGL device enumeration interceptor exists so MediaPipe C++ respects ASSIGNED_GPU_ID."""
-    if not sys.platform.startswith("linux"):
-        return None
-    hook_path = Path("/tmp/_egl_hook_v3.so")
-    c_path = Path("/tmp/_egl_hook_v3.c")
-    if hook_path.exists():
-        return str(hook_path)
-    try:
-        c_code = """
-#define _GNU_SOURCE
-#include <dlfcn.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
-
-typedef void* EGLDeviceEXT;
-typedef int (*eglQueryDevices_t)(int max_devices, EGLDeviceEXT *devices, int *num_devices);
-typedef void* (*eglGetProcAddress_t)(const char *procname);
-
-static eglQueryDevices_t real_eglQueryDevicesEXT = NULL;
-static eglQueryDevices_t real_eglQueryDevicesKHR = NULL;
-static eglGetProcAddress_t real_eglGetProcAddress = NULL;
-
-static void init_real_funcs(void) {
-    if (!real_eglQueryDevicesEXT) {
-        real_eglQueryDevicesEXT = (eglQueryDevices_t)dlsym(RTLD_NEXT, "eglQueryDevicesEXT");
-    }
-    if (!real_eglQueryDevicesKHR) {
-        real_eglQueryDevicesKHR = (eglQueryDevices_t)dlsym(RTLD_NEXT, "eglQueryDevicesKHR");
-    }
-    if (!real_eglGetProcAddress) {
-        real_eglGetProcAddress = (eglGetProcAddress_t)dlsym(RTLD_NEXT, "eglGetProcAddress");
-    }
-}
-
-static int query_devices_intercept(eglQueryDevices_t real_fn, int max_devices, EGLDeviceEXT *devices, int *num_devices) {
-    if (!real_fn) return 0;
-
-    char *assigned_gpu = getenv("ASSIGNED_GPU_ID");
-    int target_id = -1;
-    if (assigned_gpu) {
-        target_id = atoi(assigned_gpu);
-    } else {
-        char *cuda_vis = getenv("CUDA_VISIBLE_DEVICES");
-        if (cuda_vis) target_id = atoi(cuda_vis);
-    }
-
-    // Temporarily clear filtering environment variables so libEGL_nvidia enumerates
-    // ALL physical EGL device handles (devices[0] = /dev/nvidia0, devices[1] = /dev/nvidia1).
-    char *save_cuda = getenv("CUDA_VISIBLE_DEVICES") ? strdup(getenv("CUDA_VISIBLE_DEVICES")) : NULL;
-    char *save_egl = getenv("EGL_VISIBLE_DEVICES") ? strdup(getenv("EGL_VISIBLE_DEVICES")) : NULL;
-    char *save_nv = getenv("NVIDIA_VISIBLE_DEVICES") ? strdup(getenv("NVIDIA_VISIBLE_DEVICES")) : NULL;
-
-    if (save_cuda) unsetenv("CUDA_VISIBLE_DEVICES");
-    if (save_egl) unsetenv("EGL_VISIBLE_DEVICES");
-    if (save_nv) unsetenv("NVIDIA_VISIBLE_DEVICES");
-
-    int res = real_fn(max_devices, devices, num_devices);
-
-    if (save_cuda) { setenv("CUDA_VISIBLE_DEVICES", save_cuda, 1); free(save_cuda); }
-    if (save_egl) { setenv("EGL_VISIBLE_DEVICES", save_egl, 1); free(save_egl); }
-    if (save_nv) { setenv("NVIDIA_VISIBLE_DEVICES", save_nv, 1); free(save_nv); }
-
-    if (res && num_devices && *num_devices > 0 && devices && target_id >= 0) {
-        if (target_id < *num_devices) {
-            devices[0] = devices[target_id];
-            *num_devices = 1;
-        } else if (*num_devices == 1 && target_id > 0) {
-            // If the driver still only returned 1 handle despite clearing env vars,
-            // leave *num_devices=1 and devices[0] intact.
-        }
-    }
-    return res;
-}
-
-int eglQueryDevicesEXT(int max_devices, EGLDeviceEXT *devices, int *num_devices) {
-    init_real_funcs();
-    return query_devices_intercept(real_eglQueryDevicesEXT, max_devices, devices, num_devices);
-}
-
-int eglQueryDevicesKHR(int max_devices, EGLDeviceEXT *devices, int *num_devices) {
-    init_real_funcs();
-    return query_devices_intercept(real_eglQueryDevicesKHR, max_devices, devices, num_devices);
-}
-
-void* eglGetProcAddress(const char *procname) {
-    init_real_funcs();
-    if (!procname) return NULL;
-    if (strcmp(procname, "eglQueryDevicesEXT") == 0) {
-        return (void*)eglQueryDevicesEXT;
-    }
-    if (strcmp(procname, "eglQueryDevicesKHR") == 0) {
-        return (void*)eglQueryDevicesKHR;
-    }
-    if (real_eglGetProcAddress) {
-        return real_eglGetProcAddress(procname);
-    }
-    return dlsym(RTLD_NEXT, procname);
-}
-"""
-        c_path.write_text(c_code, encoding="utf-8")
-        import subprocess
-        subprocess.run(
-            ["gcc", "-shared", "-fPIC", "-o", str(hook_path), str(c_path), "-ldl"],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        return str(hook_path)
-    except Exception:
-        return None
-
-
 def _mp_pool_worker_init_gpu(gpu_id: int):
     """Worker initialiser pinned to a specific GPU.
 
     *gpu_id* is passed as an initarg so every worker in a pool gets an
-    identical, deterministic assignment — no shared-counter races.
-    Setting CUDA_VISIBLE_DEVICES here (before any EGL context is opened)
-    makes NVIDIA's driver associate the new EGL display with that GPU.
+    identical, deterministic assignment.
     """
     _suppress_worker_stderr()
 
@@ -1910,34 +1794,27 @@ def _mp_pool_worker_init_gpu(gpu_id: int):
     if assigned_gpu is not None:
         gpu_id = int(assigned_gpu)
 
-    hook_so = _ensure_egl_device_hook()
-    if hook_so and os.path.exists(hook_so):
-        try:
-            ctypes.CDLL(hook_so, mode=ctypes.RTLD_GLOBAL)
-            os.environ["LD_PRELOAD"] = hook_so + (":" + os.environ.get("LD_PRELOAD", "") if os.environ.get("LD_PRELOAD") else "")
-        except Exception:
-            pass
-
-    # Do NOT set CUDA_VISIBLE_DEVICES, EGL_VISIBLE_DEVICES, or NVIDIA_VISIBLE_DEVICES here before
-    # _init_mediapipe() runs! Setting them before library initialization restricts libEGL_nvidia to 1 device,
-    # causing eglQueryDevicesEXT to return *num_devices=1 where devices[0] defaults to /dev/nvidia0.
-    # Leaving them unset during _init_mediapipe() lets libEGL_nvidia see both physical GPUs (*num_devices=2),
-    # allowing our LD_PRELOAD C hook (_egl_hook_v3.so) to read ASSIGNED_GPU_ID and swap devices[0] = devices[target_id].
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
     os.environ["DRI_PRIME"] = str(gpu_id)
-    # DRM_DEVICE directs headless Mesa/DRM EGL to the exact render node (/dev/dri/renderD128 for GPU 0, renderD129 for GPU 1).
     os.environ["DRM_DEVICE"] = f"/dev/dri/renderD{128 + gpu_id}"
-    # Isolate the child worker so any code calling get_num_gpus() inside the worker
-    # sees exactly 1 GPU (its pinned device 0).
     os.environ["NUM_AVAILABLE_GPUS"] = "1"
     global _NUM_AVAILABLE_GPUS
     _NUM_AVAILABLE_GPUS = 1
 
-    # Import CV2 / MediaPipe *before* setting CUDA_VISIBLE_DEVICES so our EGL interceptor
-    # successfully selects ASSIGNED_GPU_ID from the full physical device list.
     _init_mediapipe()
+    try:
+        cv2.setNumThreads(1)
+        os.environ["OPENCV_FFMPEG_THREADS"] = "1"
+        os.environ["OMP_NUM_THREADS"] = "1"
+        os.environ["MKL_NUM_THREADS"] = "1"
+        os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    except Exception:
+        pass
 
-    # Now that MediaPipe EGL is locked to ASSIGNED_GPU_ID (/dev/nvidia1 for GPU 1),
-    # set CUDA_VISIBLE_DEVICES so any PyTorch or CUDA runtime calls are pinned to that GPU.
+    try:
+        _get_process_extractor(static_mode=True)
+    except Exception:
+        pass
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 
@@ -4908,18 +4785,11 @@ def main(argv=None):
         total_workers = args.workers if args.workers is not None else NUM_MP_GPU_WORKERS
         workers_per_gpu = max(1, total_workers // n_gpus)
 
-        hook_so = _ensure_egl_device_hook()
         procs = []
         for i in range(n_gpus):
             env = os.environ.copy()
-            if hook_so and os.path.exists(hook_so):
-                env["LD_PRELOAD"] = hook_so + (":" + env.get("LD_PRELOAD", "") if env.get("LD_PRELOAD") else "")
             env["ASSIGNED_GPU_ID"] = str(i)
-            # Do NOT set CUDA_VISIBLE_DEVICES, EGL_VISIBLE_DEVICES, or NVIDIA_VISIBLE_DEVICES inside the
-            # shard Popen environment! Setting them at process boot makes libEGL_nvidia cache 1 device only
-            # (/dev/nvidia0), preventing our interceptor hook from swapping devices[0] = devices[1].
-            # Leaving them unset here lets libEGL_nvidia see both GPUs (*num_devices=2), allowing
-            # our interceptor to read ASSIGNED_GPU_ID and lock EGL to /dev/nvidia1.
+            env["CUDA_VISIBLE_DEVICES"] = str(i)
             env["DRI_PRIME"] = str(i)
             env["DRM_DEVICE"] = f"/dev/dri/renderD{128 + i}"
             env["NUM_AVAILABLE_GPUS"] = "1"
