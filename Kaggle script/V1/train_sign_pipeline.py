@@ -1879,13 +1879,16 @@ def _mp_pool_worker_init_gpu(gpu_id: int):
     _init_mediapipe()
 
     try:
-        # Allow each worker a proportional slice of available cores so MediaPipe's
-        # TFLite interpreter and OpenCV can use multiple threads for heavy CPU-bound
-        # video decoding, resizing, and preprocessing without idling CPU cores.
-        _cv_threads = max(1, min(8, ((os.cpu_count() or 1) + max(1, NUM_MP_GPU_WORKERS) - 1) // max(1, NUM_MP_GPU_WORKERS)))
-        cv2.setNumThreads(_cv_threads)
-        os.environ["OPENCV_FFMPEG_THREADS"] = str(_cv_threads)
-        os.environ["OMP_NUM_THREADS"] = str(_cv_threads)
+        # Keep each worker single-threaded at the OpenCV/OpenMP/MKL layer.
+        # MediaPipe already runs multi-threaded internal pipelines per image/video;
+        # allowing 4-8 extra OpenCV/OpenMP threads per worker causes 250+ active OS
+        # threads across dual-GPU sharded processes, hitting container thread limits
+        # (Errno 11 Resource temporarily unavailable during fork_exec).
+        cv2.setNumThreads(1)
+        os.environ["OPENCV_FFMPEG_THREADS"] = "1"
+        os.environ["OMP_NUM_THREADS"] = "1"
+        os.environ["MKL_NUM_THREADS"] = "1"
+        os.environ["OPENBLAS_NUM_THREADS"] = "1"
     except Exception:
         pass
 
@@ -1906,10 +1909,11 @@ def _mp_pool_worker_init_cpu():
     _suppress_worker_stderr()
     _init_mediapipe()
     try:
-        _cv_threads = max(1, min(8, (os.cpu_count() or 1) // max(1, NUM_MP_GPU_WORKERS)))
-        cv2.setNumThreads(_cv_threads)
-        os.environ["OPENCV_FFMPEG_THREADS"] = str(_cv_threads)
-        os.environ["OMP_NUM_THREADS"] = str(_cv_threads)
+        cv2.setNumThreads(1)
+        os.environ["OPENCV_FFMPEG_THREADS"] = "1"
+        os.environ["OMP_NUM_THREADS"] = "1"
+        os.environ["MKL_NUM_THREADS"] = "1"
+        os.environ["OPENBLAS_NUM_THREADS"] = "1"
     except Exception:
         pass
     try:
@@ -1971,12 +1975,15 @@ def get_or_create_gpu_pool(gpu_id: int) -> ProcessPoolExecutor:
         if gpu_id not in _GPU_POOLS:
             n_gpus = max(1, get_num_gpus())
             workers_per_gpu = max(1, NUM_MP_GPU_WORKERS // n_gpus)
-            _GPU_POOLS[gpu_id] = ProcessPoolExecutor(
-                max_workers=workers_per_gpu,
-                mp_context=_get_mp_context(gpu_isolated=True),  # spawn for CUDA isolation
-                initializer=_mp_pool_worker_init_gpu,
-                initargs=(gpu_id,),
-            )
+            kwargs = {
+                "max_workers": workers_per_gpu,
+                "mp_context": _get_mp_context(gpu_isolated=True),  # spawn for CUDA isolation
+                "initializer": _mp_pool_worker_init_gpu,
+                "initargs": (gpu_id,),
+            }
+            if sys.version_info >= (3, 11):
+                kwargs["max_tasks_per_child"] = 300
+            _GPU_POOLS[gpu_id] = ProcessPoolExecutor(**kwargs)
         return _GPU_POOLS[gpu_id]
 
 
@@ -2042,11 +2049,14 @@ def get_shared_pool() -> ProcessPoolExecutor:
     with _POOL_LOCK:
         if _SHARED_POOL is None:
             workers = max(1, int(NUM_MP_GPU_WORKERS))
-            _SHARED_POOL = ProcessPoolExecutor(
-                max_workers=workers,
-                mp_context=_get_mp_context(),
-                initializer=_mp_pool_worker_init_cpu,
-            )
+            kwargs = {
+                "max_workers": workers,
+                "mp_context": _get_mp_context(),
+                "initializer": _mp_pool_worker_init_cpu,
+            }
+            if sys.version_info >= (3, 11):
+                kwargs["max_tasks_per_child"] = 300
+            _SHARED_POOL = ProcessPoolExecutor(**kwargs)
         return _SHARED_POOL
 
 
