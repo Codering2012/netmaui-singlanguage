@@ -1918,14 +1918,11 @@ def _mp_pool_worker_init_gpu(gpu_id: int):
         except Exception:
             pass
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-    # EGL_VISIBLE_DEVICES and NVIDIA_VISIBLE_DEVICES force NVIDIA EGL (libEGL_nvidia.so)
-    # to only enumerate the assigned GPU during eglQueryDevicesEXT / eglGetDisplay.
-    os.environ["EGL_VISIBLE_DEVICES"] = str(gpu_id)
-    os.environ["NVIDIA_VISIBLE_DEVICES"] = str(gpu_id)
-    # EGL_DEVICE_ID is honoured by some driver stacks; harmless otherwise.
-    os.environ["EGL_DEVICE_ID"] = str(gpu_id)
+    # Do NOT set CUDA_VISIBLE_DEVICES, EGL_VISIBLE_DEVICES, or NVIDIA_VISIBLE_DEVICES here before
+    # _init_mediapipe() runs! Setting them before library initialization restricts libEGL_nvidia to 1 device,
+    # causing eglQueryDevicesEXT to return *num_devices=1 where devices[0] defaults to /dev/nvidia0.
+    # Leaving them unset during _init_mediapipe() lets libEGL_nvidia see both physical GPUs (*num_devices=2),
+    # allowing our LD_PRELOAD C hook (_egl_hook_v3.so) to read ASSIGNED_GPU_ID and swap devices[0] = devices[target_id].
     os.environ["DRI_PRIME"] = str(gpu_id)
     # DRM_DEVICE directs headless Mesa/DRM EGL to the exact render node (/dev/dri/renderD128 for GPU 0, renderD129 for GPU 1).
     os.environ["DRM_DEVICE"] = f"/dev/dri/renderD{128 + gpu_id}"
@@ -1935,9 +1932,14 @@ def _mp_pool_worker_init_gpu(gpu_id: int):
     global _NUM_AVAILABLE_GPUS
     _NUM_AVAILABLE_GPUS = 1
 
-    # Import CV2 / MediaPipe *after* the env vars are set so any lazy
-    # driver init inside those libraries sees the right device.
+    # Import CV2 / MediaPipe *before* setting CUDA_VISIBLE_DEVICES so our EGL interceptor
+    # successfully selects ASSIGNED_GPU_ID from the full physical device list.
     _init_mediapipe()
+
+    # Now that MediaPipe EGL is locked to ASSIGNED_GPU_ID (/dev/nvidia1 for GPU 1),
+    # set CUDA_VISIBLE_DEVICES so any PyTorch or CUDA runtime calls are pinned to that GPU.
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 
     try:
         # Keep each worker single-threaded at the OpenCV/OpenMP/MKL layer.
@@ -4917,11 +4919,11 @@ def main(argv=None):
             if hook_so and os.path.exists(hook_so):
                 env["LD_PRELOAD"] = hook_so + (":" + env.get("LD_PRELOAD", "") if env.get("LD_PRELOAD") else "")
             env["ASSIGNED_GPU_ID"] = str(i)
-            env["CUDA_VISIBLE_DEVICES"] = str(i)
-            env["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-            env["EGL_VISIBLE_DEVICES"] = str(i)
-            env["NVIDIA_VISIBLE_DEVICES"] = str(i)
-            env["EGL_DEVICE_ID"] = str(i)
+            # Do NOT set CUDA_VISIBLE_DEVICES, EGL_VISIBLE_DEVICES, or NVIDIA_VISIBLE_DEVICES inside the
+            # shard Popen environment! Setting them at process boot makes libEGL_nvidia cache 1 device only
+            # (/dev/nvidia0), preventing our interceptor hook from swapping devices[0] = devices[1].
+            # Leaving them unset here lets libEGL_nvidia see both GPUs (*num_devices=2), allowing
+            # our interceptor to read ASSIGNED_GPU_ID and lock EGL to /dev/nvidia1.
             env["DRI_PRIME"] = str(i)
             env["DRM_DEVICE"] = f"/dev/dri/renderD{128 + i}"
             env["NUM_AVAILABLE_GPUS"] = "1"
