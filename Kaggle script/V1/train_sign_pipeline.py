@@ -2044,8 +2044,6 @@ def get_or_create_gpu_pool(gpu_id: int) -> ProcessPoolExecutor:
                 "initializer": _mp_pool_worker_init_gpu,
                 "initargs": (gpu_id,),
             }
-            if sys.version_info >= (3, 11):
-                kwargs["max_tasks_per_child"] = 300
             _GPU_POOLS[gpu_id] = ProcessPoolExecutor(**kwargs)
         return _GPU_POOLS[gpu_id]
 
@@ -2117,8 +2115,6 @@ def get_shared_pool() -> ProcessPoolExecutor:
                 "mp_context": _get_mp_context(),
                 "initializer": _mp_pool_worker_init_cpu,
             }
-            if sys.version_info >= (3, 11):
-                kwargs["max_tasks_per_child"] = 300
             _SHARED_POOL = ProcessPoolExecutor(**kwargs)
         return _SHARED_POOL
 
