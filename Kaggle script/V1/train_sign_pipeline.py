@@ -1814,7 +1814,7 @@ def _mp_pool_worker_init_gpu(gpu_id: int):
         # Allow each worker a proportional slice of available cores so MediaPipe's
         # TFLite interpreter and OpenCV can use multiple threads for heavy CPU-bound
         # video decoding, resizing, and preprocessing without idling CPU cores.
-        _cv_threads = max(1, min(8, (os.cpu_count() or 1) // max(1, NUM_MP_GPU_WORKERS)))
+        _cv_threads = max(1, min(8, ((os.cpu_count() or 1) + max(1, NUM_MP_GPU_WORKERS) - 1) // max(1, NUM_MP_GPU_WORKERS)))
         cv2.setNumThreads(_cv_threads)
         os.environ["OPENCV_FFMPEG_THREADS"] = str(_cv_threads)
         os.environ["OMP_NUM_THREADS"] = str(_cv_threads)

@@ -1,0 +1,52 @@
+# ==============================================================================
+# 1. SYSTEM & PYTHON SETUP
+# ==============================================================================
+apt-get update && apt-get install -y git unzip libgl1 libglib2.0-0
+pip install --upgrade pip
+pip install kaggle
+
+# ==============================================================================
+# 2. KAGGLE API AUTHENTICATION
+# ==============================================================================
+export KAGGLE_API_TOKEN="KGAT_539c243129f41d228b827d34e2b6f068"
+mkdir -p ~/.kaggle
+echo "KGAT_539c243129f41d228b827d34e2b6f068" > ~/.kaggle/access_token
+chmod 600 ~/.kaggle/access_token
+
+# ==============================================================================
+# 3. DIRECTORY STRUCTURE SETUP
+# ==============================================================================
+mkdir -p /kaggle/input/dataset
+mkdir -p /kaggle/working/asl_preprocessed_phase1
+mkdir -p /kaggle/temp
+mkdir -p /kaggle/output
+
+# ==============================================================================
+# 4. DATASET INSTALLATION (Downloaded directly to paths required by pipeline)
+# ==============================================================================
+kaggle datasets download -d grassknoted/asl-alphabet --unzip -p /kaggle/input/datasets/grassknoted/asl-alphabet
+kaggle datasets download -d abd0kamel/asl-citizen --unzip -p /kaggle/input/datasets/abd0kamel/asl-citizen
+kaggle datasets download -d psewmuthu/how2sign-holistic --unzip -p /kaggle/input/datasets/psewmuthu/how2sign-holistic
+kaggle datasets download -d joebeachcapital/chicagofswild --unzip -p /kaggle/input/datasets/joebeachcapital/chicagofswild
+kaggle datasets download -d lexset/synthetic-asl-numbers --unzip -p /kaggle/input/datasets/lexset/synthetic-asl-numbers
+kaggle datasets download -d risangbaskoro/wlasl-processed --unzip -p /kaggle/input/datasets/risangbaskoro/wlasl-processed
+kaggle datasets download -d tranquocbao2012/asl-lex --unzip -p /kaggle/input/datasets/tranquocbao2012/asl-lex
+
+# ==============================================================================
+# 5. CLONE REPOSITORY & INSTALL PYTHON REQUIREMENTS
+# ==============================================================================
+git clone https://github.com/Codering2012/netmaui-singlanguage.git
+cd netmaui-singlanguage/"Kaggle script"/V1
+pip install -r requirements.txt
+
+# ==============================================================================
+# 6. TEST RUN THE PIPELINE (Fast 100-sample verification run)
+# ==============================================================================
+# For 2x RTX 5060 Ti + 13-core CPU, --workers 6 is the mathematical sweet spot:
+# 6 total workers = 3 workers per GPU × 2 CPU threads per worker = 12 active threads out of 13 cores!
+python3 train_sign_pipeline.py --test --split train --workers 6
+
+# ==============================================================================
+# 7. FULL PIPELINE EXECUTION (Once test passes)
+# ==============================================================================
+# python3 train_sign_pipeline.py --split all --workers 6
