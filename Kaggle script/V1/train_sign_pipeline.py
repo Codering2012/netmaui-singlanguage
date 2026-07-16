@@ -1786,8 +1786,8 @@ def _ensure_egl_device_hook():
     """Ensure our EGL device enumeration interceptor exists so MediaPipe C++ respects ASSIGNED_GPU_ID."""
     if not sys.platform.startswith("linux"):
         return None
-    hook_path = Path("/tmp/_egl_hook_v2.so")
-    c_path = Path("/tmp/_egl_hook_v2.c")
+    hook_path = Path("/tmp/_egl_hook_v3.so")
+    c_path = Path("/tmp/_egl_hook_v3.c")
     if hook_path.exists():
         return str(hook_path)
     try:
@@ -1818,42 +1818,54 @@ static void init_real_funcs(void) {
     }
 }
 
-int eglQueryDevicesEXT(int max_devices, EGLDeviceEXT *devices, int *num_devices) {
-    init_real_funcs();
-    if (!real_eglQueryDevicesEXT) return 0;
+static int query_devices_intercept(eglQueryDevices_t real_fn, int max_devices, EGLDeviceEXT *devices, int *num_devices) {
+    if (!real_fn) return 0;
 
-    int res = real_eglQueryDevicesEXT(max_devices, devices, num_devices);
-    if (res && num_devices && *num_devices > 0 && devices) {
-        char *gpu_env = getenv("ASSIGNED_GPU_ID");
-        if (!gpu_env) gpu_env = getenv("CUDA_VISIBLE_DEVICES");
-        if (gpu_env) {
-            int target_id = atoi(gpu_env);
-            if (target_id >= 0 && target_id < *num_devices) {
-                devices[0] = devices[target_id];
-                *num_devices = 1;
-            }
+    char *assigned_gpu = getenv("ASSIGNED_GPU_ID");
+    int target_id = -1;
+    if (assigned_gpu) {
+        target_id = atoi(assigned_gpu);
+    } else {
+        char *cuda_vis = getenv("CUDA_VISIBLE_DEVICES");
+        if (cuda_vis) target_id = atoi(cuda_vis);
+    }
+
+    // Temporarily clear filtering environment variables so libEGL_nvidia enumerates
+    // ALL physical EGL device handles (devices[0] = /dev/nvidia0, devices[1] = /dev/nvidia1).
+    char *save_cuda = getenv("CUDA_VISIBLE_DEVICES") ? strdup(getenv("CUDA_VISIBLE_DEVICES")) : NULL;
+    char *save_egl = getenv("EGL_VISIBLE_DEVICES") ? strdup(getenv("EGL_VISIBLE_DEVICES")) : NULL;
+    char *save_nv = getenv("NVIDIA_VISIBLE_DEVICES") ? strdup(getenv("NVIDIA_VISIBLE_DEVICES")) : NULL;
+
+    if (save_cuda) unsetenv("CUDA_VISIBLE_DEVICES");
+    if (save_egl) unsetenv("EGL_VISIBLE_DEVICES");
+    if (save_nv) unsetenv("NVIDIA_VISIBLE_DEVICES");
+
+    int res = real_fn(max_devices, devices, num_devices);
+
+    if (save_cuda) { setenv("CUDA_VISIBLE_DEVICES", save_cuda, 1); free(save_cuda); }
+    if (save_egl) { setenv("EGL_VISIBLE_DEVICES", save_egl, 1); free(save_egl); }
+    if (save_nv) { setenv("NVIDIA_VISIBLE_DEVICES", save_nv, 1); free(save_nv); }
+
+    if (res && num_devices && *num_devices > 0 && devices && target_id >= 0) {
+        if (target_id < *num_devices) {
+            devices[0] = devices[target_id];
+            *num_devices = 1;
+        } else if (*num_devices == 1 && target_id > 0) {
+            // If the driver still only returned 1 handle despite clearing env vars,
+            // leave *num_devices=1 and devices[0] intact.
         }
     }
     return res;
 }
 
+int eglQueryDevicesEXT(int max_devices, EGLDeviceEXT *devices, int *num_devices) {
+    init_real_funcs();
+    return query_devices_intercept(real_eglQueryDevicesEXT, max_devices, devices, num_devices);
+}
+
 int eglQueryDevicesKHR(int max_devices, EGLDeviceEXT *devices, int *num_devices) {
     init_real_funcs();
-    if (!real_eglQueryDevicesKHR) return 0;
-
-    int res = real_eglQueryDevicesKHR(max_devices, devices, num_devices);
-    if (res && num_devices && *num_devices > 0 && devices) {
-        char *gpu_env = getenv("ASSIGNED_GPU_ID");
-        if (!gpu_env) gpu_env = getenv("CUDA_VISIBLE_DEVICES");
-        if (gpu_env) {
-            int target_id = atoi(gpu_env);
-            if (target_id >= 0 && target_id < *num_devices) {
-                devices[0] = devices[target_id];
-                *num_devices = 1;
-            }
-        }
-    }
-    return res;
+    return query_devices_intercept(real_eglQueryDevicesKHR, max_devices, devices, num_devices);
 }
 
 void* eglGetProcAddress(const char *procname) {
