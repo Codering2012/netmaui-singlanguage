@@ -3460,7 +3460,7 @@ class FrankensteinDataProcessor:
         self.phase = "all"
         self.batch_flush_size = BATCH_FLUSH_SIZE
         self.temp_shard_dir = None
-        self._batch_counters = defaultdict(int)
+        self._batch_counters = {}
 
     def _get_task_key(self, task) -> str:
         """Extract a unique string key from a raw task tuple/item."""
@@ -3537,6 +3537,14 @@ class FrankensteinDataProcessor:
         if not records or self.temp_shard_dir is None:
             return
         gpu_suffix = f"_gpu{self.gpu_id}" if self.gpu_id is not None else ""
+        if tag not in self._batch_counters:
+            max_idx = -1
+            if self.temp_shard_dir.exists():
+                for p in self.temp_shard_dir.glob(f"shard_{tag}_batch_*{gpu_suffix}.pt"):
+                    m = re.search(r"_batch_(\d+)", p.name)
+                    if m:
+                        max_idx = max(max_idx, int(m.group(1)))
+            self._batch_counters[tag] = max_idx + 1
         batch_idx = self._batch_counters[tag]
         sp = self.temp_shard_dir / f"shard_{tag}_batch_{batch_idx:04d}{gpu_suffix}.pt"
         tmp_sp = self.temp_shard_dir / f"shard_{tag}_batch_{batch_idx:04d}{gpu_suffix}.pt.tmp"
