@@ -3,6 +3,32 @@
 # 0. INITIAL LOGGING & WARNING SUPPRESSION
 # ==============================================================================
 import os
+import sys
+
+# Early GPU Isolation: If launched as a dedicated GPU shard process (--gpu-id i),
+# force device visibility across CUDA, EGL, and NVIDIA driver layers BEFORE any C++
+# libraries (PyTorch, OpenCV, MediaPipe, OpenGL/EGL) are imported or initialized.
+# MediaPipe's GlContext picks devices[0] from eglQueryDevicesEXT; setting EGL_DEVICE_ID,
+# EGL_VISIBLE_DEVICES, and CUDA_VISIBLE_DEVICES early ensures devices[0] is GPU i.
+_early_gpu_id = os.environ.get("ASSIGNED_GPU_ID")
+if _early_gpu_id is None:
+    for _idx, _arg in enumerate(sys.argv):
+        if _arg == "--gpu-id" and _idx + 1 < len(sys.argv):
+            _early_gpu_id = sys.argv[_idx + 1]
+            break
+
+if _early_gpu_id is not None:
+    _gid = str(int(_early_gpu_id))
+    os.environ["ASSIGNED_GPU_ID"] = _gid
+    os.environ["CUDA_VISIBLE_DEVICES"] = _gid
+    os.environ["NVIDIA_VISIBLE_DEVICES"] = _gid
+    os.environ["EGL_VISIBLE_DEVICES"] = _gid
+    os.environ["EGL_DEVICE_ID"] = _gid
+    os.environ["OPENCV_OPENCL_DEVICE"] = _gid
+    os.environ["DRI_PRIME"] = _gid
+    os.environ["DRM_DEVICE"] = f"/dev/dri/renderD{128 + int(_gid)}"
+    os.environ["NUM_AVAILABLE_GPUS"] = "1"
+
 import logging
 import warnings
 
@@ -1795,8 +1821,14 @@ def _mp_pool_worker_init_gpu(gpu_id: int):
     if assigned_gpu is not None:
         gpu_id = int(assigned_gpu)
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-    os.environ["DRI_PRIME"] = str(gpu_id)
+    _gid = str(gpu_id)
+    os.environ["ASSIGNED_GPU_ID"] = _gid
+    os.environ["CUDA_VISIBLE_DEVICES"] = _gid
+    os.environ["NVIDIA_VISIBLE_DEVICES"] = _gid
+    os.environ["EGL_VISIBLE_DEVICES"] = _gid
+    os.environ["EGL_DEVICE_ID"] = _gid
+    os.environ["OPENCV_OPENCL_DEVICE"] = _gid
+    os.environ["DRI_PRIME"] = _gid
     os.environ["DRM_DEVICE"] = f"/dev/dri/renderD{128 + gpu_id}"
     os.environ["NUM_AVAILABLE_GPUS"] = "1"
     global _NUM_AVAILABLE_GPUS
@@ -1809,36 +1841,12 @@ def _mp_pool_worker_init_gpu(gpu_id: int):
         os.environ["OMP_NUM_THREADS"] = "1"
         os.environ["MKL_NUM_THREADS"] = "1"
         os.environ["OPENBLAS_NUM_THREADS"] = "1"
+        os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     except Exception:
         pass
 
-    try:
-        _get_process_extractor(static_mode=True)
-    except Exception:
-        pass
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-
-    try:
-        # Keep each worker single-threaded at the OpenCV/OpenMP/MKL layer.
-        # MediaPipe already runs multi-threaded internal pipelines per image/video;
-        # allowing 4-8 extra OpenCV/OpenMP threads per worker causes 250+ active OS
-        # threads across dual-GPU sharded processes, hitting container thread limits
-        # (Errno 11 Resource temporarily unavailable during fork_exec).
-        cv2.setNumThreads(1)
-        os.environ["OPENCV_FFMPEG_THREADS"] = "1"
-        os.environ["OMP_NUM_THREADS"] = "1"
-        os.environ["MKL_NUM_THREADS"] = "1"
-        os.environ["OPENBLAS_NUM_THREADS"] = "1"
-    except Exception:
-        pass
-
-    # Pre-warm ONLY the static (IMAGE-mode) extractor.
-    # Pre-warming both static AND video GPU delegates in the same process
-    # shares MediaPipe's internal GPU tensor buffer pool, causing the
-    # tensor.cc "multiple writes" synchronisation warning (E0000).  The
-    # video extractor is lazily created on first use when video datasets
-    # are processed, at which point it gets its own clean tensor pool.
+    # Pre-warm ONLY the static (IMAGE-mode) extractor after setting CUDA_VISIBLE_DEVICES.
+    # The GPU delegate will automatically bind to the only visible GPU (which becomes index 0).
     try:
         _get_process_extractor(static_mode=True)
     except Exception:
@@ -4950,13 +4958,17 @@ def main(argv=None):
             log_msg(f"[*] Master Orchestrator: Section '{split.upper()}' - Launching {n_gpus} independent OS processes (1 per GPU)...")
             total_workers = args.workers if args.workers is not None else NUM_MP_GPU_WORKERS
             workers_per_gpu = max(1, total_workers // n_gpus)
-
             procs = []
             for i in range(n_gpus):
+                _gid = str(i)
                 env = os.environ.copy()
-                env["ASSIGNED_GPU_ID"] = str(i)
-                env["CUDA_VISIBLE_DEVICES"] = str(i)
-                env["DRI_PRIME"] = str(i)
+                env["ASSIGNED_GPU_ID"] = _gid
+                env["CUDA_VISIBLE_DEVICES"] = _gid
+                env["NVIDIA_VISIBLE_DEVICES"] = _gid
+                env["EGL_VISIBLE_DEVICES"] = _gid
+                env["EGL_DEVICE_ID"] = _gid
+                env["OPENCV_OPENCL_DEVICE"] = _gid
+                env["DRI_PRIME"] = _gid
                 env["DRM_DEVICE"] = f"/dev/dri/renderD{128 + i}"
                 env["NUM_AVAILABLE_GPUS"] = "1"
                 env["NUM_MP_GPU_WORKERS"] = str(workers_per_gpu)
