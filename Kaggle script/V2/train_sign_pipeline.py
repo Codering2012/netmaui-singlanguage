@@ -3346,6 +3346,16 @@ class FrankensteinDataProcessor:
                     log_msg(f"[*] Checkpoint Resumption ({tag}): Skipped {skipped} already completed tasks ({len(sharded)} remaining).")
         return sharded
 
+    def _get_tqdm_kwargs(self, base_desc: str, total: int) -> dict:
+        kwargs = {"total": total}
+        if self.gpu_id is not None:
+            kwargs["desc"] = f"{base_desc} (GPU {self.gpu_id})"
+            kwargs["position"] = self.gpu_id
+            kwargs["leave"] = True
+        else:
+            kwargs["desc"] = base_desc
+        return kwargs
+
     def flush_batch(self, records: list, tag: str) -> None:
         """Atomically flush a batch of extracted records to disk and update checkpoint manifest."""
         if not records or self.temp_shard_dir is None:
@@ -3570,7 +3580,7 @@ class FrankensteinDataProcessor:
         with _create_mediapipe_pool() as executor:
             results = bounded_as_completed(executor, _proc_alphabet_image, tasks)
             for record, discard in tqdm(
-                results, total=len(tasks), desc=f"ASL Alphabet [{split}]"
+                results, **self._get_tqdm_kwargs(f"ASL Alphabet [{split}]", len(tasks))
             ):
                 profiler.ingest_task_result(record, discard)
                 if record is not None:
@@ -3668,7 +3678,7 @@ class FrankensteinDataProcessor:
         with _create_mediapipe_pool() as executor:
             results = bounded_as_completed(executor, _proc_citizen_row, tasks)
             for record, discard in tqdm(
-                results, total=len(tasks), desc=f"ASL Citizen [{split}]"
+                results, **self._get_tqdm_kwargs(f"ASL Citizen [{split}]", len(tasks))
             ):
                 profiler.ingest_task_result(record, discard)
                 if record is not None:
@@ -3822,7 +3832,7 @@ class FrankensteinDataProcessor:
         with _create_mediapipe_pool() as executor:
             results = bounded_as_completed(executor, _proc_how2sign, tasks)
             for record, discard in tqdm(
-                results, total=len(tasks), desc=f"How2Sign [{split}]"
+                results, **self._get_tqdm_kwargs(f"How2Sign [{split}]", len(tasks))
             ):
                 profiler.ingest_task_result(record, discard)
                 if record is not None:
@@ -4133,7 +4143,7 @@ class FrankensteinDataProcessor:
         with _create_mediapipe_pool() as executor:
             results = bounded_as_completed(executor, _proc_chicago_seq, tasks)
             for record, discard in tqdm(
-                results, total=len(tasks), desc=f"ChicagoFSWild [{split}]"
+                results, **self._get_tqdm_kwargs(f"ChicagoFSWild [{split}]", len(tasks))
             ):
                 profiler.ingest_task_result(record, discard)
                 if record is not None:
@@ -4207,7 +4217,7 @@ class FrankensteinDataProcessor:
         with _create_mediapipe_pool() as executor:
             results = bounded_as_completed(executor, _proc_numeric_image, tasks)
             for record, discard in tqdm(
-                results, total=len(tasks), desc=f"Synthetic Numbers [{split}]"
+                results, **self._get_tqdm_kwargs(f"Synthetic Numbers [{split}]", len(tasks))
             ):
                 profiler.ingest_task_result(record, discard)
                 if record is not None:
@@ -4334,7 +4344,7 @@ class FrankensteinDataProcessor:
         with _create_mediapipe_pool() as executor:
             results = bounded_as_completed(executor, _proc_wlasl_instance, tasks)
             for record, discard in tqdm(
-                results, total=len(tasks), desc=f"WLASL [{split}]"
+                results, **self._get_tqdm_kwargs(f"WLASL [{split}]", len(tasks))
             ):
                 profiler.ingest_task_result(record, discard)
                 if record is not None:
