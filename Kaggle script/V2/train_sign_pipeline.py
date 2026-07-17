@@ -21,6 +21,9 @@ if _early_gpu_id is not None:
     _gid = str(int(_early_gpu_id))
     os.environ["ASSIGNED_GPU_ID"] = _gid
     os.environ["CUDA_VISIBLE_DEVICES"] = _gid
+    os.environ["EGL_VISIBLE_DEVICES"] = _gid
+    os.environ["NVIDIA_VISIBLE_DEVICES"] = _gid
+    os.environ["EGL_PLATFORM_DEVICE_EXT"] = _gid
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["NUM_AVAILABLE_GPUS"] = "1"
 
@@ -33,6 +36,9 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["OPENCV_FFMPEG_THREADS"] = "1"
+os.environ["TF_NUM_INTEROP_THREADS"] = "1"
+os.environ["TF_NUM_INTRAOP_THREADS"] = "1"
+os.environ["XNNPACK_NUM_THREADS"] = "1"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 os.environ["GLOG_minloglevel"] = "3"
@@ -1058,6 +1064,11 @@ def _create_vision_task(
                 return landmarker_cls.create_from_options(options), delegate
             except Exception as exc:
                 last_exc = exc
+                if "can't start new thread" in str(exc) or "Resource temporarily unavailable" in str(exc):
+                    raise RuntimeError(
+                        f"[!] ERROR (PID {os.getpid()}): MediaPipe hit the container thread/process limit ('{exc}'). "
+                        f"Reduce total worker processes across GPUs (e.g. use --workers 16 instead of 26 when running --num-gpus 2)."
+                    ) from exc
                 if delegate == mp.tasks.BaseOptions.Delegate.GPU:
                     print(f"[!] WARNING (PID {os.getpid()}): GPU delegate failed for {landmarker_cls.__name__}: {exc}. Falling back to CPU...", flush=True)
                 if delegate == mp.tasks.BaseOptions.Delegate.CPU:
@@ -1821,6 +1832,9 @@ def _mp_pool_worker_init_gpu(gpu_id: int):
     _gid = str(gpu_id)
     os.environ["ASSIGNED_GPU_ID"] = _gid
     os.environ["CUDA_VISIBLE_DEVICES"] = _gid
+    os.environ["EGL_VISIBLE_DEVICES"] = _gid
+    os.environ["NVIDIA_VISIBLE_DEVICES"] = _gid
+    os.environ["EGL_PLATFORM_DEVICE_EXT"] = _gid
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["NUM_AVAILABLE_GPUS"] = "1"
     global _NUM_AVAILABLE_GPUS
@@ -1833,6 +1847,9 @@ def _mp_pool_worker_init_gpu(gpu_id: int):
         os.environ["OMP_NUM_THREADS"] = "1"
         os.environ["MKL_NUM_THREADS"] = "1"
         os.environ["OPENBLAS_NUM_THREADS"] = "1"
+        os.environ["TF_NUM_INTEROP_THREADS"] = "1"
+        os.environ["TF_NUM_INTRAOP_THREADS"] = "1"
+        os.environ["XNNPACK_NUM_THREADS"] = "1"
         os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     except Exception:
         pass
@@ -1855,6 +1872,9 @@ def _mp_pool_worker_init_cpu():
         os.environ["OMP_NUM_THREADS"] = "1"
         os.environ["MKL_NUM_THREADS"] = "1"
         os.environ["OPENBLAS_NUM_THREADS"] = "1"
+        os.environ["TF_NUM_INTEROP_THREADS"] = "1"
+        os.environ["TF_NUM_INTRAOP_THREADS"] = "1"
+        os.environ["XNNPACK_NUM_THREADS"] = "1"
     except Exception:
         pass
     try:
@@ -4966,6 +4986,9 @@ def main(argv=None):
                 env = os.environ.copy()
                 env["ASSIGNED_GPU_ID"] = _gid
                 env["CUDA_VISIBLE_DEVICES"] = _gid
+                env["EGL_VISIBLE_DEVICES"] = _gid
+                env["NVIDIA_VISIBLE_DEVICES"] = _gid
+                env["EGL_PLATFORM_DEVICE_EXT"] = _gid
                 env["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
                 env["NUM_AVAILABLE_GPUS"] = "1"
                 env["NUM_MP_GPU_WORKERS"] = str(workers_per_gpu)
