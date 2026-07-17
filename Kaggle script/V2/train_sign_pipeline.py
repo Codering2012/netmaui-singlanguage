@@ -10,6 +10,134 @@ import sys
 # libraries (PyTorch, OpenCV, MediaPipe, OpenGL/EGL) are imported or initialized.
 # MediaPipe's GlContext picks devices[0] from eglQueryDevicesEXT; setting EGL_DEVICE_ID,
 # EGL_VISIBLE_DEVICES, and CUDA_VISIBLE_DEVICES early ensures devices[0] is GPU i.
+def ensure_gpu_interceptor() -> str | None:
+    """Compile and return the path to the LD_PRELOAD GPU device interceptor.
+    Redirects /dev/dri/renderD128 -> /dev/dri/renderD{128+gid} and /dev/nvidia0 -> /dev/nvidia{gid}
+    when ASSIGNED_GPU_ID > 0 is set.
+    """
+    import platform, subprocess
+    if platform.system() != "Linux":
+        return None
+    so_path = "/tmp/libegl_gpu_interceptor.so"
+    if os.path.exists(so_path):
+        return so_path
+    c_source = """#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <fcntl.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+static int (*real_open)(const char *pathname, int flags, ...) = NULL;
+static int (*real_open64)(const char *pathname, int flags, ...) = NULL;
+static int (*real_openat)(int dirfd, const char *pathname, int flags, ...) = NULL;
+static int (*real_openat64)(int dirfd, const char *pathname, int flags, ...) = NULL;
+
+static int get_assigned_gpu_id(void) {
+    static int cached_id = -2;
+    if (cached_id != -2) return cached_id;
+    const char *env = getenv("ASSIGNED_GPU_ID");
+    if (!env) env = getenv("GPU_ID");
+    if (env && *env) {
+        cached_id = atoi(env);
+    } else {
+        cached_id = -1;
+    }
+    return cached_id;
+}
+
+static const char* redirect_path(const char *pathname, char *buf, size_t buflen) {
+    if (!pathname) return pathname;
+    int gid = get_assigned_gpu_id();
+    if (gid <= 0) return pathname;
+
+    if (strcmp(pathname, "/dev/dri/renderD128") == 0) {
+        snprintf(buf, buflen, "/dev/dri/renderD%d", 128 + gid);
+        return buf;
+    }
+    if (strcmp(pathname, "/dev/dri/card0") == 0) {
+        snprintf(buf, buflen, "/dev/dri/card%d", gid);
+        return buf;
+    }
+    if (strcmp(pathname, "/dev/nvidia0") == 0) {
+        snprintf(buf, buflen, "/dev/nvidia%d", gid);
+        return buf;
+    }
+    return pathname;
+}
+
+int open(const char *pathname, int flags, ...) {
+    if (!real_open) real_open = dlsym(RTLD_NEXT, "open");
+    char buf[256];
+    const char *target = redirect_path(pathname, buf, sizeof(buf));
+    if (flags & (O_CREAT | O_TMPFILE)) {
+        va_list args;
+        va_start(args, flags);
+        mode_t mode = va_arg(args, mode_t);
+        va_end(args);
+        return real_open(target, flags, mode);
+    }
+    return real_open(target, flags);
+}
+
+int open64(const char *pathname, int flags, ...) {
+    if (!real_open64) real_open64 = dlsym(RTLD_NEXT, "open64");
+    char buf[256];
+    const char *target = redirect_path(pathname, buf, sizeof(buf));
+    if (flags & (O_CREAT | O_TMPFILE)) {
+        va_list args;
+        va_start(args, flags);
+        mode_t mode = va_arg(args, mode_t);
+        va_end(args);
+        return real_open64(target, flags, mode);
+    }
+    return real_open64(target, flags);
+}
+
+int openat(int dirfd, const char *pathname, int flags, ...) {
+    if (!real_openat) real_openat = dlsym(RTLD_NEXT, "openat");
+    char buf[256];
+    const char *target = redirect_path(pathname, buf, sizeof(buf));
+    if (flags & (O_CREAT | O_TMPFILE)) {
+        va_list args;
+        va_start(args, flags);
+        mode_t mode = va_arg(args, mode_t);
+        va_end(args);
+        return real_openat(dirfd, target, flags, mode);
+    }
+    return real_openat(dirfd, target, flags);
+}
+
+int openat64(int dirfd, const char *pathname, int flags, ...) {
+    if (!real_openat64) real_openat64 = dlsym(RTLD_NEXT, "openat64");
+    char buf[256];
+    const char *target = redirect_path(pathname, buf, sizeof(buf));
+    if (flags & (O_CREAT | O_TMPFILE)) {
+        va_list args;
+        va_start(args, flags);
+        mode_t mode = va_arg(args, mode_t);
+        va_end(args);
+        return real_openat64(dirfd, target, flags, mode);
+    }
+    return real_openat64(dirfd, target, flags);
+}
+"""
+    c_path = "/tmp/libegl_gpu_interceptor.c"
+    try:
+        with open(c_path, "w") as f:
+            f.write(c_source)
+        res = subprocess.run(
+            ["gcc", "-shared", "-fPIC", "-O2", "-o", so_path, c_path, "-ldl"],
+            capture_output=True, text=True
+        )
+        if res.returncode == 0 and os.path.exists(so_path):
+            return so_path
+    except Exception:
+        pass
+    return None
+
 _early_gpu_id = os.environ.get("ASSIGNED_GPU_ID")
 if _early_gpu_id is None:
     for _idx, _arg in enumerate(sys.argv):
@@ -26,6 +154,14 @@ if _early_gpu_id is not None:
     os.environ["EGL_PLATFORM_DEVICE_EXT"] = _gid
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["NUM_AVAILABLE_GPUS"] = "1"
+    try:
+        _so = ensure_gpu_interceptor()
+        if _so:
+            os.environ["LD_PRELOAD"] = f"{_so}:{os.environ.get('LD_PRELOAD', '')}".rstrip(":")
+            import ctypes
+            ctypes.CDLL(_so)
+    except Exception:
+        pass
 
 import logging
 import warnings
@@ -1837,6 +1973,13 @@ def _mp_pool_worker_init_gpu(gpu_id: int):
     os.environ["EGL_PLATFORM_DEVICE_EXT"] = _gid
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["NUM_AVAILABLE_GPUS"] = "1"
+    try:
+        _so = ensure_gpu_interceptor()
+        if _so:
+            os.environ["LD_PRELOAD"] = f"{_so}:{os.environ.get('LD_PRELOAD', '')}".rstrip(":")
+            ctypes.CDLL(_so)
+    except Exception:
+        pass
     global _NUM_AVAILABLE_GPUS
     _NUM_AVAILABLE_GPUS = 1
 
@@ -4992,6 +5135,12 @@ def main(argv=None):
                 env["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
                 env["NUM_AVAILABLE_GPUS"] = "1"
                 env["NUM_MP_GPU_WORKERS"] = str(workers_per_gpu)
+                try:
+                    _so = ensure_gpu_interceptor()
+                    if _so:
+                        env["LD_PRELOAD"] = f"{_so}:{env.get('LD_PRELOAD', '')}".rstrip(":")
+                except Exception:
+                    pass
 
                 cmd = [
                     sys.executable,
