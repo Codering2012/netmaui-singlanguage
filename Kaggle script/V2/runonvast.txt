@@ -27,7 +27,9 @@ for dataset in "${DATASETS[@]}"; do
 done
 wait
 git clone https://github.com/Codering2012/netmaui-singlanguage.git
-cd netmaui-singlanguage/"Kaggle script"/V2
+cd netmaui-singlanguage
+cd "Kaggle script"
+cd V2
 pip install -r requirements.txt
-python3 train_sign_pipeline.py --test --split train --workers 16 --num-gpus 2
-# python3 train_sign_pipeline.py --split all --workers 16 --num-gpus 2
+python3 train_sign_pipeline.py --test --split train --workers 26 --num-gpus 2
+# python3 train_sign_pipeline.py --split all --workers 26 --num-gpus 2
