@@ -3515,8 +3515,22 @@ class FrankensteinDataProcessor:
     def _shard_tasks(self, tasks: list, tag: str = None) -> list:
         """Slice task list for multi-process GPU sharding and filter already completed checkpoints."""
         if self.gpu_id is not None and self.num_gpus > 1 and tasks:
-            sharded = [t for i, t in enumerate(tasks) if i % self.num_gpus == self.gpu_id]
-            log_msg(f"[*] Shard {self.gpu_id}/{self.num_gpus}: processing {len(sharded)}/{len(tasks)} tasks.")
+            n_gpu_shards = max(0, self.num_gpus - getattr(self, "cpu_shards", 0))
+            weights = []
+            for s in range(self.num_gpus):
+                if s < n_gpu_shards:
+                    weights.append(max(1, getattr(self, "gpu_sample_weight", 5)))
+                else:
+                    weights.append(max(1, getattr(self, "cpu_sample_weight", 2)))
+
+            schedule = []
+            for s, w in enumerate(weights):
+                schedule.extend([s] * w)
+
+            block_len = len(schedule)
+            sharded = [t for i, t in enumerate(tasks) if schedule[i % block_len] == self.gpu_id]
+            shard_type = "CPU" if self.gpu_id >= n_gpu_shards else "GPU"
+            log_msg(f"[*] Shard {self.gpu_id}/{self.num_gpus} ({shard_type}, weight={weights[self.gpu_id]}): processing {len(sharded)}/{len(tasks)} tasks.")
         else:
             sharded = tasks
 
@@ -5100,6 +5114,12 @@ def main(argv=None):
         "--cpu-workers", type=int, default=24, help="Total multi-processing workers across CPU shards when --cpu-shards > 0"
     )
     parser.add_argument(
+        "--gpu-sample-weight", type=int, default=5, help="Relative sample weight assigned to each GPU shard (default 5)"
+    )
+    parser.add_argument(
+        "--cpu-sample-weight", type=int, default=2, help="Relative sample weight assigned to each CPU shard (default 2)"
+    )
+    parser.add_argument(
         "--phase", type=str, default="all", choices=["all", "extract", "merge"], help="Execution phase when sharding"
     )
     args = parser.parse_args(argv)
@@ -5131,6 +5151,9 @@ def main(argv=None):
     processor.is_test = args.test
     processor.gpu_id = args.gpu_id
     processor.num_gpus = args.num_gpus
+    processor.cpu_shards = args.cpu_shards
+    processor.gpu_sample_weight = args.gpu_sample_weight
+    processor.cpu_sample_weight = args.cpu_sample_weight
     processor.phase = args.phase
     processor.batch_flush_size = args.batch_flush_size
     processor.aslex_alias_map = load_aslex_alias_map()
@@ -5199,6 +5222,9 @@ def main(argv=None):
                     "--split", split,
                     "--gpu-id", str(i),
                     "--num-gpus", str(total_shards),
+                    "--cpu-shards", str(args.cpu_shards),
+                    "--gpu-sample-weight", str(args.gpu_sample_weight),
+                    "--cpu-sample-weight", str(args.cpu_sample_weight),
                     "--workers", str(_shard_workers),
                     "--batch-flush-size", str(args.batch_flush_size),
                 ]
