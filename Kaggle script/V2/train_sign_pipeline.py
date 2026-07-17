@@ -21,12 +21,7 @@ if _early_gpu_id is not None:
     _gid = str(int(_early_gpu_id))
     os.environ["ASSIGNED_GPU_ID"] = _gid
     os.environ["CUDA_VISIBLE_DEVICES"] = _gid
-    os.environ["NVIDIA_VISIBLE_DEVICES"] = _gid
-    os.environ["EGL_VISIBLE_DEVICES"] = _gid
-    os.environ["EGL_DEVICE_ID"] = _gid
-    os.environ["OPENCV_OPENCL_DEVICE"] = _gid
-    os.environ["DRI_PRIME"] = _gid
-    os.environ["DRM_DEVICE"] = f"/dev/dri/renderD{128 + int(_gid)}"
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["NUM_AVAILABLE_GPUS"] = "1"
 
 import logging
@@ -1063,6 +1058,8 @@ def _create_vision_task(
                 return landmarker_cls.create_from_options(options), delegate
             except Exception as exc:
                 last_exc = exc
+                if delegate == mp.tasks.BaseOptions.Delegate.GPU:
+                    print(f"[!] WARNING (PID {os.getpid()}): GPU delegate failed for {landmarker_cls.__name__}: {exc}. Falling back to CPU...", flush=True)
                 if delegate == mp.tasks.BaseOptions.Delegate.CPU:
                     raise
     finally:
@@ -1824,12 +1821,7 @@ def _mp_pool_worker_init_gpu(gpu_id: int):
     _gid = str(gpu_id)
     os.environ["ASSIGNED_GPU_ID"] = _gid
     os.environ["CUDA_VISIBLE_DEVICES"] = _gid
-    os.environ["NVIDIA_VISIBLE_DEVICES"] = _gid
-    os.environ["EGL_VISIBLE_DEVICES"] = _gid
-    os.environ["EGL_DEVICE_ID"] = _gid
-    os.environ["OPENCV_OPENCL_DEVICE"] = _gid
-    os.environ["DRI_PRIME"] = _gid
-    os.environ["DRM_DEVICE"] = f"/dev/dri/renderD{128 + gpu_id}"
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["NUM_AVAILABLE_GPUS"] = "1"
     global _NUM_AVAILABLE_GPUS
     _NUM_AVAILABLE_GPUS = 1
@@ -1939,7 +1931,7 @@ def reset_gpu_pools() -> "MultiGPUExecutorProxy":
     with _GPU_POOL_LOCK:
         for pool in list(_GPU_POOLS.values()):
             try:
-                pool.shutdown(wait=False, cancel_futures=True)
+                pool.shutdown(wait=True, cancel_futures=True)
             except Exception:
                 pass
         _GPU_POOLS.clear()
@@ -2010,7 +2002,7 @@ def reset_shared_pool() -> ProcessPoolExecutor:
     with _POOL_LOCK:
         if _SHARED_POOL is not None:
             try:
-                _SHARED_POOL.shutdown(wait=False, cancel_futures=True)
+                _SHARED_POOL.shutdown(wait=True, cancel_futures=True)
             except Exception:
                 pass
             _SHARED_POOL = None
@@ -4974,12 +4966,7 @@ def main(argv=None):
                 env = os.environ.copy()
                 env["ASSIGNED_GPU_ID"] = _gid
                 env["CUDA_VISIBLE_DEVICES"] = _gid
-                env["NVIDIA_VISIBLE_DEVICES"] = _gid
-                env["EGL_VISIBLE_DEVICES"] = _gid
-                env["EGL_DEVICE_ID"] = _gid
-                env["OPENCV_OPENCL_DEVICE"] = _gid
-                env["DRI_PRIME"] = _gid
-                env["DRM_DEVICE"] = f"/dev/dri/renderD{128 + i}"
+                env["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
                 env["NUM_AVAILABLE_GPUS"] = "1"
                 env["NUM_MP_GPU_WORKERS"] = str(workers_per_gpu)
 
