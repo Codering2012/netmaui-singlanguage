@@ -1549,6 +1549,7 @@ class MediaPipeExtractor:
 
         if target_indices is not None:
             curr_frame_idx = 0
+            frame_chunk = []
             for out_i, idx in enumerate(target_indices):
                 if curr_frame_idx != idx:
                     diff = idx - curr_frame_idx
@@ -1564,77 +1565,84 @@ class MediaPipeExtractor:
                 if not success or frame is None:
                     break
                 curr_frame_idx += 1
+                frame_chunk.append((out_i, frame))
 
-                fh, fw = frame.shape[:2]
-                ts_ms = int(out_i * 1000 / TARGET_FPS)
+                if len(frame_chunk) >= 5 or out_i == len(target_indices) - 1:
+                    for c_out_i, c_frame in frame_chunk:
+                        fh, fw = c_frame.shape[:2]
+                        ts_ms = int(c_out_i * 1000 / TARGET_FPS)
 
-                lm, q, conf = None, 0.0, {}
-                # Attempt fast ROI extraction if signer bounding box is active
-                if signer_roi is not None:
-                    rx0, ry0, rx1, ry1 = signer_roi
-                    px0, py0 = max(0, int(rx0 * fw)), max(0, int(ry0 * fh))
-                    px1, py1 = min(fw, int(rx1 * fw)), min(fh, int(ry1 * fh))
-                    if (px1 - px0) > 30 and (py1 - py0) > 30:
-                        crop_frame = frame[py0:py1, px0:px1]
-                        crop_resized = resize_frame_to_max_dimension(
-                            crop_frame, max_dim=max_dim
-                        )
-                        c_lm, c_q, c_conf = self.extract_frame(
-                            crop_resized, timestamp_ms=ts_ms
-                        )
-                        has_landmarks = (
-                            c_conf.get("left_hand_conf", 0) > 0.05
-                            or c_conf.get("right_hand_conf", 0) > 0.05
-                            or c_conf.get("pose_vis", 0) > 0.3
-                        )
-                        if has_landmarks:
-                            rw, rh = (px1 - px0) / fw, (py1 - py0) / fh
-                            valid_m = np.any(c_lm != 0.0, axis=-1)
-                            remapped_lm = c_lm.copy()
-                            remapped_lm[valid_m, 0] = rx0 + c_lm[valid_m, 0] * rw
-                            remapped_lm[valid_m, 1] = ry0 + c_lm[valid_m, 1] * rh
-                            lm, q, conf = remapped_lm, c_q, c_conf
+                        lm, q, conf = None, 0.0, {}
+                        if signer_roi is not None:
+                            rx0, ry0, rx1, ry1 = signer_roi
+                            px0, py0 = max(0, int(rx0 * fw)), max(0, int(ry0 * fh))
+                            px1, py1 = min(fw, int(rx1 * fw)), min(fh, int(ry1 * fh))
+                            if (px1 - px0) > 30 and (py1 - py0) > 30:
+                                crop_frame = c_frame[py0:py1, px0:px1]
+                                crop_resized = resize_frame_to_max_dimension(
+                                    crop_frame, max_dim=max_dim
+                                )
+                                c_lm, c_q, c_conf = self.extract_frame(
+                                    crop_resized, timestamp_ms=ts_ms
+                                )
+                                has_landmarks = (
+                                    c_conf.get("left_hand_conf", 0) > 0.05
+                                    or c_conf.get("right_hand_conf", 0) > 0.05
+                                    or c_conf.get("pose_vis", 0) > 0.3
+                                )
+                                if has_landmarks:
+                                    rw, rh = (px1 - px0) / fw, (py1 - py0) / fh
+                                    valid_m = np.any(c_lm != 0.0, axis=-1)
+                                    remapped_lm = c_lm.copy()
+                                    remapped_lm[valid_m, 0] = rx0 + c_lm[valid_m, 0] * rw
+                                    remapped_lm[valid_m, 1] = ry0 + c_lm[valid_m, 1] * rh
+                                    lm, q, conf = remapped_lm, c_q, c_conf
 
-                if lm is None:
-                    full_resized = resize_frame_to_max_dimension(frame, max_dim=max_dim)
-                    lm, q, conf = self.extract_frame(full_resized, timestamp_ms=ts_ms)
+                        if lm is None:
+                            full_resized = resize_frame_to_max_dimension(c_frame, max_dim=max_dim)
+                            lm, q, conf = self.extract_frame(full_resized, timestamp_ms=ts_ms)
 
-                # Dynamically update signer ROI bounding envelope for subsequent frames
-                valid_pts = lm[np.any(lm != 0.0, axis=-1)]
-                if len(valid_pts) >= 5:
-                    min_x, max_x = valid_pts[:, 0].min(), valid_pts[:, 0].max()
-                    min_y, max_y = valid_pts[:, 1].min(), valid_pts[:, 1].max()
-                    margin_x = max(0.12, 0.25 * (max_x - min_x))
-                    margin_y = max(0.12, 0.25 * (max_y - min_y))
-                    signer_roi = (
-                        max(0.0, min_x - margin_x),
-                        max(0.0, min_y - margin_y),
-                        min(1.0, max_x + margin_x),
-                        min(1.0, max_y + margin_y),
-                    )
+                        valid_pts = lm[np.any(lm != 0.0, axis=-1)]
+                        if len(valid_pts) >= 5:
+                            min_x, max_x = valid_pts[:, 0].min(), valid_pts[:, 0].max()
+                            min_y, max_y = valid_pts[:, 1].min(), valid_pts[:, 1].max()
+                            margin_x = max(0.12, 0.25 * (max_x - min_x))
+                            margin_y = max(0.12, 0.25 * (max_y - min_y))
+                            signer_roi = (
+                                max(0.0, min_x - margin_x),
+                                max(0.0, min_y - margin_y),
+                                min(1.0, max_x + margin_x),
+                                min(1.0, max_y + margin_y),
+                            )
 
-                sequence.append(lm)
-                qualities.append(q)
-                for k in conf_acc:
-                    conf_acc[k].append(conf[k])
+                        sequence.append(lm)
+                        qualities.append(q)
+                        for k in conf_acc:
+                            conf_acc[k].append(conf[k])
+                    frame_chunk.clear()
         else:
             if clip_start > 0:
                 cap.set(cv2.CAP_PROP_POS_FRAMES, clip_start)
             out_i = 0
+            frame_chunk = []
             while True:
                 success, frame = cap.read()
                 if not success or frame is None:
                     break
                 if max_dim is not None:
                     frame = resize_frame_to_max_dimension(frame, max_dim=max_dim)
-                ts_ms = int(out_i * 1000 / TARGET_FPS)
-                lm, q, conf = self.extract_frame(frame, timestamp_ms=ts_ms)
-                sequence.append(lm)
-                qualities.append(q)
-                for k in conf_acc:
-                    conf_acc[k].append(conf[k])
+                frame_chunk.append((out_i, frame))
                 out_i += 1
-                if len(sequence) >= TARGET_FPS * 5:
+                if len(frame_chunk) >= 5 or out_i >= TARGET_FPS * 5:
+                    for c_out_i, c_frame in frame_chunk:
+                        ts_ms = int(c_out_i * 1000 / TARGET_FPS)
+                        lm, q, conf = self.extract_frame(c_frame, timestamp_ms=ts_ms)
+                        sequence.append(lm)
+                        qualities.append(q)
+                        for k in conf_acc:
+                            conf_acc[k].append(conf[k])
+                    frame_chunk.clear()
+                if out_i >= TARGET_FPS * 5:
                     break
 
         cap.release()
