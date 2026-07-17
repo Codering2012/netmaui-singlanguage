@@ -35,34 +35,47 @@ static int (*real_openat64)(int dirfd, const char *pathname, int flags, ...) = N
 static FILE* (*real_fopen)(const char *pathname, const char *mode) = NULL;
 static FILE* (*real_fopen64)(const char *pathname, const char *mode) = NULL;
 
-static int get_assigned_gpu_id(void) {
-    static int cached_id = -2;
-    if (cached_id != -2) return cached_id;
-    const char *env = getenv("ASSIGNED_GPU_ID");
-    if (!env) env = getenv("GPU_ID");
+static int get_target_render_node(void) {
+    static int cached_rnode = -2;
+    if (cached_rnode != -2) return cached_rnode;
+    const char *env = getenv("TARGET_RENDER_NODE");
     if (env && *env) {
-        cached_id = atoi(env);
+        cached_rnode = atoi(env);
     } else {
-        cached_id = -1;
+        int gid = get_assigned_gpu_id();
+        cached_rnode = (gid >= 0) ? (128 + gid) : -1;
     }
-    return cached_id;
+    return cached_rnode;
+}
+
+static int get_target_nvidia_node(void) {
+    static int cached_nvnode = -2;
+    if (cached_nvnode != -2) return cached_nvnode;
+    const char *env = getenv("TARGET_NVIDIA_NODE");
+    if (env && *env) {
+        cached_nvnode = atoi(env);
+    } else {
+        int gid = get_assigned_gpu_id();
+        cached_nvnode = (gid >= 0) ? gid : -1;
+    }
+    return cached_nvnode;
 }
 
 static const char* redirect_path(const char *pathname, char *buf, size_t buflen) {
     if (!pathname) return pathname;
-    int gid = get_assigned_gpu_id();
-    if (gid <= 0) return pathname;
+    int rnode = get_target_render_node();
+    int nvnode = get_target_nvidia_node();
 
-    if (strcmp(pathname, "/dev/dri/renderD128") == 0 || strstr(pathname, "renderD128") != NULL) {
-        snprintf(buf, buflen, "/dev/dri/renderD%d", 128 + gid);
+    if (rnode >= 0 && (strcmp(pathname, "/dev/dri/renderD128") == 0 || strstr(pathname, "renderD128") != NULL)) {
+        snprintf(buf, buflen, "/dev/dri/renderD%d", rnode);
         return buf;
     }
-    if (strcmp(pathname, "/dev/dri/card0") == 0 || strstr(pathname, "/dev/dri/card0") != NULL) {
-        snprintf(buf, buflen, "/dev/dri/card%d", gid);
+    if (nvnode >= 0 && (strcmp(pathname, "/dev/dri/card0") == 0 || strstr(pathname, "/dev/dri/card0") != NULL)) {
+        snprintf(buf, buflen, "/dev/dri/card%d", nvnode);
         return buf;
     }
-    if (strcmp(pathname, "/dev/nvidia0") == 0 || strstr(pathname, "/dev/nvidia0") != NULL) {
-        snprintf(buf, buflen, "/dev/nvidia%d", gid);
+    if (nvnode >= 0 && (strcmp(pathname, "/dev/nvidia0") == 0 || strstr(pathname, "/dev/nvidia0") != NULL)) {
+        snprintf(buf, buflen, "/dev/nvidia%d", nvnode);
         return buf;
     }
     return pathname;
@@ -166,6 +179,22 @@ if _early_gpu_id is not None:
     os.environ["EGL_PLATFORM_DEVICE_EXT"] = _gid
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["NUM_AVAILABLE_GPUS"] = "1"
+    try:
+        import glob
+        rnodes = sorted(glob.glob("/sys/class/drm/renderD*"))
+        node_pairs = []
+        for rpath in rnodes:
+            dev_path = os.path.realpath(os.path.join(rpath, "device"))
+            bus_id = os.path.basename(dev_path).lower()
+            idx = int(os.path.basename(rpath).replace("renderD", ""))
+            node_pairs.append((bus_id, idx))
+        node_pairs.sort(key=lambda x: x[0])
+        _gid_int = int(_early_gpu_id)
+        if 0 <= _gid_int < len(node_pairs):
+            os.environ["TARGET_RENDER_NODE"] = str(node_pairs[_gid_int][1])
+            os.environ["TARGET_NVIDIA_NODE"] = str(_gid_int)
+    except Exception:
+        pass
     try:
         _so = ensure_gpu_interceptor()
         if _so:
@@ -1994,6 +2023,7 @@ def _mp_pool_worker_init_gpu(gpu_id: int, worker_counter=None):
     """
     _suppress_worker_stderr()
 
+    is_cpu_worker = False
     if worker_counter is not None:
         try:
             with worker_counter.get_lock():
@@ -2004,8 +2034,13 @@ def _mp_pool_worker_init_gpu(gpu_id: int, worker_counter=None):
                 os.environ["ASSIGNED_DELEGATE"] = "GPU"
             else:
                 os.environ["ASSIGNED_DELEGATE"] = "CPU"
+                os.environ["MEDIAPIPE_USE_GPU"] = "0"
+                is_cpu_worker = True
         except Exception:
             pass
+
+    if os.environ.get("ASSIGNED_DELEGATE") == "CPU" or os.environ.get("MEDIAPIPE_USE_GPU") == "0":
+        is_cpu_worker = True
 
     assigned_gpu = os.environ.get("ASSIGNED_GPU_ID")
     if assigned_gpu is not None:
@@ -2019,13 +2054,32 @@ def _mp_pool_worker_init_gpu(gpu_id: int, worker_counter=None):
     os.environ["EGL_PLATFORM_DEVICE_EXT"] = _gid
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["NUM_AVAILABLE_GPUS"] = "1"
+
     try:
-        _so = ensure_gpu_interceptor()
-        if _so:
-            os.environ["LD_PRELOAD"] = f"{_so}:{os.environ.get('LD_PRELOAD', '')}".rstrip(":")
-            ctypes.CDLL(_so)
+        import glob
+        rnodes = sorted(glob.glob("/sys/class/drm/renderD*"))
+        node_pairs = []
+        for rpath in rnodes:
+            dev_path = os.path.realpath(os.path.join(rpath, "device"))
+            bus_id = os.path.basename(dev_path).lower()
+            idx = int(os.path.basename(rpath).replace("renderD", ""))
+            node_pairs.append((bus_id, idx))
+        node_pairs.sort(key=lambda x: x[0])
+        if 0 <= gpu_id < len(node_pairs):
+            os.environ["TARGET_RENDER_NODE"] = str(node_pairs[gpu_id][1])
+            os.environ["TARGET_NVIDIA_NODE"] = str(gpu_id)
     except Exception:
         pass
+
+    if not is_cpu_worker:
+        try:
+            _so = ensure_gpu_interceptor()
+            if _so:
+                os.environ["LD_PRELOAD"] = f"{_so}:{os.environ.get('LD_PRELOAD', '')}".rstrip(":")
+                ctypes.CDLL(_so)
+        except Exception:
+            pass
+
     global _NUM_AVAILABLE_GPUS
     _NUM_AVAILABLE_GPUS = 1
 
@@ -2043,12 +2097,12 @@ def _mp_pool_worker_init_gpu(gpu_id: int, worker_counter=None):
     except Exception:
         pass
 
-    # Pre-warm ONLY the static (IMAGE-mode) extractor after setting CUDA_VISIBLE_DEVICES.
-    # The GPU delegate will automatically bind to the only visible GPU (which becomes index 0).
-    try:
-        _get_process_extractor(static_mode=True)
-    except Exception:
-        pass
+    # Pre-warm ONLY for GPU workers; CPU workers pre-warm dynamically when needed without opening graphics handles
+    if not is_cpu_worker:
+        try:
+            _get_process_extractor(static_mode=True)
+        except Exception:
+            pass
 
 
 def _mp_pool_worker_init_cpu():
@@ -5214,6 +5268,21 @@ def main(argv=None):
                 env["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
                 env["NUM_AVAILABLE_GPUS"] = "1"
                 env["NUM_MP_GPU_WORKERS"] = str(workers_per_gpu)
+                try:
+                    import glob
+                    rnodes = sorted(glob.glob("/sys/class/drm/renderD*"))
+                    node_pairs = []
+                    for rpath in rnodes:
+                        dev_path = os.path.realpath(os.path.join(rpath, "device"))
+                        bus_id = os.path.basename(dev_path).lower()
+                        idx = int(os.path.basename(rpath).replace("renderD", ""))
+                        node_pairs.append((bus_id, idx))
+                    node_pairs.sort(key=lambda x: x[0])
+                    if 0 <= i < len(node_pairs):
+                        env["TARGET_RENDER_NODE"] = str(node_pairs[i][1])
+                        env["TARGET_NVIDIA_NODE"] = str(i)
+                except Exception:
+                    pass
                 try:
                     _so = ensure_gpu_interceptor()
                     if _so:
