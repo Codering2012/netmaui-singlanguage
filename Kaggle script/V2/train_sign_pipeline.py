@@ -1191,10 +1191,14 @@ def _indexed_landmarks(landmarks, indices: np.ndarray) -> np.ndarray:
 def _create_vision_task(
     landmarker_cls, options_cls, model_path: Path, running_mode, **extra
 ):
-    """Create a Tasks Vision landmarker; try GPU delegate first, fall back to CPU."""
-    delegates = [mp.tasks.BaseOptions.Delegate.GPU, mp.tasks.BaseOptions.Delegate.CPU]
-    if not MEDIAPIPE_USE_GPU:
+    """Create a Tasks Vision landmarker; try assigned delegate or hybrid allocation first."""
+    assigned_delegate = os.environ.get("ASSIGNED_DELEGATE", "").upper()
+    if assigned_delegate == "CPU" or not MEDIAPIPE_USE_GPU:
         delegates = [mp.tasks.BaseOptions.Delegate.CPU]
+    elif assigned_delegate == "GPU":
+        delegates = [mp.tasks.BaseOptions.Delegate.GPU, mp.tasks.BaseOptions.Delegate.CPU]
+    else:
+        delegates = [mp.tasks.BaseOptions.Delegate.GPU, mp.tasks.BaseOptions.Delegate.CPU]
     last_exc = None
 
     devnull_fd = -1
@@ -1982,13 +1986,26 @@ def _suppress_worker_stderr():
         pass
 
 
-def _mp_pool_worker_init_gpu(gpu_id: int):
-    """Worker initialiser pinned to a specific GPU.
+def _mp_pool_worker_init_gpu(gpu_id: int, worker_counter=None):
+    """Worker initialiser pinned to a specific GPU with Hybrid GPU/CPU delegate assignment.
 
     *gpu_id* is passed as an initarg so every worker in a pool gets an
     identical, deterministic assignment.
     """
     _suppress_worker_stderr()
+
+    if worker_counter is not None:
+        try:
+            with worker_counter.get_lock():
+                my_id = worker_counter.value
+                worker_counter.value += 1
+            max_gpu_workers = int(os.environ.get("HYBRID_GPU_WORKERS", "3"))
+            if my_id < max_gpu_workers:
+                os.environ["ASSIGNED_DELEGATE"] = "GPU"
+            else:
+                os.environ["ASSIGNED_DELEGATE"] = "CPU"
+        except Exception:
+            pass
 
     assigned_gpu = os.environ.get("ASSIGNED_GPU_ID")
     if assigned_gpu is not None:
@@ -2098,7 +2115,7 @@ def _get_mp_context(gpu_isolated: bool = False):
 
 def get_or_create_gpu_pool(gpu_id: int) -> ProcessPoolExecutor:
     """Return (creating if needed) a ProcessPoolExecutor whose workers are
-    all pinned to *gpu_id* via CUDA_VISIBLE_DEVICES.
+    all pinned to *gpu_id* via CUDA_VISIBLE_DEVICES and split between GPU and CPU.
 
     Uses 'spawn' (via gpu_isolated=True) so each worker starts with a clean
     CUDA runtime.  The initialiser sets CUDA_VISIBLE_DEVICES before importing
@@ -2108,11 +2125,17 @@ def get_or_create_gpu_pool(gpu_id: int) -> ProcessPoolExecutor:
         if gpu_id not in _GPU_POOLS:
             n_gpus = max(1, get_num_gpus())
             workers_per_gpu = max(1, NUM_MP_GPU_WORKERS // n_gpus)
+            ctx = _get_mp_context(gpu_isolated=True)  # spawn for CUDA isolation
+            worker_counter = None
+            try:
+                worker_counter = ctx.Value("i", 0)
+            except Exception:
+                pass
             kwargs = {
                 "max_workers": workers_per_gpu,
-                "mp_context": _get_mp_context(gpu_isolated=True),  # spawn for CUDA isolation
+                "mp_context": ctx,
                 "initializer": _mp_pool_worker_init_gpu,
-                "initargs": (gpu_id,),
+                "initargs": (gpu_id, worker_counter),
             }
             _GPU_POOLS[gpu_id] = ProcessPoolExecutor(**kwargs)
         return _GPU_POOLS[gpu_id]
@@ -3611,7 +3634,7 @@ class FrankensteinDataProcessor:
             json.dump(payload, f, indent=2, ensure_ascii=False)
 
     def _discard(
-        self, *, split, source, task, label, quality, reason, meta=None, breakdown=None
+        self, *, split, source, task, label, quality, reason, meta=None, breakdown=None, tag=None
     ):
         payload = {
             "timestamp": datetime.now(timezone.utc),
@@ -3629,6 +3652,25 @@ class FrankensteinDataProcessor:
         self._update_quality_stat("discarded_total", 1)
         self._update_quality_stat(f"discarded::{source}", 1)
         self._update_quality_stat(f"discarded_reason::{reason}", 1)
+
+        m = meta or {}
+        key = m.get("image_path") or m.get("video_path") or m.get("frame_dir") or m.get("sentence_id") or str(label)
+        if tag is None and source:
+            s_low = str(source).lower()
+            if "alphabet" in s_low: tag = "alphabet"
+            elif "citizen" in s_low: tag = "citizen"
+            elif "chicago" in s_low: tag = "chicago"
+            elif "wlasl" in s_low: tag = "wlasl"
+            elif "synthetic" in s_low: tag = "synthetic"
+            elif "how2sign" in s_low: tag = "how2sign"
+        if tag and key and getattr(self, "temp_shard_dir", None) is not None:
+            gpu_suffix = f"_gpu{self.gpu_id}" if getattr(self, "gpu_id", None) is not None else ""
+            manifest_file = self.temp_shard_dir / f"completed_{tag}{gpu_suffix}.jsonl"
+            try:
+                with open(manifest_file, "a", encoding="utf-8") as f:
+                    f.write(f"{key}\n")
+            except Exception:
+                pass
 
     def _keep(self, *, split, source, quality):
         self._update_quality_stat("kept_total", 1)
