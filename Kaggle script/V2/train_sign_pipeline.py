@@ -1190,11 +1190,21 @@ def _indexed_landmarks(landmarks, indices: np.ndarray) -> np.ndarray:
 def _create_vision_task(
     landmarker_cls, options_cls, model_path: Path, running_mode, **extra
 ):
-    """Create a Tasks Vision landmarker; try GPU delegate first, fall back to CPU."""
+    """Create a Tasks Vision landmarker with multi-process EGL/pthread collision protection and retry/fallback."""
     delegates = [mp.tasks.BaseOptions.Delegate.GPU, mp.tasks.BaseOptions.Delegate.CPU]
-    if not MEDIAPIPE_USE_GPU:
+    if not MEDIAPIPE_USE_GPU or os.environ.get("MEDIAPIPE_USE_GPU", "1") == "0":
         delegates = [mp.tasks.BaseOptions.Delegate.CPU]
     last_exc = None
+
+    # Inter-process file lock during C++ create_from_options to prevent EGL/NVIDIA driver
+    # concurrent initialization crashes (std::abort()) across 40+ concurrent workers.
+    lock_path = Path("/tmp/mediapipe_vision_init.lock")
+    lock_fd = -1
+    try:
+        import fcntl
+        lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o666)
+    except Exception:
+        pass
 
     devnull_fd = -1
     old_stderr = None
@@ -1207,28 +1217,52 @@ def _create_vision_task(
 
     try:
         for delegate in delegates:
-            try:
-                base_options = mp.tasks.BaseOptions(
-                    model_asset_path=str(model_path),
-                    delegate=delegate,
-                )
-                options = options_cls(
-                    base_options=base_options,
-                    running_mode=running_mode,
-                    **extra,
-                )
-                return landmarker_cls.create_from_options(options), delegate
-            except Exception as exc:
-                last_exc = exc
-                if "can't start new thread" in str(exc) or "Resource temporarily unavailable" in str(exc):
-                    raise RuntimeError(
-                        f"[!] ERROR (PID {os.getpid()}): MediaPipe hit the container thread/process limit ('{exc}'). "
-                        f"Reduce total worker processes across GPUs (e.g. use --workers 16 instead of 26 when running --num-gpus 2)."
-                    ) from exc
-                if delegate == mp.tasks.BaseOptions.Delegate.GPU:
-                    print(f"[!] WARNING (PID {os.getpid()}): GPU delegate failed for {landmarker_cls.__name__}: {exc}. Falling back to CPU...", flush=True)
-                if delegate == mp.tasks.BaseOptions.Delegate.CPU:
-                    raise
+            for attempt in range(4):
+                try:
+                    if lock_fd != -1:
+                        try:
+                            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+                        except Exception:
+                            pass
+
+                    base_options = mp.tasks.BaseOptions(
+                        model_asset_path=str(model_path),
+                        delegate=delegate,
+                    )
+                    options = options_cls(
+                        base_options=base_options,
+                        running_mode=running_mode,
+                        **extra,
+                    )
+                    task = landmarker_cls.create_from_options(options)
+                    if lock_fd != -1:
+                        try:
+                            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                        except Exception:
+                            pass
+                    return task, delegate
+                except Exception as exc:
+                    if lock_fd != -1:
+                        try:
+                            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                        except Exception:
+                            pass
+                    last_exc = exc
+                    if "can't start new thread" in str(exc) or "Resource temporarily unavailable" in str(exc):
+                        # Transient thread/process limit hit: sleep, trim RAM, and retry or fall back
+                        time.sleep(0.3 * (attempt + 1))
+                        gc.collect()
+                        try:
+                            ctypes.CDLL("libc.so.6").malloc_trim(0)
+                        except Exception:
+                            pass
+                        continue
+                    if delegate == mp.tasks.BaseOptions.Delegate.GPU:
+                        # EGL or GPU creation failed: break out of retry loop to fall back to CPU
+                        break
+                    time.sleep(0.2)
+            if delegate == mp.tasks.BaseOptions.Delegate.GPU:
+                print(f"[!] WARNING (PID {os.getpid()}): GPU delegate failed for {landmarker_cls.__name__} ({last_exc}). Falling back to CPU...", flush=True)
     finally:
         if old_stderr is not None:
             try:
@@ -1239,6 +1273,11 @@ def _create_vision_task(
         if devnull_fd != -1 and devnull_fd != old_stderr:
             try:
                 os.close(devnull_fd)
+            except Exception:
+                pass
+        if lock_fd != -1:
+            try:
+                os.close(lock_fd)
             except Exception:
                 pass
 
@@ -2032,6 +2071,11 @@ def _mp_pool_worker_init_gpu(gpu_id: int):
         _get_process_extractor(static_mode=True)
     except Exception:
         pass
+    gc.collect()
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
 
 
 def _mp_pool_worker_init_cpu():
@@ -2051,6 +2095,11 @@ def _mp_pool_worker_init_cpu():
         pass
     try:
         _get_process_extractor(static_mode=True)
+    except Exception:
+        pass
+    gc.collect()
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
     except Exception:
         pass
 
@@ -2221,13 +2270,19 @@ def bounded_as_completed(executor, fn, tasks, max_in_flight=None):
     task_iter = iter(tasks)
     futures = {}
 
+    def _safe_submit(curr_exec, task_args):
+        for _attempt in range(4):
+            try:
+                return curr_exec.submit(fn, *task_args), curr_exec
+            except Exception:
+                time.sleep(0.5 * (_attempt + 1))
+                curr_exec = _reset_executor(curr_exec)
+        # Final attempt after retries
+        return curr_exec.submit(fn, *task_args), curr_exec
+
     # Prime the queue
     for task in task_iter:
-        try:
-            fut = executor.submit(fn, *task)
-        except Exception:
-            executor = _reset_executor(executor)
-            fut = executor.submit(fn, *task)
+        fut, executor = _safe_submit(executor, task)
         futures[fut] = task
         if len(futures) >= max_in_flight:
             break
@@ -2241,9 +2296,13 @@ def bounded_as_completed(executor, fn, tasks, max_in_flight=None):
             done = [f for f in list(futures.keys()) if f.done()]
 
         for fut in done:
+            task_orig = futures.get(fut)
             try:
                 res = fut.result()
             except Exception as e:
+                # If the process pool broke, reset executor immediately so subsequent submissions succeed
+                if "BrokenProcessPool" in str(type(e).__name__) or "BrokenProcessPool" in str(e):
+                    executor = _reset_executor(executor)
                 res = (
                     None,
                     {
@@ -2259,11 +2318,7 @@ def bounded_as_completed(executor, fn, tasks, max_in_flight=None):
                 del futures[fut]
 
         for task in task_iter:
-            try:
-                fut = executor.submit(fn, *task)
-            except Exception:
-                executor = _reset_executor(executor)
-                fut = executor.submit(fn, *task)
+            fut, executor = _safe_submit(executor, task)
             futures[fut] = task
             if len(futures) >= max_in_flight:
                 break
