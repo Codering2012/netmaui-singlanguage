@@ -158,22 +158,30 @@ if _early_gpu_id is None:
             break
 
 if _early_gpu_id is not None:
-    _gid = str(int(_early_gpu_id))
-    os.environ["ASSIGNED_GPU_ID"] = _gid
-    os.environ["CUDA_VISIBLE_DEVICES"] = _gid
-    os.environ["EGL_VISIBLE_DEVICES"] = _gid
-    os.environ["NVIDIA_VISIBLE_DEVICES"] = _gid
-    os.environ["EGL_PLATFORM_DEVICE_EXT"] = _gid
-    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-    os.environ["NUM_AVAILABLE_GPUS"] = "1"
-    try:
-        _so = ensure_gpu_interceptor()
-        if _so:
-            os.environ["LD_PRELOAD"] = f"{_so}:{os.environ.get('LD_PRELOAD', '')}".rstrip(":")
-            import ctypes
-            ctypes.CDLL(_so)
-    except Exception:
-        pass
+    if os.environ.get("MEDIAPIPE_USE_GPU", "1") == "0" or int(_early_gpu_id) < 0:
+        os.environ["ASSIGNED_GPU_ID"] = "-1"
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        os.environ["EGL_VISIBLE_DEVICES"] = ""
+        os.environ["NVIDIA_VISIBLE_DEVICES"] = ""
+        os.environ["MEDIAPIPE_USE_GPU"] = "0"
+        os.environ["NUM_AVAILABLE_GPUS"] = "0"
+    else:
+        _gid = str(int(_early_gpu_id))
+        os.environ["ASSIGNED_GPU_ID"] = _gid
+        os.environ["CUDA_VISIBLE_DEVICES"] = _gid
+        os.environ["EGL_VISIBLE_DEVICES"] = _gid
+        os.environ["NVIDIA_VISIBLE_DEVICES"] = _gid
+        os.environ["EGL_PLATFORM_DEVICE_EXT"] = _gid
+        os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+        os.environ["NUM_AVAILABLE_GPUS"] = "1"
+        try:
+            _so = ensure_gpu_interceptor()
+            if _so:
+                os.environ["LD_PRELOAD"] = f"{_so}:{os.environ.get('LD_PRELOAD', '')}".rstrip(":")
+                import ctypes
+                ctypes.CDLL(_so)
+        except Exception:
+            pass
 
 import logging
 import warnings
@@ -1971,11 +1979,21 @@ def _mp_pool_worker_init_gpu(gpu_id: int):
     *gpu_id* is passed as an initarg so every worker in a pool gets an
     identical, deterministic assignment.
     """
+    global _NUM_AVAILABLE_GPUS
     _suppress_worker_stderr()
 
     assigned_gpu = os.environ.get("ASSIGNED_GPU_ID")
     if assigned_gpu is not None:
         gpu_id = int(assigned_gpu)
+
+    if os.environ.get("MEDIAPIPE_USE_GPU", "1") == "0" or gpu_id < 0:
+        os.environ["ASSIGNED_GPU_ID"] = "-1"
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        os.environ["EGL_VISIBLE_DEVICES"] = ""
+        os.environ["NVIDIA_VISIBLE_DEVICES"] = ""
+        os.environ["MEDIAPIPE_USE_GPU"] = "0"
+        _NUM_AVAILABLE_GPUS = 0
+        return _mp_pool_worker_init_cpu()
 
     _gid = str(gpu_id)
     os.environ["ASSIGNED_GPU_ID"] = _gid
@@ -1992,7 +2010,6 @@ def _mp_pool_worker_init_gpu(gpu_id: int):
             ctypes.CDLL(_so)
     except Exception:
         pass
-    global _NUM_AVAILABLE_GPUS
     _NUM_AVAILABLE_GPUS = 1
 
     _init_mediapipe()
@@ -2264,10 +2281,10 @@ class MultiGPUExecutorProxy:
 
     def __init__(self):
         n_gpus = get_num_gpus()
-        if n_gpus >= 1:
+        if n_gpus >= 1 and os.environ.get("MEDIAPIPE_USE_GPU", "1") != "0":
             self._pools = [get_or_create_gpu_pool(i) for i in range(n_gpus)]
         else:
-            # CPU-only: delegate to the existing shared pool
+            # CPU-only or CPU shard: delegate to the existing shared pool
             self._pools = [get_shared_pool()]
         self._n = len(self._pools)
         self._in_flight_counts = [0] * self._n
@@ -5077,6 +5094,12 @@ def main(argv=None):
         "--num-gpus", type=int, default=1, help="Total number of GPU shard processes"
     )
     parser.add_argument(
+        "--cpu-shards", type=int, default=0, help="Number of dedicated CPU shard processes to run alongside GPU shards utilizing idle CPU cores"
+    )
+    parser.add_argument(
+        "--cpu-workers", type=int, default=24, help="Total multi-processing workers across CPU shards when --cpu-shards > 0"
+    )
+    parser.add_argument(
         "--phase", type=str, default="all", choices=["all", "extract", "merge"], help="Execution phase when sharding"
     )
     args = parser.parse_args(argv)
@@ -5129,30 +5152,45 @@ def main(argv=None):
     n_gpus = get_num_gpus()
 
     for split in splits:
-        # Check if we should run section-by-section multi-GPU extraction for this split
-        if args.gpu_id is None and n_gpus > 1 and args.phase in ("all", "extract"):
+        if args.gpu_id is None and (n_gpus > 1 or args.cpu_shards > 0) and args.phase in ("all", "extract"):
             import subprocess
-            log_msg(f"[*] Master Orchestrator: Section '{split.upper()}' - Launching {n_gpus} independent OS processes (1 per GPU)...")
-            total_workers = args.workers if args.workers is not None else NUM_MP_GPU_WORKERS
-            workers_per_gpu = max(1, total_workers // n_gpus)
+            total_shards = n_gpus + args.cpu_shards
+            log_msg(f"[*] Master Orchestrator: Section '{split.upper()}' - Launching {n_gpus} GPU shards + {args.cpu_shards} CPU shards ({total_shards} total independent OS processes)...")
+            total_gpu_workers = args.workers if args.workers is not None else NUM_MP_GPU_WORKERS
+            workers_per_gpu = max(1, total_gpu_workers // n_gpus) if n_gpus > 0 else 0
+            workers_per_cpu_shard = max(1, args.cpu_workers // args.cpu_shards) if args.cpu_shards > 0 else 0
             procs = []
-            for i in range(n_gpus):
-                _gid = str(i)
+            for i in range(total_shards):
                 env = os.environ.copy()
-                env["ASSIGNED_GPU_ID"] = _gid
-                env["CUDA_VISIBLE_DEVICES"] = _gid
-                env["EGL_VISIBLE_DEVICES"] = _gid
-                env["NVIDIA_VISIBLE_DEVICES"] = _gid
-                env["EGL_PLATFORM_DEVICE_EXT"] = _gid
-                env["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-                env["NUM_AVAILABLE_GPUS"] = "1"
-                env["NUM_MP_GPU_WORKERS"] = str(workers_per_gpu)
-                try:
-                    _so = ensure_gpu_interceptor()
-                    if _so:
-                        env["LD_PRELOAD"] = f"{_so}:{env.get('LD_PRELOAD', '')}".rstrip(":")
-                except Exception:
-                    pass
+                is_cpu_shard = (i >= n_gpus)
+                if is_cpu_shard:
+                    _gid = "-1"
+                    env["ASSIGNED_GPU_ID"] = _gid
+                    env["CUDA_VISIBLE_DEVICES"] = ""
+                    env["EGL_VISIBLE_DEVICES"] = ""
+                    env["NVIDIA_VISIBLE_DEVICES"] = ""
+                    env["MEDIAPIPE_USE_GPU"] = "0"
+                    env["NUM_AVAILABLE_GPUS"] = "0"
+                    _shard_workers = workers_per_cpu_shard
+                    env["NUM_MP_GPU_WORKERS"] = str(_shard_workers)
+                else:
+                    _gid = str(i)
+                    env["ASSIGNED_GPU_ID"] = _gid
+                    env["CUDA_VISIBLE_DEVICES"] = _gid
+                    env["EGL_VISIBLE_DEVICES"] = _gid
+                    env["NVIDIA_VISIBLE_DEVICES"] = _gid
+                    env["EGL_PLATFORM_DEVICE_EXT"] = _gid
+                    env["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+                    env["NUM_AVAILABLE_GPUS"] = "1"
+                    env["MEDIAPIPE_USE_GPU"] = "1"
+                    _shard_workers = workers_per_gpu
+                    env["NUM_MP_GPU_WORKERS"] = str(_shard_workers)
+                    try:
+                        _so = ensure_gpu_interceptor()
+                        if _so:
+                            env["LD_PRELOAD"] = f"{_so}:{env.get('LD_PRELOAD', '')}".rstrip(":")
+                    except Exception:
+                        pass
 
                 cmd = [
                     sys.executable,
@@ -5160,8 +5198,8 @@ def main(argv=None):
                     "--phase", "extract",
                     "--split", split,
                     "--gpu-id", str(i),
-                    "--num-gpus", str(n_gpus),
-                    "--workers", str(workers_per_gpu),
+                    "--num-gpus", str(total_shards),
+                    "--workers", str(_shard_workers),
                     "--batch-flush-size", str(args.batch_flush_size),
                 ]
                 if args.test:
@@ -5173,26 +5211,27 @@ def main(argv=None):
                 if args.shard_size:
                     cmd.extend(["--shard-size", str(args.shard_size)])
 
-                log_msg(f"[*] Launching GPU Shard Process {i} for split '{split}': {' '.join(cmd)}")
-                procs.append((i, subprocess.Popen(cmd, env=env)))
+                shard_label = f"CPU Shard {i}" if is_cpu_shard else f"GPU Shard {i}"
+                log_msg(f"[*] Launching {shard_label} for split '{split}' ({_shard_workers} workers): {' '.join(cmd)}")
+                procs.append((i, shard_label, subprocess.Popen(cmd, env=env)))
 
             failed = False
-            for i, p in procs:
+            for i, label, p in procs:
                 ret = p.wait()
                 if ret != 0:
-                    log_msg(f"[!] Error: GPU Shard Process {i} exited with error code {ret} on split '{split}'")
+                    log_msg(f"[!] Error: {label} exited with error code {ret} on split '{split}'")
                     failed = True
                 else:
-                    log_msg(f"[+] GPU Shard Process {i} completed extraction for split '{split}'.")
+                    log_msg(f"[+] {label} completed extraction for split '{split}'.")
 
             if failed:
-                raise RuntimeError(f"One or more GPU shard processes failed during Phase A extraction on split '{split}'.")
+                raise RuntimeError(f"One or more shard processes failed during Phase A extraction on split '{split}'.")
 
             if args.phase == "extract":
                 continue
 
             processor.phase = "merge"
-            log_msg(f"[*] All GPU shard extractions finished for section '{split}'. Master Orchestrator starting merge...")
+            log_msg(f"[*] All shard extractions finished for section '{split}'. Master Orchestrator starting merge...")
         else:
             processor.phase = args.phase
 
