@@ -237,6 +237,15 @@ def _init_torch():
             pass
 from pathlib import Path
 from scipy.interpolate import interp1d, CubicSpline
+
+def safe_torch_load(path, map_location="cpu"):
+    """Load PyTorch file safely supporting PyTorch 2.6+ default weights_only=True change."""
+    _init_torch()
+    try:
+        return torch.load(path, map_location=map_location, weights_only=False)
+    except TypeError:
+        return torch.load(path, map_location=map_location)
+
 cv2 = None
 mp = None
 
@@ -3362,7 +3371,7 @@ class OnlineASLDataset(Dataset):
         Loads the clean, preprocessed data payload dictionary and handles target mapping.
         """
         # --- FIX: Target the matching list within the structured payload ---
-        self.payload = torch.load(pt_file_path, map_location="cpu")
+        self.payload = safe_torch_load(pt_file_path, map_location="cpu")
         if isinstance(self.payload, dict):
             self.data = (
                 self.payload.get("isolated_records")
@@ -4862,7 +4871,7 @@ def build_split(processor, split, normalizer, augment=False, label_to_idx=None):
         for sp in list(temp_shard_paths):
             if "how2sign_holistic" in sp.name:
                 try:
-                    sentence_records.extend(torch.load(sp, map_location="cpu"))
+                    sentence_records.extend(safe_torch_load(sp, map_location="cpu"))
                 except Exception as e:
                     log_msg(f"[!] Warning: Failed to load holistic shard {sp.name}: {e}")
                 temp_shard_paths.remove(sp)
@@ -4872,7 +4881,7 @@ def build_split(processor, split, normalizer, augment=False, label_to_idx=None):
             log_msg("[*] Phase B: scanning temp shards for label vocabulary...")
             all_labels: set = set()
             for sp in temp_shard_paths:
-                shard_recs = torch.load(sp, map_location="cpu")
+                shard_recs = safe_torch_load(sp, map_location="cpu")
                 for r in shard_recs:
                     all_labels.add(r["label"])
                 del shard_recs
@@ -4943,7 +4952,7 @@ def build_split(processor, split, normalizer, augment=False, label_to_idx=None):
             cur_shard = []
 
         for temp_sp in tqdm(temp_shard_paths, desc=f"Streaming shards [{split}]"):
-            shard_recs = torch.load(temp_sp, map_location="cpu")
+            shard_recs = safe_torch_load(temp_sp, map_location="cpu")
             for r in shard_recs:
                 lbl = r.get("label", "")
                 if lbl not in label_to_idx_final:
