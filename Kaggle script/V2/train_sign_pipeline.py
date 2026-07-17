@@ -27,7 +27,6 @@ def ensure_gpu_interceptor() -> str | None:
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <sys/stat.h>
 
 static int (*real_open)(const char *pathname, int flags, ...) = NULL;
 static int (*real_open64)(const char *pathname, int flags, ...) = NULL;
@@ -35,15 +34,6 @@ static int (*real_openat)(int dirfd, const char *pathname, int flags, ...) = NUL
 static int (*real_openat64)(int dirfd, const char *pathname, int flags, ...) = NULL;
 static FILE* (*real_fopen)(const char *pathname, const char *mode) = NULL;
 static FILE* (*real_fopen64)(const char *pathname, const char *mode) = NULL;
-static int (*real_stat)(const char *pathname, struct stat *statbuf) = NULL;
-static int (*real_stat64)(const char *pathname, struct stat64 *statbuf) = NULL;
-static int (*real_lstat)(const char *pathname, struct stat *statbuf) = NULL;
-static int (*real_lstat64)(const char *pathname, struct stat64 *statbuf) = NULL;
-static int (*real_access)(const char *pathname, int mode) = NULL;
-static int (*real___xstat)(int ver, const char *pathname, struct stat *statbuf) = NULL;
-static int (*real___xstat64)(int ver, const char *pathname, struct stat64 *statbuf) = NULL;
-static int (*real___fxstatat)(int ver, int dirfd, const char *pathname, struct stat *statbuf, int flags) = NULL;
-static int (*real___fxstatat64)(int ver, int dirfd, const char *pathname, struct stat64 *statbuf, int flags) = NULL;
 
 static int get_assigned_gpu_id(void) {
     static int cached_id = -2;
@@ -144,60 +134,6 @@ FILE* fopen64(const char *pathname, const char *mode) {
     if (!real_fopen64) real_fopen64 = dlsym(RTLD_NEXT, "fopen64");
     char buf[512];
     return real_fopen64(redirect_path(pathname, buf, sizeof(buf)), mode);
-}
-
-int stat(const char *pathname, struct stat *statbuf) {
-    if (!real_stat) real_stat = dlsym(RTLD_NEXT, "stat");
-    char buf[512];
-    return real_stat(redirect_path(pathname, buf, sizeof(buf)), statbuf);
-}
-
-int stat64(const char *pathname, struct stat64 *statbuf) {
-    if (!real_stat64) real_stat64 = dlsym(RTLD_NEXT, "stat64");
-    char buf[512];
-    return real_stat64(redirect_path(pathname, buf, sizeof(buf)), statbuf);
-}
-
-int lstat(const char *pathname, struct stat *statbuf) {
-    if (!real_lstat) real_lstat = dlsym(RTLD_NEXT, "lstat");
-    char buf[512];
-    return real_lstat(redirect_path(pathname, buf, sizeof(buf)), statbuf);
-}
-
-int lstat64(const char *pathname, struct stat64 *statbuf) {
-    if (!real_lstat64) real_lstat64 = dlsym(RTLD_NEXT, "lstat64");
-    char buf[512];
-    return real_lstat64(redirect_path(pathname, buf, sizeof(buf)), statbuf);
-}
-
-int access(const char *pathname, int mode) {
-    if (!real_access) real_access = dlsym(RTLD_NEXT, "access");
-    char buf[512];
-    return real_access(redirect_path(pathname, buf, sizeof(buf)), mode);
-}
-
-int __xstat(int ver, const char *pathname, struct stat *statbuf) {
-    if (!real___xstat) real___xstat = dlsym(RTLD_NEXT, "__xstat");
-    char buf[512];
-    return real___xstat(ver, redirect_path(pathname, buf, sizeof(buf)), statbuf);
-}
-
-int __xstat64(int ver, const char *pathname, struct stat64 *statbuf) {
-    if (!real___xstat64) real___xstat64 = dlsym(RTLD_NEXT, "__xstat64");
-    char buf[512];
-    return real___xstat64(ver, redirect_path(pathname, buf, sizeof(buf)), statbuf);
-}
-
-int __fxstatat(int ver, int dirfd, const char *pathname, struct stat *statbuf, int flags) {
-    if (!real___fxstatat) real___fxstatat = dlsym(RTLD_NEXT, "__fxstatat");
-    char buf[512];
-    return real___fxstatat(ver, dirfd, redirect_path(pathname, buf, sizeof(buf)), statbuf, flags);
-}
-
-int __fxstatat64(int ver, int dirfd, const char *pathname, struct stat64 *statbuf, int flags) {
-    if (!real___fxstatat64) real___fxstatat64 = dlsym(RTLD_NEXT, "__fxstatat64");
-    char buf[512];
-    return real___fxstatat64(ver, dirfd, redirect_path(pathname, buf, sizeof(buf)), statbuf, flags);
 }
 """
     c_path = "/tmp/libegl_gpu_interceptor.c"
