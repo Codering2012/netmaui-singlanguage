@@ -158,30 +158,22 @@ if _early_gpu_id is None:
             break
 
 if _early_gpu_id is not None:
-    if os.environ.get("MEDIAPIPE_USE_GPU", "1") == "0" or int(_early_gpu_id) < 0:
-        os.environ["ASSIGNED_GPU_ID"] = "-1"
-        os.environ["CUDA_VISIBLE_DEVICES"] = ""
-        os.environ["EGL_VISIBLE_DEVICES"] = ""
-        os.environ["NVIDIA_VISIBLE_DEVICES"] = ""
-        os.environ["MEDIAPIPE_USE_GPU"] = "0"
-        os.environ["NUM_AVAILABLE_GPUS"] = "0"
-    else:
-        _gid = str(int(_early_gpu_id))
-        os.environ["ASSIGNED_GPU_ID"] = _gid
-        os.environ["CUDA_VISIBLE_DEVICES"] = _gid
-        os.environ["EGL_VISIBLE_DEVICES"] = _gid
-        os.environ["NVIDIA_VISIBLE_DEVICES"] = _gid
-        os.environ["EGL_PLATFORM_DEVICE_EXT"] = _gid
-        os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-        os.environ["NUM_AVAILABLE_GPUS"] = "1"
-        try:
-            _so = ensure_gpu_interceptor()
-            if _so:
-                os.environ["LD_PRELOAD"] = f"{_so}:{os.environ.get('LD_PRELOAD', '')}".rstrip(":")
-                import ctypes
-                ctypes.CDLL(_so)
-        except Exception:
-            pass
+    _gid = str(int(_early_gpu_id))
+    os.environ["ASSIGNED_GPU_ID"] = _gid
+    os.environ["CUDA_VISIBLE_DEVICES"] = _gid
+    os.environ["EGL_VISIBLE_DEVICES"] = _gid
+    os.environ["NVIDIA_VISIBLE_DEVICES"] = _gid
+    os.environ["EGL_PLATFORM_DEVICE_EXT"] = _gid
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    os.environ["NUM_AVAILABLE_GPUS"] = "1"
+    try:
+        _so = ensure_gpu_interceptor()
+        if _so:
+            os.environ["LD_PRELOAD"] = f"{_so}:{os.environ.get('LD_PRELOAD', '')}".rstrip(":")
+            import ctypes
+            ctypes.CDLL(_so)
+    except Exception:
+        pass
 
 import logging
 import warnings
@@ -1190,21 +1182,11 @@ def _indexed_landmarks(landmarks, indices: np.ndarray) -> np.ndarray:
 def _create_vision_task(
     landmarker_cls, options_cls, model_path: Path, running_mode, **extra
 ):
-    """Create a Tasks Vision landmarker with multi-process EGL/pthread collision protection and retry/fallback."""
+    """Create a Tasks Vision landmarker; try GPU delegate first, fall back to CPU."""
     delegates = [mp.tasks.BaseOptions.Delegate.GPU, mp.tasks.BaseOptions.Delegate.CPU]
-    if not MEDIAPIPE_USE_GPU or os.environ.get("MEDIAPIPE_USE_GPU", "1") == "0":
+    if not MEDIAPIPE_USE_GPU:
         delegates = [mp.tasks.BaseOptions.Delegate.CPU]
     last_exc = None
-
-    # Inter-process file lock during C++ create_from_options to prevent EGL/NVIDIA driver
-    # concurrent initialization crashes (std::abort()) across 40+ concurrent workers.
-    lock_path = Path("/tmp/mediapipe_vision_init.lock")
-    lock_fd = -1
-    try:
-        import fcntl
-        lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o666)
-    except Exception:
-        pass
 
     devnull_fd = -1
     old_stderr = None
@@ -1217,52 +1199,28 @@ def _create_vision_task(
 
     try:
         for delegate in delegates:
-            for attempt in range(4):
-                try:
-                    if lock_fd != -1:
-                        try:
-                            fcntl.flock(lock_fd, fcntl.LOCK_EX)
-                        except Exception:
-                            pass
-
-                    base_options = mp.tasks.BaseOptions(
-                        model_asset_path=str(model_path),
-                        delegate=delegate,
-                    )
-                    options = options_cls(
-                        base_options=base_options,
-                        running_mode=running_mode,
-                        **extra,
-                    )
-                    task = landmarker_cls.create_from_options(options)
-                    if lock_fd != -1:
-                        try:
-                            fcntl.flock(lock_fd, fcntl.LOCK_UN)
-                        except Exception:
-                            pass
-                    return task, delegate
-                except Exception as exc:
-                    if lock_fd != -1:
-                        try:
-                            fcntl.flock(lock_fd, fcntl.LOCK_UN)
-                        except Exception:
-                            pass
-                    last_exc = exc
-                    if "can't start new thread" in str(exc) or "Resource temporarily unavailable" in str(exc):
-                        # Transient thread/process limit hit: sleep, trim RAM, and retry or fall back
-                        time.sleep(0.3 * (attempt + 1))
-                        gc.collect()
-                        try:
-                            ctypes.CDLL("libc.so.6").malloc_trim(0)
-                        except Exception:
-                            pass
-                        continue
-                    if delegate == mp.tasks.BaseOptions.Delegate.GPU:
-                        # EGL or GPU creation failed: break out of retry loop to fall back to CPU
-                        break
-                    time.sleep(0.2)
-            if delegate == mp.tasks.BaseOptions.Delegate.GPU:
-                print(f"[!] WARNING (PID {os.getpid()}): GPU delegate failed for {landmarker_cls.__name__} ({last_exc}). Falling back to CPU...", flush=True)
+            try:
+                base_options = mp.tasks.BaseOptions(
+                    model_asset_path=str(model_path),
+                    delegate=delegate,
+                )
+                options = options_cls(
+                    base_options=base_options,
+                    running_mode=running_mode,
+                    **extra,
+                )
+                return landmarker_cls.create_from_options(options), delegate
+            except Exception as exc:
+                last_exc = exc
+                if "can't start new thread" in str(exc) or "Resource temporarily unavailable" in str(exc):
+                    raise RuntimeError(
+                        f"[!] ERROR (PID {os.getpid()}): MediaPipe hit the container thread/process limit ('{exc}'). "
+                        f"Reduce total worker processes across GPUs (e.g. use --workers 16 instead of 26 when running --num-gpus 2)."
+                    ) from exc
+                if delegate == mp.tasks.BaseOptions.Delegate.GPU:
+                    print(f"[!] WARNING (PID {os.getpid()}): GPU delegate failed for {landmarker_cls.__name__}: {exc}. Falling back to CPU...", flush=True)
+                if delegate == mp.tasks.BaseOptions.Delegate.CPU:
+                    raise
     finally:
         if old_stderr is not None:
             try:
@@ -1273,11 +1231,6 @@ def _create_vision_task(
         if devnull_fd != -1 and devnull_fd != old_stderr:
             try:
                 os.close(devnull_fd)
-            except Exception:
-                pass
-        if lock_fd != -1:
-            try:
-                os.close(lock_fd)
             except Exception:
                 pass
 
@@ -2018,21 +1971,11 @@ def _mp_pool_worker_init_gpu(gpu_id: int):
     *gpu_id* is passed as an initarg so every worker in a pool gets an
     identical, deterministic assignment.
     """
-    global _NUM_AVAILABLE_GPUS
     _suppress_worker_stderr()
 
     assigned_gpu = os.environ.get("ASSIGNED_GPU_ID")
     if assigned_gpu is not None:
         gpu_id = int(assigned_gpu)
-
-    if os.environ.get("MEDIAPIPE_USE_GPU", "1") == "0" or gpu_id < 0:
-        os.environ["ASSIGNED_GPU_ID"] = "-1"
-        os.environ["CUDA_VISIBLE_DEVICES"] = ""
-        os.environ["EGL_VISIBLE_DEVICES"] = ""
-        os.environ["NVIDIA_VISIBLE_DEVICES"] = ""
-        os.environ["MEDIAPIPE_USE_GPU"] = "0"
-        _NUM_AVAILABLE_GPUS = 0
-        return _mp_pool_worker_init_cpu()
 
     _gid = str(gpu_id)
     os.environ["ASSIGNED_GPU_ID"] = _gid
@@ -2049,6 +1992,7 @@ def _mp_pool_worker_init_gpu(gpu_id: int):
             ctypes.CDLL(_so)
     except Exception:
         pass
+    global _NUM_AVAILABLE_GPUS
     _NUM_AVAILABLE_GPUS = 1
 
     _init_mediapipe()
@@ -2071,11 +2015,6 @@ def _mp_pool_worker_init_gpu(gpu_id: int):
         _get_process_extractor(static_mode=True)
     except Exception:
         pass
-    gc.collect()
-    try:
-        ctypes.CDLL("libc.so.6").malloc_trim(0)
-    except Exception:
-        pass
 
 
 def _mp_pool_worker_init_cpu():
@@ -2095,11 +2034,6 @@ def _mp_pool_worker_init_cpu():
         pass
     try:
         _get_process_extractor(static_mode=True)
-    except Exception:
-        pass
-    gc.collect()
-    try:
-        ctypes.CDLL("libc.so.6").malloc_trim(0)
     except Exception:
         pass
 
@@ -2270,19 +2204,13 @@ def bounded_as_completed(executor, fn, tasks, max_in_flight=None):
     task_iter = iter(tasks)
     futures = {}
 
-    def _safe_submit(curr_exec, task_args):
-        for _attempt in range(4):
-            try:
-                return curr_exec.submit(fn, *task_args), curr_exec
-            except Exception:
-                time.sleep(0.5 * (_attempt + 1))
-                curr_exec = _reset_executor(curr_exec)
-        # Final attempt after retries
-        return curr_exec.submit(fn, *task_args), curr_exec
-
     # Prime the queue
     for task in task_iter:
-        fut, executor = _safe_submit(executor, task)
+        try:
+            fut = executor.submit(fn, *task)
+        except Exception:
+            executor = _reset_executor(executor)
+            fut = executor.submit(fn, *task)
         futures[fut] = task
         if len(futures) >= max_in_flight:
             break
@@ -2296,13 +2224,9 @@ def bounded_as_completed(executor, fn, tasks, max_in_flight=None):
             done = [f for f in list(futures.keys()) if f.done()]
 
         for fut in done:
-            task_orig = futures.get(fut)
             try:
                 res = fut.result()
             except Exception as e:
-                # If the process pool broke, reset executor immediately so subsequent submissions succeed
-                if "BrokenProcessPool" in str(type(e).__name__) or "BrokenProcessPool" in str(e):
-                    executor = _reset_executor(executor)
                 res = (
                     None,
                     {
@@ -2318,7 +2242,11 @@ def bounded_as_completed(executor, fn, tasks, max_in_flight=None):
                 del futures[fut]
 
         for task in task_iter:
-            fut, executor = _safe_submit(executor, task)
+            try:
+                fut = executor.submit(fn, *task)
+            except Exception:
+                executor = _reset_executor(executor)
+                fut = executor.submit(fn, *task)
             futures[fut] = task
             if len(futures) >= max_in_flight:
                 break
@@ -2336,10 +2264,10 @@ class MultiGPUExecutorProxy:
 
     def __init__(self):
         n_gpus = get_num_gpus()
-        if n_gpus >= 1 and os.environ.get("MEDIAPIPE_USE_GPU", "1") != "0":
+        if n_gpus >= 1:
             self._pools = [get_or_create_gpu_pool(i) for i in range(n_gpus)]
         else:
-            # CPU-only or CPU shard: delegate to the existing shared pool
+            # CPU-only: delegate to the existing shared pool
             self._pools = [get_shared_pool()]
         self._n = len(self._pools)
         self._in_flight_counts = [0] * self._n
@@ -3570,22 +3498,8 @@ class FrankensteinDataProcessor:
     def _shard_tasks(self, tasks: list, tag: str = None) -> list:
         """Slice task list for multi-process GPU sharding and filter already completed checkpoints."""
         if self.gpu_id is not None and self.num_gpus > 1 and tasks:
-            n_gpu_shards = max(0, self.num_gpus - getattr(self, "cpu_shards", 0))
-            weights = []
-            for s in range(self.num_gpus):
-                if s < n_gpu_shards:
-                    weights.append(max(1, getattr(self, "gpu_sample_weight", 5)))
-                else:
-                    weights.append(max(1, getattr(self, "cpu_sample_weight", 2)))
-
-            schedule = []
-            for s, w in enumerate(weights):
-                schedule.extend([s] * w)
-
-            block_len = len(schedule)
-            sharded = [t for i, t in enumerate(tasks) if schedule[i % block_len] == self.gpu_id]
-            shard_type = "CPU" if self.gpu_id >= n_gpu_shards else "GPU"
-            log_msg(f"[*] Shard {self.gpu_id}/{self.num_gpus} ({shard_type}, weight={weights[self.gpu_id]}): processing {len(sharded)}/{len(tasks)} tasks.")
+            sharded = [t for i, t in enumerate(tasks) if i % self.num_gpus == self.gpu_id]
+            log_msg(f"[*] Shard {self.gpu_id}/{self.num_gpus}: processing {len(sharded)}/{len(tasks)} tasks.")
         else:
             sharded = tasks
 
@@ -5163,18 +5077,6 @@ def main(argv=None):
         "--num-gpus", type=int, default=1, help="Total number of GPU shard processes"
     )
     parser.add_argument(
-        "--cpu-shards", type=int, default=0, help="Number of dedicated CPU shard processes to run alongside GPU shards utilizing idle CPU cores"
-    )
-    parser.add_argument(
-        "--cpu-workers", type=int, default=24, help="Total multi-processing workers across CPU shards when --cpu-shards > 0"
-    )
-    parser.add_argument(
-        "--gpu-sample-weight", type=int, default=5, help="Relative sample weight assigned to each GPU shard (default 5)"
-    )
-    parser.add_argument(
-        "--cpu-sample-weight", type=int, default=2, help="Relative sample weight assigned to each CPU shard (default 2)"
-    )
-    parser.add_argument(
         "--phase", type=str, default="all", choices=["all", "extract", "merge"], help="Execution phase when sharding"
     )
     args = parser.parse_args(argv)
@@ -5206,9 +5108,6 @@ def main(argv=None):
     processor.is_test = args.test
     processor.gpu_id = args.gpu_id
     processor.num_gpus = args.num_gpus
-    processor.cpu_shards = args.cpu_shards
-    processor.gpu_sample_weight = args.gpu_sample_weight
-    processor.cpu_sample_weight = args.cpu_sample_weight
     processor.phase = args.phase
     processor.batch_flush_size = args.batch_flush_size
     processor.aslex_alias_map = load_aslex_alias_map()
@@ -5230,45 +5129,30 @@ def main(argv=None):
     n_gpus = get_num_gpus()
 
     for split in splits:
-        if args.gpu_id is None and (n_gpus > 1 or args.cpu_shards > 0) and args.phase in ("all", "extract"):
+        # Check if we should run section-by-section multi-GPU extraction for this split
+        if args.gpu_id is None and n_gpus > 1 and args.phase in ("all", "extract"):
             import subprocess
-            total_shards = n_gpus + args.cpu_shards
-            log_msg(f"[*] Master Orchestrator: Section '{split.upper()}' - Launching {n_gpus} GPU shards + {args.cpu_shards} CPU shards ({total_shards} total independent OS processes)...")
-            total_gpu_workers = args.workers if args.workers is not None else NUM_MP_GPU_WORKERS
-            workers_per_gpu = max(1, total_gpu_workers // n_gpus) if n_gpus > 0 else 0
-            workers_per_cpu_shard = max(1, args.cpu_workers // args.cpu_shards) if args.cpu_shards > 0 else 0
+            log_msg(f"[*] Master Orchestrator: Section '{split.upper()}' - Launching {n_gpus} independent OS processes (1 per GPU)...")
+            total_workers = args.workers if args.workers is not None else NUM_MP_GPU_WORKERS
+            workers_per_gpu = max(1, total_workers // n_gpus)
             procs = []
-            for i in range(total_shards):
+            for i in range(n_gpus):
+                _gid = str(i)
                 env = os.environ.copy()
-                is_cpu_shard = (i >= n_gpus)
-                if is_cpu_shard:
-                    _gid = "-1"
-                    env["ASSIGNED_GPU_ID"] = _gid
-                    env["CUDA_VISIBLE_DEVICES"] = ""
-                    env["EGL_VISIBLE_DEVICES"] = ""
-                    env["NVIDIA_VISIBLE_DEVICES"] = ""
-                    env["MEDIAPIPE_USE_GPU"] = "0"
-                    env["NUM_AVAILABLE_GPUS"] = "0"
-                    _shard_workers = workers_per_cpu_shard
-                    env["NUM_MP_GPU_WORKERS"] = str(_shard_workers)
-                else:
-                    _gid = str(i)
-                    env["ASSIGNED_GPU_ID"] = _gid
-                    env["CUDA_VISIBLE_DEVICES"] = _gid
-                    env["EGL_VISIBLE_DEVICES"] = _gid
-                    env["NVIDIA_VISIBLE_DEVICES"] = _gid
-                    env["EGL_PLATFORM_DEVICE_EXT"] = _gid
-                    env["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-                    env["NUM_AVAILABLE_GPUS"] = "1"
-                    env["MEDIAPIPE_USE_GPU"] = "1"
-                    _shard_workers = workers_per_gpu
-                    env["NUM_MP_GPU_WORKERS"] = str(_shard_workers)
-                    try:
-                        _so = ensure_gpu_interceptor()
-                        if _so:
-                            env["LD_PRELOAD"] = f"{_so}:{env.get('LD_PRELOAD', '')}".rstrip(":")
-                    except Exception:
-                        pass
+                env["ASSIGNED_GPU_ID"] = _gid
+                env["CUDA_VISIBLE_DEVICES"] = _gid
+                env["EGL_VISIBLE_DEVICES"] = _gid
+                env["NVIDIA_VISIBLE_DEVICES"] = _gid
+                env["EGL_PLATFORM_DEVICE_EXT"] = _gid
+                env["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+                env["NUM_AVAILABLE_GPUS"] = "1"
+                env["NUM_MP_GPU_WORKERS"] = str(workers_per_gpu)
+                try:
+                    _so = ensure_gpu_interceptor()
+                    if _so:
+                        env["LD_PRELOAD"] = f"{_so}:{env.get('LD_PRELOAD', '')}".rstrip(":")
+                except Exception:
+                    pass
 
                 cmd = [
                     sys.executable,
@@ -5276,11 +5160,8 @@ def main(argv=None):
                     "--phase", "extract",
                     "--split", split,
                     "--gpu-id", str(i),
-                    "--num-gpus", str(total_shards),
-                    "--cpu-shards", str(args.cpu_shards),
-                    "--gpu-sample-weight", str(args.gpu_sample_weight),
-                    "--cpu-sample-weight", str(args.cpu_sample_weight),
-                    "--workers", str(_shard_workers),
+                    "--num-gpus", str(n_gpus),
+                    "--workers", str(workers_per_gpu),
                     "--batch-flush-size", str(args.batch_flush_size),
                 ]
                 if args.test:
@@ -5292,27 +5173,26 @@ def main(argv=None):
                 if args.shard_size:
                     cmd.extend(["--shard-size", str(args.shard_size)])
 
-                shard_label = f"CPU Shard {i}" if is_cpu_shard else f"GPU Shard {i}"
-                log_msg(f"[*] Launching {shard_label} for split '{split}' ({_shard_workers} workers): {' '.join(cmd)}")
-                procs.append((i, shard_label, subprocess.Popen(cmd, env=env)))
+                log_msg(f"[*] Launching GPU Shard Process {i} for split '{split}': {' '.join(cmd)}")
+                procs.append((i, subprocess.Popen(cmd, env=env)))
 
             failed = False
-            for i, label, p in procs:
+            for i, p in procs:
                 ret = p.wait()
                 if ret != 0:
-                    log_msg(f"[!] Error: {label} exited with error code {ret} on split '{split}'")
+                    log_msg(f"[!] Error: GPU Shard Process {i} exited with error code {ret} on split '{split}'")
                     failed = True
                 else:
-                    log_msg(f"[+] {label} completed extraction for split '{split}'.")
+                    log_msg(f"[+] GPU Shard Process {i} completed extraction for split '{split}'.")
 
             if failed:
-                raise RuntimeError(f"One or more shard processes failed during Phase A extraction on split '{split}'.")
+                raise RuntimeError(f"One or more GPU shard processes failed during Phase A extraction on split '{split}'.")
 
             if args.phase == "extract":
                 continue
 
             processor.phase = "merge"
-            log_msg(f"[*] All shard extractions finished for section '{split}'. Master Orchestrator starting merge...")
+            log_msg(f"[*] All GPU shard extractions finished for section '{split}'. Master Orchestrator starting merge...")
         else:
             processor.phase = args.phase
 
