@@ -13,14 +13,13 @@ import sys
 # EGL_VISIBLE_DEVICES, and CUDA_VISIBLE_DEVICES early ensures devices[0] is GPU i.
 def ensure_gpu_interceptor() -> str | None:
     """Compile and return the path to the LD_PRELOAD GPU and Thread/Core interceptor.
-    1. Redirects /dev/dri/renderD128 -> /dev/dri/renderD{128+gid} and /dev/nvidia0 -> /dev/nvidia{gid} when ASSIGNED_GPU_ID > 0 is set.
-    2. Intercepts sysconf(_SC_NPROCESSORS_ONLN), get_nprocs(), sched_getaffinity(), and pthread_create() to prevent MediaPipe C++ thread explosion ('can't start new thread').
+    1. Redirects /dev/dri/renderD* -> /dev/dri/renderD{128+gid} and /dev/nvidia* -> /dev/nvidia{gid} when ASSIGNED_GPU_ID >= 0 is set.
+    2. Intercepts sysconf(_SC_NPROCESSORS_ONLN), get_nprocs(), sched_getaffinity(), and pthread_create() to prevent MediaPipe C++ thread explosion.
     """
-    import platform, subprocess
+    import platform, subprocess, hashlib
 
     if platform.system() != "Linux":
         return None
-    so_path = "/tmp/libegl_gpu_interceptor.so"
     c_source = """#define _GNU_SOURCE
 #include <dlfcn.h>
 #include <fcntl.h>
@@ -61,20 +60,42 @@ static int get_assigned_gpu_id(void) {
 static const char* redirect_path(const char *pathname, char *buf, size_t buflen) {
     if (!pathname) return pathname;
     int gid = get_assigned_gpu_id();
-    if (gid <= 0) return pathname;
+    if (gid < 0) return pathname;
 
-    if (strcmp(pathname, "/dev/dri/renderD128") == 0 || strstr(pathname, "renderD128") != NULL) {
-        snprintf(buf, buflen, "/dev/dri/renderD%d", 128 + gid);
-        return buf;
+    // Check if it's an nvidia GPU device node: /dev/nvidiaX (where X is a digit)
+    if (strncmp(pathname, "/dev/nvidia", 11) == 0) {
+        // Skip control nodes: nvidiactl, nvidia-modeset, nvidia-uvm, nvidia-caps/*
+        const char *sub = pathname + 11;
+        if (strcmp(sub, "ctl") != 0 &&
+            strcmp(sub, "-modeset") != 0 &&
+            strcmp(sub, "-uvm") != 0 &&
+            strcmp(sub, "-uvm-tools") != 0 &&
+            strncmp(sub, "caps/", 5) != 0 &&
+            *sub != '\0' &&
+            (*sub >= '0' && *sub <= '9')) {
+            snprintf(buf, buflen, "/dev/nvidia%d", gid);
+            return buf;
+        }
     }
-    if (strcmp(pathname, "/dev/dri/card0") == 0 || strstr(pathname, "/dev/dri/card0") != NULL) {
-        snprintf(buf, buflen, "/dev/dri/card%d", gid);
-        return buf;
+
+    // Check if it's a render node: /dev/dri/renderDX
+    if (strncmp(pathname, "/dev/dri/renderD", 16) == 0) {
+        const char *sub = pathname + 16;
+        if (*sub >= '0' && *sub <= '9') {
+            snprintf(buf, buflen, "/dev/dri/renderD%d", 128 + gid);
+            return buf;
+        }
     }
-    if (strcmp(pathname, "/dev/nvidia0") == 0 || strstr(pathname, "/dev/nvidia0") != NULL) {
-        snprintf(buf, buflen, "/dev/nvidia%d", gid);
-        return buf;
+
+    // Check if it's a card node: /dev/dri/cardX
+    if (strncmp(pathname, "/dev/dri/card", 13) == 0) {
+        const char *sub = pathname + 13;
+        if (*sub >= '0' && *sub <= '9') {
+            snprintf(buf, buflen, "/dev/dri/card%d", gid);
+            return buf;
+        }
     }
+
     return pathname;
 }
 
@@ -257,7 +278,9 @@ int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_
     return ret;
 }
 """
-    lock_path = "/tmp/libegl_gpu_interceptor.lock"
+    h = hashlib.md5(c_source.encode("utf-8")).hexdigest()[:8]
+    so_path = f"/tmp/libegl_gpu_interceptor_{h}.so"
+    lock_path = f"/tmp/libegl_gpu_interceptor_{h}.lock"
     try:
         if os.path.exists(so_path) and os.path.getsize(so_path) > 1000:
             return so_path
