@@ -32,6 +32,8 @@ def ensure_gpu_interceptor() -> str | None:
 #include <sched.h>
 #include <pthread.h>
 #include <errno.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 static int (*real_open)(const char *pathname, int flags, ...) = NULL;
 static int (*real_open64)(const char *pathname, int flags, ...) = NULL;
@@ -39,6 +41,19 @@ static int (*real_openat)(int dirfd, const char *pathname, int flags, ...) = NUL
 static int (*real_openat64)(int dirfd, const char *pathname, int flags, ...) = NULL;
 static FILE* (*real_fopen)(const char *pathname, const char *mode) = NULL;
 static FILE* (*real_fopen64)(const char *pathname, const char *mode) = NULL;
+
+static int (*real_access)(const char *pathname, int mode) = NULL;
+static int (*real_eaccess)(const char *pathname, int mode) = NULL;
+static int (*real_faccessat)(int dirfd, const char *pathname, int mode, int flags) = NULL;
+static int (*real_stat)(const char *pathname, struct stat *statbuf) = NULL;
+static int (*real_stat64)(const char *pathname, void *statbuf) = NULL;
+static int (*real_lstat)(const char *pathname, struct stat *statbuf) = NULL;
+static int (*real_lstat64)(const char *pathname, void *statbuf) = NULL;
+static int (*real___xstat)(int ver, const char *pathname, struct stat *statbuf) = NULL;
+static int (*real___xstat64)(int ver, const char *pathname, void *statbuf) = NULL;
+static int (*real___lxstat)(int ver, const char *pathname, struct stat *statbuf) = NULL;
+static int (*real___lxstat64)(int ver, const char *pathname, void *statbuf) = NULL;
+static ssize_t (*real_readlink)(const char *pathname, char *buf, size_t bufsiz) = NULL;
 
 static long (*real_sysconf)(int name) = NULL;
 static int (*real_pthread_create)(pthread_t *thread, const pthread_attr_t *attr, void *(*start_routine)(void *), void *arg) = NULL;
@@ -64,14 +79,26 @@ static const char* redirect_path(const char *pathname, char *buf, size_t buflen)
     if (gid <= 0) return pathname;
 
     if (strcmp(pathname, "/dev/dri/renderD128") == 0 || strstr(pathname, "renderD128") != NULL) {
+        if (strstr(pathname, "/sys/class/drm/renderD128")) {
+            snprintf(buf, buflen, "%s", pathname);
+            char *pos = strstr(buf, "renderD128");
+            if (pos) snprintf(pos, buflen - (pos - buf), "renderD%d%s", 128 + gid, pos + 10);
+            return buf;
+        }
         snprintf(buf, buflen, "/dev/dri/renderD%d", 128 + gid);
         return buf;
     }
-    if (strcmp(pathname, "/dev/dri/card0") == 0 || strstr(pathname, "/dev/dri/card0") != NULL) {
+    if (strcmp(pathname, "/dev/dri/card0") == 0 || strstr(pathname, "/dev/dri/card0") != NULL || strstr(pathname, "/sys/class/drm/card0") != NULL) {
+        if (strstr(pathname, "/sys/class/drm/card0")) {
+            snprintf(buf, buflen, "%s", pathname);
+            char *pos = strstr(buf, "card0");
+            if (pos) snprintf(pos, buflen - (pos - buf), "card%d%s", gid, pos + 5);
+            return buf;
+        }
         snprintf(buf, buflen, "/dev/dri/card%d", gid);
         return buf;
     }
-    if (strcmp(pathname, "/dev/nvidia0") == 0 || strstr(pathname, "/dev/nvidia0") != NULL) {
+    if (strcmp(pathname, "/dev/nvidia0") == 0 || (strstr(pathname, "/dev/nvidia0") != NULL && strstr(pathname, "nvidia-") == NULL)) {
         snprintf(buf, buflen, "/dev/nvidia%d", gid);
         return buf;
     }
@@ -144,6 +171,78 @@ FILE* fopen64(const char *pathname, const char *mode) {
     if (!real_fopen64) real_fopen64 = dlsym(RTLD_NEXT, "fopen64");
     char buf[512];
     return real_fopen64(redirect_path(pathname, buf, sizeof(buf)), mode);
+}
+
+int access(const char *pathname, int mode) {
+    if (!real_access) real_access = dlsym(RTLD_NEXT, "access");
+    char buf[512];
+    return real_access(redirect_path(pathname, buf, sizeof(buf)), mode);
+}
+
+int eaccess(const char *pathname, int mode) {
+    if (!real_eaccess) real_eaccess = dlsym(RTLD_NEXT, "eaccess");
+    char buf[512];
+    return real_eaccess(redirect_path(pathname, buf, sizeof(buf)), mode);
+}
+
+int faccessat(int dirfd, const char *pathname, int mode, int flags) {
+    if (!real_faccessat) real_faccessat = dlsym(RTLD_NEXT, "faccessat");
+    char buf[512];
+    return real_faccessat(dirfd, redirect_path(pathname, buf, sizeof(buf)), mode, flags);
+}
+
+int stat(const char *pathname, struct stat *statbuf) {
+    if (!real_stat) real_stat = dlsym(RTLD_NEXT, "stat");
+    char buf[512];
+    return real_stat(redirect_path(pathname, buf, sizeof(buf)), statbuf);
+}
+
+int stat64(const char *pathname, void *statbuf) {
+    if (!real_stat64) real_stat64 = dlsym(RTLD_NEXT, "stat64");
+    char buf[512];
+    return real_stat64(redirect_path(pathname, buf, sizeof(buf)), statbuf);
+}
+
+int lstat(const char *pathname, struct stat *statbuf) {
+    if (!real_lstat) real_lstat = dlsym(RTLD_NEXT, "lstat");
+    char buf[512];
+    return real_lstat(redirect_path(pathname, buf, sizeof(buf)), statbuf);
+}
+
+int lstat64(const char *pathname, void *statbuf) {
+    if (!real_lstat64) real_lstat64 = dlsym(RTLD_NEXT, "lstat64");
+    char buf[512];
+    return real_lstat64(redirect_path(pathname, buf, sizeof(buf)), statbuf);
+}
+
+int __xstat(int ver, const char *pathname, struct stat *statbuf) {
+    if (!real___xstat) real___xstat = dlsym(RTLD_NEXT, "__xstat");
+    char buf[512];
+    return real___xstat(ver, redirect_path(pathname, buf, sizeof(buf)), statbuf);
+}
+
+int __xstat64(int ver, const char *pathname, void *statbuf) {
+    if (!real___xstat64) real___xstat64 = dlsym(RTLD_NEXT, "__xstat64");
+    char buf[512];
+    return real___xstat64(ver, redirect_path(pathname, buf, sizeof(buf)), statbuf);
+}
+
+int __lxstat(int ver, const char *pathname, struct stat *statbuf) {
+    if (!real___lxstat) real___lxstat = dlsym(RTLD_NEXT, "__lxstat");
+    char buf[512];
+    return real___lxstat(ver, redirect_path(pathname, buf, sizeof(buf)), statbuf);
+}
+
+int __lxstat64(int ver, const char *pathname, void *statbuf) {
+    if (!real___lxstat64) real___lxstat64 = dlsym(RTLD_NEXT, "__lxstat64");
+    char buf[512];
+    return real___lxstat64(ver, redirect_path(pathname, buf, sizeof(buf)), statbuf);
+}
+
+ssize_t readlink(const char *pathname, char *buf, size_t bufsiz) {
+    if (!real_readlink) real_readlink = dlsym(RTLD_NEXT, "readlink");
+    char pathbuf[512];
+    return real_readlink(redirect_path(pathname, pathbuf, sizeof(pathbuf)), buf, bufsiz);
 }
 
 /* === C/C++ Threading & Core-Count Interceptor === */
