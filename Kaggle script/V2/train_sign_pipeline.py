@@ -3774,13 +3774,12 @@ class FrankensteinDataProcessor:
         return str(task)
 
     def _get_completed_keys(self, tag: str) -> set:
-        """Scan temp_shard_dir for completed task keys (JSONL checkpoint tracking)."""
+        """Scan temp_shard_dir for all completed task keys across all GPU manifests (JSONL checkpoint tracking)."""
         completed = set()
         if self.temp_shard_dir is None or not self.temp_shard_dir.exists():
             return completed
-        gpu_suffix = f"_gpu{self.gpu_id}" if self.gpu_id is not None else ""
-        manifest_file = self.temp_shard_dir / f"completed_{tag}{gpu_suffix}.jsonl"
-        if manifest_file.exists():
+        # Check all manifest files for this tag across every GPU (and non-GPU) shard
+        for manifest_file in self.temp_shard_dir.glob(f"completed_{tag}*.jsonl"):
             try:
                 with open(manifest_file, "r", encoding="utf-8") as f:
                     for line in f:
@@ -3816,7 +3815,18 @@ class FrankensteinDataProcessor:
             )
 
     def _shard_tasks(self, tasks: list, tag: str = None) -> list:
-        """Slice task list for multi-process GPU sharding and filter already completed checkpoints."""
+        """Filter out globally completed checkpoints first, then slice remaining tasks for multi-process GPU sharding."""
+        if tag is not None and self.temp_shard_dir is not None and tasks:
+            completed = self._get_completed_keys(tag)
+            if completed:
+                pre_len = len(tasks)
+                tasks = [t for t in tasks if self._get_task_key(t) not in completed]
+                skipped = pre_len - len(tasks)
+                if skipped > 0 and (self.gpu_id is None or self.gpu_id == 0):
+                    log_msg(
+                        f"[*] Checkpoint Resumption ({tag}): Filtered {skipped} globally completed tasks across all GPUs ({len(tasks)} remaining)."
+                    )
+
         if self.gpu_id is not None and self.num_gpus > 1 and tasks:
             sharded = [
                 t for i, t in enumerate(tasks) if i % self.num_gpus == self.gpu_id
@@ -3826,17 +3836,6 @@ class FrankensteinDataProcessor:
             )
         else:
             sharded = tasks
-
-        if tag is not None and self.temp_shard_dir is not None and sharded:
-            completed = self._get_completed_keys(tag)
-            if completed:
-                pre_len = len(sharded)
-                sharded = [t for t in sharded if self._get_task_key(t) not in completed]
-                skipped = pre_len - len(sharded)
-                if skipped > 0:
-                    log_msg(
-                        f"[*] Checkpoint Resumption ({tag}): Skipped {skipped} already completed tasks ({len(sharded)} remaining)."
-                    )
         return sharded
 
     def _get_tqdm_kwargs(self, base_desc: str, total: int) -> dict:
