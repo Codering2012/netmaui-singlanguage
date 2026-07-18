@@ -5,17 +5,19 @@
 import os
 import sys
 
+
 # Early GPU Isolation: If launched as a dedicated GPU shard process (--gpu-id i),
 # force device visibility across CUDA, EGL, and NVIDIA driver layers BEFORE any C++
 # libraries (PyTorch, OpenCV, MediaPipe, OpenGL/EGL) are imported or initialized.
 # MediaPipe's GlContext picks devices[0] from eglQueryDevicesEXT; setting EGL_DEVICE_ID,
 # EGL_VISIBLE_DEVICES, and CUDA_VISIBLE_DEVICES early ensures devices[0] is GPU i.
 def ensure_gpu_interceptor() -> str | None:
-    """Compile and return the path to the LD_PRELOAD GPU device interceptor.
-    Redirects /dev/dri/renderD128 -> /dev/dri/renderD{128+gid} and /dev/nvidia0 -> /dev/nvidia{gid}
-    when ASSIGNED_GPU_ID > 0 is set.
+    """Compile and return the path to the LD_PRELOAD GPU and Thread/Core interceptor.
+    1. Redirects /dev/dri/renderD128 -> /dev/dri/renderD{128+gid} and /dev/nvidia0 -> /dev/nvidia{gid} when ASSIGNED_GPU_ID > 0 is set.
+    2. Intercepts sysconf(_SC_NPROCESSORS_ONLN), get_nprocs(), sched_getaffinity(), and pthread_create() to prevent MediaPipe C++ thread explosion ('can't start new thread').
     """
     import platform, subprocess
+
     if platform.system() != "Linux":
         return None
     so_path = "/tmp/libegl_gpu_interceptor.so"
@@ -27,6 +29,9 @@ def ensure_gpu_interceptor() -> str | None:
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sched.h>
+#include <pthread.h>
+#include <errno.h>
 
 static int (*real_open)(const char *pathname, int flags, ...) = NULL;
 static int (*real_open64)(const char *pathname, int flags, ...) = NULL;
@@ -34,6 +39,11 @@ static int (*real_openat)(int dirfd, const char *pathname, int flags, ...) = NUL
 static int (*real_openat64)(int dirfd, const char *pathname, int flags, ...) = NULL;
 static FILE* (*real_fopen)(const char *pathname, const char *mode) = NULL;
 static FILE* (*real_fopen64)(const char *pathname, const char *mode) = NULL;
+
+static long (*real_sysconf)(int name) = NULL;
+static int (*real_pthread_create)(pthread_t *thread, const pthread_attr_t *attr, void *(*start_routine)(void *), void *arg) = NULL;
+static int (*real_sched_getaffinity)(pid_t pid, size_t cpusetsize, cpu_set_t *mask) = NULL;
+static _Atomic int g_active_threads = 0;
 
 static int get_assigned_gpu_id(void) {
     static int cached_id = -2;
@@ -135,20 +145,178 @@ FILE* fopen64(const char *pathname, const char *mode) {
     char buf[512];
     return real_fopen64(redirect_path(pathname, buf, sizeof(buf)), mode);
 }
+
+/* === C/C++ Threading & Core-Count Interceptor === */
+
+long sysconf(int name) {
+    if (!real_sysconf) real_sysconf = dlsym(RTLD_NEXT, "sysconf");
+    if (name == _SC_NPROCESSORS_ONLN || name == _SC_NPROCESSORS_CONF) {
+        const char *env = getenv("INTERCEPT_NUM_THREADS");
+        if (env && *env) {
+            long val = atol(env);
+            if (val > 0) return val;
+        }
+        return 1;
+    }
+    return real_sysconf(name);
+}
+
+int get_nprocs(void) {
+    const char *env = getenv("INTERCEPT_NUM_THREADS");
+    if (env && *env) {
+        int val = atoi(env);
+        if (val > 0) return val;
+    }
+    return 1;
+}
+
+int get_nprocs_conf(void) {
+    return get_nprocs();
+}
+
+int sched_getaffinity(pid_t pid, size_t cpusetsize, cpu_set_t *mask) {
+    if (!real_sched_getaffinity) real_sched_getaffinity = dlsym(RTLD_NEXT, "sched_getaffinity");
+    int ret = real_sched_getaffinity(pid, cpusetsize, mask);
+    if (ret == 0 && mask && cpusetsize >= sizeof(cpu_set_t)) {
+        const char *env = getenv("INTERCEPT_NUM_THREADS");
+        int num_cpus = env ? atoi(env) : 1;
+        if (num_cpus <= 0) num_cpus = 1;
+        CPU_ZERO(mask);
+        for (int i = 0; i < num_cpus; i++) {
+            CPU_SET(i, mask);
+        }
+    }
+    return ret;
+}
+
+typedef struct {
+    void *(*orig_routine)(void *);
+    void *orig_arg;
+} thread_wrapper_arg_t;
+
+static void *thread_trampoline(void *arg) {
+    thread_wrapper_arg_t *wrapper = (thread_wrapper_arg_t *)arg;
+    void *(*routine)(void *) = wrapper->orig_routine;
+    void *user_arg = wrapper->orig_arg;
+    free(wrapper);
+    void *ret = routine(user_arg);
+    g_active_threads--;
+    return ret;
+}
+
+int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_routine)(void *), void *arg) {
+    if (!real_pthread_create) real_pthread_create = dlsym(RTLD_NEXT, "pthread_create");
+    
+    const char *max_env = getenv("INTERCEPT_MAX_THREADS");
+    int max_threads = max_env ? atoi(max_env) : 32;
+    if (max_threads > 0 && g_active_threads >= max_threads) {
+        return EAGAIN;
+    }
+
+    pthread_attr_t custom_attr;
+    const pthread_attr_t *use_attr = attr;
+    if (attr == NULL) {
+        pthread_attr_init(&custom_attr);
+        pthread_attr_setstacksize(&custom_attr, 512 * 1024);
+        use_attr = &custom_attr;
+    } else {
+        pthread_attr_init(&custom_attr);
+        size_t stack_size = 0;
+        pthread_attr_getstacksize(attr, &stack_size);
+        if (stack_size > 1024 * 1024 || stack_size == 0) {
+            pthread_attr_setstacksize(&custom_attr, 512 * 1024);
+        } else {
+            pthread_attr_setstacksize(&custom_attr, stack_size);
+        }
+        use_attr = &custom_attr;
+    }
+
+    thread_wrapper_arg_t *wrapper = (thread_wrapper_arg_t *)malloc(sizeof(thread_wrapper_arg_t));
+    if (!wrapper) {
+        if (attr == NULL || use_attr == &custom_attr) pthread_attr_destroy(&custom_attr);
+        return EAGAIN;
+    }
+    wrapper->orig_routine = start_routine;
+    wrapper->orig_arg = arg;
+
+    int ret = real_pthread_create(thread, use_attr, thread_trampoline, wrapper);
+    if (ret == EAGAIN) {
+        for (int retry = 0; retry < 15 && ret == EAGAIN; retry++) {
+            usleep(15000 * (retry + 1));
+            ret = real_pthread_create(thread, use_attr, thread_trampoline, wrapper);
+        }
+    }
+    if (ret == 0) {
+        g_active_threads++;
+    } else {
+        free(wrapper);
+    }
+    if (attr == NULL || use_attr == &custom_attr) {
+        pthread_attr_destroy(&custom_attr);
+    }
+    return ret;
+}
 """
-    c_path = "/tmp/libegl_gpu_interceptor.c"
+    lock_path = "/tmp/libegl_gpu_interceptor.lock"
     try:
-        with open(c_path, "w") as f:
-            f.write(c_source)
-        res = subprocess.run(
-            ["gcc", "-shared", "-fPIC", "-O2", "-o", so_path, c_path, "-ldl"],
-            capture_output=True, text=True
-        )
-        if res.returncode == 0 and os.path.exists(so_path):
+        if os.path.exists(so_path) and os.path.getsize(so_path) > 1000:
             return so_path
     except Exception:
         pass
+
+    try:
+        import fcntl
+        lock_fd = open(lock_path, "w")
+        try:
+            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX)
+            if os.path.exists(so_path) and os.path.getsize(so_path) > 1000:
+                return so_path
+            pid_id = f"{os.getpid()}_{id(c_source)}"
+            c_path = f"/tmp/libegl_gpu_interceptor_{pid_id}.c"
+            tmp_so = f"/tmp/libegl_gpu_interceptor_{pid_id}.so"
+            with open(c_path, "w") as f:
+                f.write(c_source)
+            res = subprocess.run(
+                ["gcc", "-shared", "-fPIC", "-O2", "-o", tmp_so, c_path, "-ldl"],
+                capture_output=True,
+                text=True,
+            )
+            if res.returncode == 0 and os.path.exists(tmp_so) and os.path.getsize(tmp_so) > 1000:
+                os.replace(tmp_so, so_path)
+                try:
+                    os.unlink(c_path)
+                except Exception:
+                    pass
+                return so_path
+        finally:
+            try:
+                fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+                lock_fd.close()
+            except Exception:
+                pass
+    except Exception:
+        if os.path.exists(so_path) and os.path.getsize(so_path) > 1000:
+            return so_path
     return None
+
+
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENCV_FFMPEG_THREADS"] = "1"
+os.environ["INTERCEPT_NUM_THREADS"] = "1"
+os.environ["INTERCEPT_MAX_THREADS"] = "32"
+
+try:
+    _so = ensure_gpu_interceptor()
+    if _so:
+        os.environ["LD_PRELOAD"] = f"{_so}:{os.environ.get('LD_PRELOAD', '')}".rstrip(
+            ":"
+        )
+        import ctypes
+
+        ctypes.CDLL(_so)
+except Exception:
+    pass
 
 _early_gpu_id = os.environ.get("ASSIGNED_GPU_ID")
 if _early_gpu_id is None:
@@ -166,14 +334,6 @@ if _early_gpu_id is not None:
     os.environ["EGL_PLATFORM_DEVICE_EXT"] = _gid
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["NUM_AVAILABLE_GPUS"] = "1"
-    try:
-        _so = ensure_gpu_interceptor()
-        if _so:
-            os.environ["LD_PRELOAD"] = f"{_so}:{os.environ.get('LD_PRELOAD', '')}".rstrip(":")
-            import ctypes
-            ctypes.CDLL(_so)
-    except Exception:
-        pass
 
 import logging
 import warnings
@@ -218,6 +378,7 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_compl
 from multiprocessing import Value as MPValue, get_context
 import numpy as np
 import pandas as pd
+
 Dataset = object
 torch = None
 
@@ -235,8 +396,11 @@ def _init_torch():
             FusedASLDataset.__bases__ = (Dataset,)
         except Exception:
             pass
+
+
 from pathlib import Path
 from scipy.interpolate import interp1d, CubicSpline
+
 
 def safe_torch_load(path, map_location="cpu"):
     """Load PyTorch file safely supporting PyTorch 2.6+ default weights_only=True change."""
@@ -246,6 +410,7 @@ def safe_torch_load(path, map_location="cpu"):
     except TypeError:
         return torch.load(path, map_location=map_location)
 
+
 cv2 = None
 mp = None
 
@@ -253,11 +418,22 @@ mp = None
 def _init_mediapipe():
     global mp, cv2
     if mp is None:
+        os.environ["OMP_NUM_THREADS"] = "1"
+        os.environ["OPENBLAS_NUM_THREADS"] = "1"
+        os.environ["MKL_NUM_THREADS"] = "1"
+        os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+        os.environ["NUMEXPR_NUM_THREADS"] = "1"
+        os.environ["TBB_NUM_THREADS"] = "1"
+        os.environ["OPENCV_FOR_THREADS"] = "1"
         import cv2 as _cv2
         import mediapipe as _mp
 
         cv2 = _cv2
         mp = _mp
+        try:
+            cv2.setNumThreads(1)
+        except Exception:
+            pass
         # Monkeypatch MediaPipe landmarker destructors to swallow shutdown errors safely
         try:
 
@@ -273,6 +449,7 @@ def _init_mediapipe():
             mp.tasks.vision.FaceLandmarker.__del__ = _safe_landmarker_del
         except Exception:
             pass
+
 
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -342,12 +519,14 @@ class DatasetProfiler:
     def print_top5(self):
         t_wall = time.perf_counter() - self.t_start
         main_tasks_time = sum(
-            v for k, v in self.timings.items()
+            v
+            for k, v in self.timings.items()
             if k in ("fast_find_image_files", "metadata_parsing")
         )
         worker_wall_time = max(0.0, t_wall - main_tasks_time)
         worker_cpu_sum = sum(
-            v for k, v in self.timings.items()
+            v
+            for k, v in self.timings.items()
             if k not in ("fast_find_image_files", "metadata_parsing")
         )
         expected_worker_cpu = worker_wall_time * self.num_workers
@@ -359,9 +538,9 @@ class DatasetProfiler:
         if total_cpu <= 0:
             return
 
-        sorted_items = sorted(
-            self.timings.items(), key=lambda x: x[1], reverse=True
-        )[:5]
+        sorted_items = sorted(self.timings.items(), key=lambda x: x[1], reverse=True)[
+            :5
+        ]
         log_msg(
             f"[+] [Profiler] Top 5 CPU Heavy Tasks for {self.dataset_name} ({self.split}):"
         )
@@ -442,6 +621,7 @@ MAX_WORKERS = 4
 # Override by setting MEDIAPIPE_USE_GPU=1 in the environment.
 _NUM_AVAILABLE_GPUS = -1
 
+
 def get_num_gpus() -> int:
     global _NUM_AVAILABLE_GPUS
     if _NUM_AVAILABLE_GPUS == -1:
@@ -451,11 +631,15 @@ def get_num_gpus() -> int:
         else:
             try:
                 import torch
-                _NUM_AVAILABLE_GPUS = torch.cuda.device_count() if torch.cuda.is_available() else 0
+
+                _NUM_AVAILABLE_GPUS = (
+                    torch.cuda.device_count() if torch.cuda.is_available() else 0
+                )
             except Exception:
                 _NUM_AVAILABLE_GPUS = 0
             os.environ["NUM_AVAILABLE_GPUS"] = str(_NUM_AVAILABLE_GPUS)
     return _NUM_AVAILABLE_GPUS
+
 
 _IS_KAGGLE = os.path.exists("/kaggle/working") and not os.path.exists("/workspace")
 MEDIAPIPE_USE_GPU = os.environ.get(
@@ -466,10 +650,10 @@ cpu_threads = os.cpu_count() or 8
 if get_num_gpus() > 0:
     # Scale up workers when abundant CPU cores (e.g. 32 cores) are available to keep
     # the GPU fed, while staying within driver EGL context stability bounds.
-    _workers_per_gpu = 6 if cpu_threads >= 32 else 4
-    DEFAULT_GPU_WORKERS = min(12, max(2, get_num_gpus() * _workers_per_gpu))
+    _workers_per_gpu = 3 if cpu_threads >= 32 else 2
+    DEFAULT_GPU_WORKERS = min(6, max(2, get_num_gpus() * _workers_per_gpu))
 else:
-    DEFAULT_GPU_WORKERS = min(cpu_threads, max(4, cpu_threads - 2))
+    DEFAULT_GPU_WORKERS = min(cpu_threads, max(2, min(8, cpu_threads // 2)))
 
 NUM_MP_GPU_WORKERS = int(os.environ.get("NUM_MP_GPU_WORKERS", str(DEFAULT_GPU_WORKERS)))
 
@@ -562,7 +746,10 @@ def fast_find_image_files(
                             if entry.is_file(follow_symlinks=False):
                                 name = entry.name
                                 dot_idx = name.rfind(".")
-                                if dot_idx != -1 and name[dot_idx:].lower() in valid_set:
+                                if (
+                                    dot_idx != -1
+                                    and name[dot_idx:].lower() in valid_set
+                                ):
                                     found_quick.append((Path(entry.path), root_dir))
                                     if len(found_quick) >= max_needed:
                                         break
@@ -1213,21 +1400,30 @@ def _create_vision_task(
                     model_asset_path=str(model_path),
                     delegate=delegate,
                 )
-                options = options_cls(
+                options_kwargs = dict(
                     base_options=base_options,
                     running_mode=running_mode,
                     **extra,
                 )
+                try:
+                    options = options_cls(num_threads=1, **options_kwargs)
+                except TypeError:
+                    options = options_cls(**options_kwargs)
                 return landmarker_cls.create_from_options(options), delegate
             except Exception as exc:
                 last_exc = exc
-                if "can't start new thread" in str(exc) or "Resource temporarily unavailable" in str(exc):
+                if "can't start new thread" in str(
+                    exc
+                ) or "Resource temporarily unavailable" in str(exc):
                     raise RuntimeError(
                         f"[!] ERROR (PID {os.getpid()}): MediaPipe hit the container thread/process limit ('{exc}'). "
                         f"Reduce total worker processes across GPUs (e.g. use --workers 16 instead of 26 when running --num-gpus 2)."
                     ) from exc
                 if delegate == mp.tasks.BaseOptions.Delegate.GPU:
-                    print(f"[!] WARNING (PID {os.getpid()}): GPU delegate failed for {landmarker_cls.__name__}: {exc}. Falling back to CPU...", flush=True)
+                    print(
+                        f"[!] WARNING (PID {os.getpid()}): GPU delegate failed for {landmarker_cls.__name__}: {exc}. Falling back to CPU...",
+                        flush=True,
+                    )
                 if delegate == mp.tasks.BaseOptions.Delegate.CPU:
                     raise
     finally:
@@ -1547,6 +1743,64 @@ class MediaPipeExtractor:
 
         signer_roi = None  # (roi_x0, roi_y0, roi_x1, roi_y1) in normalized coordinates
 
+        def _flush_chunk(chunk, use_roi=True):
+            nonlocal signer_roi
+            for c_out_i, c_frame in chunk:
+                fh, fw = c_frame.shape[:2]
+                ts_ms = int(c_out_i * 1000 / TARGET_FPS)
+
+                lm, q, conf = None, 0.0, {}
+                if use_roi and signer_roi is not None:
+                    rx0, ry0, rx1, ry1 = signer_roi
+                    px0, py0 = max(0, int(rx0 * fw)), max(0, int(ry0 * fh))
+                    px1, py1 = min(fw, int(rx1 * fw)), min(fh, int(ry1 * fh))
+                    if (px1 - px0) > 30 and (py1 - py0) > 30:
+                        crop_frame = c_frame[py0:py1, px0:px1]
+                        crop_resized = resize_frame_to_max_dimension(
+                            crop_frame, max_dim=max_dim
+                        )
+                        c_lm, c_q, c_conf = self.extract_frame(
+                            crop_resized, timestamp_ms=ts_ms
+                        )
+                        has_landmarks = (
+                            c_conf.get("left_hand_conf", 0) > 0.05
+                            or c_conf.get("right_hand_conf", 0) > 0.05
+                            or c_conf.get("pose_vis", 0) > 0.3
+                        )
+                        if has_landmarks:
+                            rw, rh = (px1 - px0) / fw, (py1 - py0) / fh
+                            valid_m = np.any(c_lm != 0.0, axis=-1)
+                            remapped_lm = c_lm.copy()
+                            remapped_lm[valid_m, 0] = rx0 + c_lm[valid_m, 0] * rw
+                            remapped_lm[valid_m, 1] = ry0 + c_lm[valid_m, 1] * rh
+                            lm, q, conf = remapped_lm, c_q, c_conf
+
+                if lm is None:
+                    full_resized = resize_frame_to_max_dimension(
+                        c_frame, max_dim=max_dim
+                    )
+                    lm, q, conf = self.extract_frame(full_resized, timestamp_ms=ts_ms)
+
+                if use_roi:
+                    valid_pts = lm[np.any(lm != 0.0, axis=-1)]
+                    if len(valid_pts) >= 5:
+                        min_x, max_x = valid_pts[:, 0].min(), valid_pts[:, 0].max()
+                        min_y, max_y = valid_pts[:, 1].min(), valid_pts[:, 1].max()
+                        margin_x = max(0.12, 0.25 * (max_x - min_x))
+                        margin_y = max(0.12, 0.25 * (max_y - min_y))
+                        signer_roi = (
+                            max(0.0, min_x - margin_x),
+                            max(0.0, min_y - margin_y),
+                            min(1.0, max_x + margin_x),
+                            min(1.0, max_y + margin_y),
+                        )
+
+                sequence.append(lm)
+                qualities.append(q)
+                for k in conf_acc:
+                    conf_acc[k].append(conf[k])
+            chunk.clear()
+
         if target_indices is not None:
             curr_frame_idx = 0
             frame_chunk = []
@@ -1568,58 +1822,9 @@ class MediaPipeExtractor:
                 frame_chunk.append((out_i, frame))
 
                 if len(frame_chunk) >= 5 or out_i == len(target_indices) - 1:
-                    for c_out_i, c_frame in frame_chunk:
-                        fh, fw = c_frame.shape[:2]
-                        ts_ms = int(c_out_i * 1000 / TARGET_FPS)
-
-                        lm, q, conf = None, 0.0, {}
-                        if signer_roi is not None:
-                            rx0, ry0, rx1, ry1 = signer_roi
-                            px0, py0 = max(0, int(rx0 * fw)), max(0, int(ry0 * fh))
-                            px1, py1 = min(fw, int(rx1 * fw)), min(fh, int(ry1 * fh))
-                            if (px1 - px0) > 30 and (py1 - py0) > 30:
-                                crop_frame = c_frame[py0:py1, px0:px1]
-                                crop_resized = resize_frame_to_max_dimension(
-                                    crop_frame, max_dim=max_dim
-                                )
-                                c_lm, c_q, c_conf = self.extract_frame(
-                                    crop_resized, timestamp_ms=ts_ms
-                                )
-                                has_landmarks = (
-                                    c_conf.get("left_hand_conf", 0) > 0.05
-                                    or c_conf.get("right_hand_conf", 0) > 0.05
-                                    or c_conf.get("pose_vis", 0) > 0.3
-                                )
-                                if has_landmarks:
-                                    rw, rh = (px1 - px0) / fw, (py1 - py0) / fh
-                                    valid_m = np.any(c_lm != 0.0, axis=-1)
-                                    remapped_lm = c_lm.copy()
-                                    remapped_lm[valid_m, 0] = rx0 + c_lm[valid_m, 0] * rw
-                                    remapped_lm[valid_m, 1] = ry0 + c_lm[valid_m, 1] * rh
-                                    lm, q, conf = remapped_lm, c_q, c_conf
-
-                        if lm is None:
-                            full_resized = resize_frame_to_max_dimension(c_frame, max_dim=max_dim)
-                            lm, q, conf = self.extract_frame(full_resized, timestamp_ms=ts_ms)
-
-                        valid_pts = lm[np.any(lm != 0.0, axis=-1)]
-                        if len(valid_pts) >= 5:
-                            min_x, max_x = valid_pts[:, 0].min(), valid_pts[:, 0].max()
-                            min_y, max_y = valid_pts[:, 1].min(), valid_pts[:, 1].max()
-                            margin_x = max(0.12, 0.25 * (max_x - min_x))
-                            margin_y = max(0.12, 0.25 * (max_y - min_y))
-                            signer_roi = (
-                                max(0.0, min_x - margin_x),
-                                max(0.0, min_y - margin_y),
-                                min(1.0, max_x + margin_x),
-                                min(1.0, max_y + margin_y),
-                            )
-
-                        sequence.append(lm)
-                        qualities.append(q)
-                        for k in conf_acc:
-                            conf_acc[k].append(conf[k])
-                    frame_chunk.clear()
+                    _flush_chunk(frame_chunk, use_roi=True)
+            if frame_chunk:
+                _flush_chunk(frame_chunk, use_roi=True)
         else:
             if clip_start > 0:
                 cap.set(cv2.CAP_PROP_POS_FRAMES, clip_start)
@@ -1634,16 +1839,11 @@ class MediaPipeExtractor:
                 frame_chunk.append((out_i, frame))
                 out_i += 1
                 if len(frame_chunk) >= 5 or out_i >= TARGET_FPS * 5:
-                    for c_out_i, c_frame in frame_chunk:
-                        ts_ms = int(c_out_i * 1000 / TARGET_FPS)
-                        lm, q, conf = self.extract_frame(c_frame, timestamp_ms=ts_ms)
-                        sequence.append(lm)
-                        qualities.append(q)
-                        for k in conf_acc:
-                            conf_acc[k].append(conf[k])
-                    frame_chunk.clear()
+                    _flush_chunk(frame_chunk, use_roi=False)
                 if out_i >= TARGET_FPS * 5:
                     break
+            if frame_chunk:
+                _flush_chunk(frame_chunk, use_roi=False)
 
         cap.release()
         self.advance_video_clock(gap_ms=1000)
@@ -1971,12 +2171,13 @@ def _suppress_worker_stderr():
     """
     try:
         devnull_fd = os.open(os.devnull, os.O_WRONLY)
-        os.dup2(devnull_fd, 2)   # replace C++ fd 2
+        os.dup2(devnull_fd, 2)  # replace C++ fd 2
         os.close(devnull_fd)
     except Exception:
         pass
     try:
         import sys
+
         sys.stderr = open(os.devnull, "w")  # keep Python layer in sync
     except Exception:
         pass
@@ -2005,7 +2206,9 @@ def _mp_pool_worker_init_gpu(gpu_id: int):
     try:
         _so = ensure_gpu_interceptor()
         if _so:
-            os.environ["LD_PRELOAD"] = f"{_so}:{os.environ.get('LD_PRELOAD', '')}".rstrip(":")
+            os.environ["LD_PRELOAD"] = (
+                f"{_so}:{os.environ.get('LD_PRELOAD', '')}".rstrip(":")
+            )
             ctypes.CDLL(_so)
     except Exception:
         pass
@@ -2091,8 +2294,9 @@ def _get_mp_context(gpu_isolated: bool = False):
     No CUDA context is used; fork is safe and much faster to start.
     """
     import platform as _platform
+
     if gpu_isolated:
-        return get_context("spawn")   # CUDA isolation: must be spawn
+        return get_context("spawn")  # CUDA isolation: must be spawn
     return get_context("fork" if _platform.system() == "Linux" else "spawn")
 
 
@@ -2110,7 +2314,9 @@ def get_or_create_gpu_pool(gpu_id: int) -> ProcessPoolExecutor:
             workers_per_gpu = max(1, NUM_MP_GPU_WORKERS // n_gpus)
             kwargs = {
                 "max_workers": workers_per_gpu,
-                "mp_context": _get_mp_context(gpu_isolated=True),  # spawn for CUDA isolation
+                "mp_context": _get_mp_context(
+                    gpu_isolated=True
+                ),  # spawn for CUDA isolation
                 "initializer": _mp_pool_worker_init_gpu,
                 "initargs": (gpu_id,),
             }
@@ -2240,10 +2446,14 @@ def bounded_as_completed(executor, fn, tasks, max_in_flight=None):
         except Exception:
             done = [f for f in list(futures.keys()) if f.done()]
 
+        pool_reset_needed = False
         for fut in done:
             try:
                 res = fut.result()
             except Exception as e:
+                err_str = str(e)
+                if any(k in err_str.lower() for k in ("broken", "terminated", "exit code", "can't start new thread")):
+                    pool_reset_needed = True
                 res = (
                     None,
                     {
@@ -2258,12 +2468,32 @@ def bounded_as_completed(executor, fn, tasks, max_in_flight=None):
             if fut in futures:
                 del futures[fut]
 
+        if pool_reset_needed:
+            try:
+                executor = _reset_executor(executor)
+            except Exception:
+                pass
+
         for task in task_iter:
             try:
                 fut = executor.submit(fn, *task)
             except Exception:
-                executor = _reset_executor(executor)
-                fut = executor.submit(fn, *task)
+                try:
+                    executor = _reset_executor(executor)
+                    fut = executor.submit(fn, *task)
+                except Exception as e:
+                    res = (
+                        None,
+                        {
+                            "reason": "exception",
+                            "source": "worker",
+                            "label": "unknown",
+                            "quality": 0.0,
+                            "meta": {"error": f"submit_failed: {e}"},
+                        },
+                    )
+                    yield res
+                    continue
             futures[fut] = task
             if len(futures) >= max_in_flight:
                 break
@@ -2301,7 +2531,11 @@ class MultiGPUExecutorProxy:
             # Dynamic least-busy allocation: pick the GPU pool holding the fewest pending/in-flight tasks.
             # If there's a tie, round-robin among tied candidates for even balancing.
             min_count = min(self._in_flight_counts)
-            candidates = [i for i, count in enumerate(self._in_flight_counts) if count == min_count]
+            candidates = [
+                i
+                for i, count in enumerate(self._in_flight_counts)
+                if count == min_count
+            ]
             pool_idx = candidates[self._rr % len(candidates)]
             self._rr += 1
             self._in_flight_counts[pool_idx] += 1
@@ -2616,12 +2850,21 @@ def _proc_alphabet_image(img_path_str, label, split, quality_threshold):
     """
     try:
         t0_mp = time.perf_counter()
-        extractor = _get_process_extractor(static_mode=True)
-        # enhance=True (default): CLAHE / log-compression / DoG applied BEFORE
-        # the single MediaPipe inference call, not after.
-        raw_arr, base_q, confidence = extractor.extract_image(
-            img_path_str, enhance=True
-        )
+        for attempt in range(3):
+            try:
+                extractor = _get_process_extractor(static_mode=True)
+                raw_arr, base_q, confidence = extractor.extract_image(
+                    img_path_str, enhance=True
+                )
+                break
+            except Exception as exc:
+                if attempt == 2:
+                    raise exc
+                _close_local_mediapipe_extractors()
+                import gc
+
+                gc.collect()
+                time.sleep(0.15 * (attempt + 1))
         t_mp = time.perf_counter() - t0_mp
 
         if raw_arr is None:
@@ -2688,10 +2931,21 @@ def _proc_citizen_row(video_path_str, gloss, participant_id, split, quality_thre
     """Worker: extract one ASL Citizen video."""
     try:
         t0_mp = time.perf_counter()
-        extractor = _get_process_extractor(static_mode=False)
-        sequence, detected_fps, base_q, confidence = extractor.extract_video(
-            video_path_str, max_dim=320
-        )
+        for attempt in range(3):
+            try:
+                extractor = _get_process_extractor(static_mode=False)
+                sequence, detected_fps, base_q, confidence = extractor.extract_video(
+                    video_path_str, max_dim=320
+                )
+                break
+            except Exception as exc:
+                if attempt == 2:
+                    raise exc
+                _close_local_mediapipe_extractors()
+                import gc
+
+                gc.collect()
+                time.sleep(0.15 * (attempt + 1))
         t_mp = time.perf_counter() - t0_mp
 
         if sequence is None:
@@ -2923,9 +3177,21 @@ def _proc_chicago_seq(
                 py1 = min(fh, int(y1 + 0.25 * bh))
                 if (px1 - px0) > 10 and (py1 - py0) > 10:
                     crop_img = frame[py0:py1, px0:px1]
-                    c_lm, c_q, c_conf = extractor.extract_frame(
-                        crop_img, timestamp_ms=0
-                    )
+                    for attempt in range(3):
+                        try:
+                            c_lm, c_q, c_conf = extractor.extract_frame(
+                                crop_img, timestamp_ms=0
+                            )
+                            break
+                        except Exception as exc:
+                            if attempt == 2:
+                                raise exc
+                            _close_local_mediapipe_extractors()
+                            import gc
+
+                            gc.collect()
+                            time.sleep(0.1 * (attempt + 1))
+                            extractor = _get_process_extractor(static_mode=False)
                     c_lm = c_lm.reshape(1, NUM_LANDMARKS, 3)
                     cw, ch = px1 - px0, py1 - py0
                     has_hands = (
@@ -2935,8 +3201,12 @@ def _proc_chicago_seq(
                     if has_hands:
                         valid_mask = np.any(c_lm[0] != 0.0, axis=-1)
                         remapped_lm = c_lm.copy()
-                        remapped_lm[0, valid_mask, 0] = (px0 + c_lm[0, valid_mask, 0] * cw) / fw
-                        remapped_lm[0, valid_mask, 1] = (py0 + c_lm[0, valid_mask, 1] * ch) / fh
+                        remapped_lm[0, valid_mask, 0] = (
+                            px0 + c_lm[0, valid_mask, 0] * cw
+                        ) / fw
+                        remapped_lm[0, valid_mask, 1] = (
+                            py0 + c_lm[0, valid_mask, 1] * ch
+                        ) / fh
                         lm, q, conf = remapped_lm, c_q, c_conf
 
             if lm is None:
@@ -3049,8 +3319,18 @@ def _proc_numeric_image(img_path_str, label, split, quality_threshold):
     """Worker: extract one Synthetic Numbers static image."""
     try:
         t0_mp = time.perf_counter()
-        extractor = _get_process_extractor(static_mode=True)
-        raw_arr, base_q, confidence = extractor.extract_image(img_path_str)
+        for attempt in range(3):
+            try:
+                extractor = _get_process_extractor(static_mode=True)
+                raw_arr, base_q, confidence = extractor.extract_image(img_path_str)
+                break
+            except Exception as exc:
+                if attempt == 2:
+                    raise exc
+                _close_local_mediapipe_extractors()
+                import gc
+                gc.collect()
+                time.sleep(0.15 * (attempt + 1))
         t_mp = time.perf_counter() - t0_mp
 
         if raw_arr is None:
@@ -3141,10 +3421,24 @@ def _proc_wlasl_instance(
     """Worker: extract one WLASL video clip with optional frame window."""
     try:
         t0_mp = time.perf_counter()
-        extractor = _get_process_extractor(static_mode=False)
-        sequence, detected_fps, base_q, confidence = extractor.extract_video(
-            video_path_str, start_frame=start_frame, end_frame=end_frame, max_dim=320
-        )
+        for attempt in range(3):
+            try:
+                extractor = _get_process_extractor(static_mode=False)
+                sequence, detected_fps, base_q, confidence = extractor.extract_video(
+                    video_path_str,
+                    start_frame=start_frame,
+                    end_frame=end_frame,
+                    max_dim=320,
+                )
+                break
+            except Exception as exc:
+                if attempt == 2:
+                    raise exc
+                _close_local_mediapipe_extractors()
+                import gc
+
+                gc.collect()
+                time.sleep(0.15 * (attempt + 1))
         t_mp = time.perf_counter() - t0_mp
 
         if sequence is None:
@@ -3494,7 +3788,9 @@ class FrankensteinDataProcessor:
                         if line:
                             completed.add(line)
             except Exception as e:
-                log_msg(f"[!] Warning: Could not read manifest {manifest_file.name}: {e}")
+                log_msg(
+                    f"[!] Warning: Could not read manifest {manifest_file.name}: {e}"
+                )
         return completed
 
     def _record_completed_keys(self, records: list, tag: str) -> None:
@@ -3506,17 +3802,28 @@ class FrankensteinDataProcessor:
         try:
             with open(manifest_file, "a", encoding="utf-8") as f:
                 for r in records:
-                    key = r.get("image_path") or r.get("video_path") or r.get("sentence_id") or str(r.get("label", ""))
+                    key = (
+                        r.get("image_path")
+                        or r.get("video_path")
+                        or r.get("sentence_id")
+                        or str(r.get("label", ""))
+                    )
                     if key:
                         f.write(f"{key}\n")
         except Exception as e:
-            log_msg(f"[!] Warning: Could not append to manifest {manifest_file.name}: {e}")
+            log_msg(
+                f"[!] Warning: Could not append to manifest {manifest_file.name}: {e}"
+            )
 
     def _shard_tasks(self, tasks: list, tag: str = None) -> list:
         """Slice task list for multi-process GPU sharding and filter already completed checkpoints."""
         if self.gpu_id is not None and self.num_gpus > 1 and tasks:
-            sharded = [t for i, t in enumerate(tasks) if i % self.num_gpus == self.gpu_id]
-            log_msg(f"[*] Shard {self.gpu_id}/{self.num_gpus}: processing {len(sharded)}/{len(tasks)} tasks.")
+            sharded = [
+                t for i, t in enumerate(tasks) if i % self.num_gpus == self.gpu_id
+            ]
+            log_msg(
+                f"[*] Shard {self.gpu_id}/{self.num_gpus}: processing {len(sharded)}/{len(tasks)} tasks."
+            )
         else:
             sharded = tasks
 
@@ -3527,7 +3834,9 @@ class FrankensteinDataProcessor:
                 sharded = [t for t in sharded if self._get_task_key(t) not in completed]
                 skipped = pre_len - len(sharded)
                 if skipped > 0:
-                    log_msg(f"[*] Checkpoint Resumption ({tag}): Skipped {skipped} already completed tasks ({len(sharded)} remaining).")
+                    log_msg(
+                        f"[*] Checkpoint Resumption ({tag}): Skipped {skipped} already completed tasks ({len(sharded)} remaining)."
+                    )
         return sharded
 
     def _get_tqdm_kwargs(self, base_desc: str, total: int) -> dict:
@@ -3548,14 +3857,19 @@ class FrankensteinDataProcessor:
         if tag not in self._batch_counters:
             max_idx = -1
             if self.temp_shard_dir.exists():
-                for p in self.temp_shard_dir.glob(f"shard_{tag}_batch_*{gpu_suffix}.pt"):
+                for p in self.temp_shard_dir.glob(
+                    f"shard_{tag}_batch_*{gpu_suffix}.pt"
+                ):
                     m = re.search(r"_batch_(\d+)", p.name)
                     if m:
                         max_idx = max(max_idx, int(m.group(1)))
             self._batch_counters[tag] = max_idx + 1
         batch_idx = self._batch_counters[tag]
         sp = self.temp_shard_dir / f"shard_{tag}_batch_{batch_idx:04d}{gpu_suffix}.pt"
-        tmp_sp = self.temp_shard_dir / f"shard_{tag}_batch_{batch_idx:04d}{gpu_suffix}.pt.tmp"
+        tmp_sp = (
+            self.temp_shard_dir
+            / f"shard_{tag}_batch_{batch_idx:04d}{gpu_suffix}.pt.tmp"
+        )
         try:
             torch.save(records, tmp_sp)
             tmp_sp.replace(sp)
@@ -3713,9 +4027,20 @@ class FrankensteinDataProcessor:
         extractor=None,
     ):
         extractor = extractor or _get_process_extractor()
-        sequence, detected_fps, _base_q, _confidence = extractor.extract_video(
-            video_path, start_frame=start_frame, end_frame=end_frame
-        )
+        for attempt in range(3):
+            try:
+                sequence, detected_fps, _base_q, _confidence = extractor.extract_video(
+                    video_path, start_frame=start_frame, end_frame=end_frame
+                )
+                break
+            except Exception as exc:
+                if attempt == 2:
+                    raise exc
+                _close_local_mediapipe_extractors()
+                import gc
+                gc.collect()
+                time.sleep(0.15 * (attempt + 1))
+                extractor = _get_process_extractor()
         if sequence is None:
             self.synthetic_counter += 1
             return None
@@ -3729,7 +4054,9 @@ class FrankensteinDataProcessor:
     def process_asl_alphabet(self, split="train"):
         t0 = time.time()
         log_msg(f"[*] Processing ASL Alphabet ({split})...")
-        profiler = DatasetProfiler("ASL Alphabet", split, num_workers=NUM_MP_GPU_WORKERS)
+        profiler = DatasetProfiler(
+            "ASL Alphabet", split, num_workers=NUM_MP_GPU_WORKERS
+        )
         candidates = [
             ALPHABET_DIR / "asl_alphabet_train" / "asl_alphabet_train",
             ALPHABET_DIR / "asl_alphabet_test" / "asl_alphabet_test",
@@ -3752,14 +4079,12 @@ class FrankensteinDataProcessor:
 
         for f, root_path in found_files:
             if get_static_split_assignment(f.name) == split:
-                lbl = normalize_gloss(
-                    (
-                        f.parent.name
-                        if f.parent.name != root_path.name
-                        else f.stem.split("_")[0]
-                    ),
-                    alias_map,
+                raw_name = (
+                    f.parent.name
+                    if f.parent.name != root_path.name
+                    else f.stem.split("_")[0]
                 )
+                lbl = normalize_gloss(f"fs:{raw_name}", alias_map)
                 tasks.append((str(f), lbl, split, threshold))
         # The file-scan cache was populated above. Clear it now so the
         # Path objects (potentially tens of thousands) can be GC'd.
@@ -3781,7 +4106,10 @@ class FrankensteinDataProcessor:
                     self._keep(
                         split=split, source="ASL_Alphabet", quality=record["quality"]
                     )
-                    if len(records) >= self.batch_flush_size and self.temp_shard_dir is not None:
+                    if (
+                        len(records) >= self.batch_flush_size
+                        and self.temp_shard_dir is not None
+                    ):
                         self.flush_batch(records, tag="alphabet")
                 elif discard is not None:
                     self._discard(
@@ -3879,7 +4207,10 @@ class FrankensteinDataProcessor:
                     self._keep(
                         split=split, source="ASL_Citizen", quality=record["quality"]
                     )
-                    if len(records) >= self.batch_flush_size and self.temp_shard_dir is not None:
+                    if (
+                        len(records) >= self.batch_flush_size
+                        and self.temp_shard_dir is not None
+                    ):
                         self.flush_batch(records, tag="citizen")
                 elif discard is not None:
                     self._discard(
@@ -4035,7 +4366,10 @@ class FrankensteinDataProcessor:
                         source="How2Sign_Holistic",
                         quality=record["quality"],
                     )
-                    if len(records) >= self.batch_flush_size and self.temp_shard_dir is not None:
+                    if (
+                        len(records) >= self.batch_flush_size
+                        and self.temp_shard_dir is not None
+                    ):
                         self.flush_batch(records, tag="how2sign_holistic")
                 elif discard is not None:
                     self._discard(
@@ -4061,7 +4395,9 @@ class FrankensteinDataProcessor:
     def process_chicago_fswild(self, split="train"):
         t0 = time.time()
         log_msg(f"[*] Processing ChicagoFSWild ({split})...")
-        profiler = DatasetProfiler("ChicagoFSWild", split, num_workers=NUM_MP_GPU_WORKERS)
+        profiler = DatasetProfiler(
+            "ChicagoFSWild", split, num_workers=NUM_MP_GPU_WORKERS
+        )
         t0_parse = time.perf_counter()
         csv_path = CHICAGO_FSWILD_DIR / "ChicagoFSWild.csv"
         unavailable_path = CHICAGO_FSWILD_DIR / "unavailable.csv"
@@ -4344,7 +4680,10 @@ class FrankensteinDataProcessor:
                     self._keep(
                         split=split, source="ChicagoFSWild", quality=record["quality"]
                     )
-                    if len(records) >= self.batch_flush_size and self.temp_shard_dir is not None:
+                    if (
+                        len(records) >= self.batch_flush_size
+                        and self.temp_shard_dir is not None
+                    ):
                         self.flush_batch(records, tag="chicago")
                 elif discard is not None:
                     self._discard(
@@ -4370,7 +4709,9 @@ class FrankensteinDataProcessor:
     def process_synthetic_numbers(self, split="train"):
         t0 = time.time()
         log_msg(f"[*] Processing Synthetic Numbers ({split})...")
-        profiler = DatasetProfiler("Synthetic Numbers", split, num_workers=NUM_MP_GPU_WORKERS)
+        profiler = DatasetProfiler(
+            "Synthetic Numbers", split, num_workers=NUM_MP_GPU_WORKERS
+        )
         candidates = [NUMBER_DIR / "Train_Nums", NUMBER_DIR / "Test_Nums"]
         existing_dirs = [p for p in candidates if p.exists()]
         if not existing_dirs and NUMBER_DIR.exists():
@@ -4390,14 +4731,12 @@ class FrankensteinDataProcessor:
 
         for p, root_path in found_files:
             if get_static_split_assignment(p.name) == split:
-                lbl = normalize_gloss(
-                    (
-                        p.parent.name
-                        if p.parent.name != root_path.name
-                        else p.stem.split("_")[0]
-                    ),
-                    alias_map,
+                raw_name = (
+                    p.parent.name
+                    if p.parent.name != root_path.name
+                    else p.stem.split("_")[0]
                 )
+                lbl = normalize_gloss(f"num:{raw_name}", alias_map)
                 tasks.append((str(p), lbl, split, threshold))
         # Clear the file-scan cache — paths are now captured in `tasks`.
         _DIR_FILE_CACHE.clear()
@@ -4409,7 +4748,8 @@ class FrankensteinDataProcessor:
         with _create_mediapipe_pool() as executor:
             results = bounded_as_completed(executor, _proc_numeric_image, tasks)
             for record, discard in tqdm(
-                results, **self._get_tqdm_kwargs(f"Synthetic Numbers [{split}]", len(tasks))
+                results,
+                **self._get_tqdm_kwargs(f"Synthetic Numbers [{split}]", len(tasks)),
             ):
                 profiler.ingest_task_result(record, discard)
                 if record is not None:
@@ -4420,7 +4760,10 @@ class FrankensteinDataProcessor:
                         source="Synthetic_Numbers",
                         quality=record["quality"],
                     )
-                    if len(records) >= self.batch_flush_size and self.temp_shard_dir is not None:
+                    if (
+                        len(records) >= self.batch_flush_size
+                        and self.temp_shard_dir is not None
+                    ):
                         self.flush_batch(records, tag="numbers")
                 elif discard is not None:
                     self._discard(
@@ -4545,7 +4888,10 @@ class FrankensteinDataProcessor:
                     self._keep(
                         split=split, source="WLASL_v0.3", quality=record["quality"]
                     )
-                    if len(records) >= self.batch_flush_size and self.temp_shard_dir is not None:
+                    if (
+                        len(records) >= self.batch_flush_size
+                        and self.temp_shard_dir is not None
+                    ):
                         self.flush_batch(records, tag="wlasl")
                 elif discard is not None:
                     self._discard(
@@ -4573,12 +4919,18 @@ class FrankensteinDataProcessor:
 # 4. PYTORCH DATASET BUILDER
 # ==============================================================================
 def canonicalize_text(text):
-    text = str(text).strip().lower()
+    raw = str(text).strip()
+    prefix = ""
+    if raw.lower().startswith("fs:") or raw.lower().startswith("num:"):
+        parts = raw.split(":", 1)
+        prefix = parts[0].lower() + ":"
+        raw = parts[1]
+    text = raw.lower()
     text = re.sub(r"[-]+", "", text)
     text = re.sub(r"[_\/]+", " ", text)
     text = re.sub(r"[^a-z0-9\s']", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
-    return text
+    return prefix + text
 
 
 def load_aslex_alias_map(signdata_csv=ASLEX_SIGNDATA):
@@ -4602,6 +4954,8 @@ def load_aslex_alias_map(signdata_csv=ASLEX_SIGNDATA):
 def normalize_gloss(label, alias_map=None):
     label = canonicalize_text(label)
     if not label:
+        return label
+    if label.startswith("fs:") or label.startswith("num:"):
         return label
     if alias_map:
         return alias_map.get(label, label)
@@ -4798,6 +5152,92 @@ def save_sharded_payload(payload, split, output_dir, shard_size=1000):
     return out_pt
 
 
+def _collect_master_vocabulary_labels(processor) -> set:
+    """Scan all input datasets and existing temp shards across all splits to collect the complete master vocabulary (~2.9k classes)."""
+    labels = set()
+    alias_map = getattr(processor, "aslex_alias_map", None)
+
+    # 1. ASL Citizen CSVs across all splits
+    for s in ("train", "val", "test"):
+        csv_path = ASL_CITIZEN_DIR / "splits" / f"{resolve_split('ASL_Citizen', s)}.csv"
+        if csv_path.exists():
+            try:
+                df = pd.read_csv(csv_path)
+                for raw_lbl in df["Gloss"].dropna():
+                    norm = normalize_gloss(raw_lbl, alias_map)
+                    if norm:
+                        labels.add(norm)
+            except Exception:
+                pass
+
+    # 2. WLASL raw/json metadata
+    wlasl_json = WLASL_DIR / "WLASL_v0.3.json"
+    if wlasl_json.exists():
+        try:
+            with open(wlasl_json, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                for entry in data:
+                    raw_lbl = entry.get("gloss", "")
+                    norm = normalize_gloss(raw_lbl, alias_map)
+                    if norm:
+                        labels.add(norm)
+        except Exception:
+            pass
+
+    # 3. ASL Alphabet directories (static letters prefixed with fs:)
+    for c in [ALPHABET_DIR / "asl_alphabet_train" / "asl_alphabet_train", ALPHABET_DIR / "asl_alphabet_train"]:
+        if c.exists():
+            try:
+                for sub in c.iterdir():
+                    if sub.is_dir():
+                        norm = normalize_gloss(f"fs:{sub.name.split('_')[0]}", alias_map)
+                        if norm:
+                            labels.add(norm)
+            except Exception:
+                pass
+
+    # 4. Synthetic Numbers directories (static digits prefixed with num:)
+    for c in [NUMBER_DIR / "Train_Nums", NUMBER_DIR / "Test_Nums", NUMBER_DIR]:
+        if c.exists():
+            try:
+                for sub in c.iterdir():
+                    if sub.is_dir():
+                        norm = normalize_gloss(f"num:{sub.name.split('_')[0]}", alias_map)
+                        if norm:
+                            labels.add(norm)
+            except Exception:
+                pass
+
+    # 5. ChicagoFSWild labels
+    for s in ("train", "dev", "test"):
+        csv_path = CHICAGO_FSWILD_DIR / f"{s}.csv"
+        if csv_path.exists():
+            try:
+                df = pd.read_csv(csv_path)
+                for raw_lbl in df["label_proc"].dropna():
+                    norm = _clean_chicago_label(raw_lbl, alias_map=alias_map)
+                    if norm:
+                        labels.add(norm)
+            except Exception:
+                pass
+
+    # 6. Any existing temp shards across all splits
+    if processor.temp_shard_dir is not None:
+        parent_dir = processor.temp_shard_dir.parent
+        for s in ("train", "val", "test"):
+            shard_dir = parent_dir / f"_tmp_shards_{s}"
+            if shard_dir.exists():
+                for sp in shard_dir.glob("shard_*.pt"):
+                    try:
+                        recs = safe_torch_load(sp, map_location="cpu")
+                        for r in recs:
+                            labels.add(r["label"])
+                    except Exception:
+                        pass
+
+    return labels
+
+
 def build_split(processor, split, normalizer, augment=False, label_to_idx=None):
     """Build a split with fully streaming I/O — no in-memory record accumulation.
 
@@ -4838,7 +5278,11 @@ def build_split(processor, split, normalizer, augment=False, label_to_idx=None):
         """Write *records* to a temp shard and log the flush."""
         if not records:
             return
-        gpu_suffix = f"_gpu{processor.gpu_id}" if getattr(processor, "gpu_id", None) is not None else ""
+        gpu_suffix = (
+            f"_gpu{processor.gpu_id}"
+            if getattr(processor, "gpu_id", None) is not None
+            else ""
+        )
         idx = len(temp_shard_paths) + getattr(processor, f"_flush_idx_{tag}", 0)
         setattr(processor, f"_flush_idx_{tag}", idx + 1)
         sp = temp_shard_dir / f"shard_{idx:03d}_{tag}{gpu_suffix}.pt"
@@ -4852,23 +5296,28 @@ def build_split(processor, split, normalizer, augment=False, label_to_idx=None):
         # Phase A: process all datasets — one at a time —————————————
         if getattr(processor, "phase", "all") in ("all", "extract"):
             recs = processor.process_asl_alphabet(split=split)
-            _flush_temp(recs, "alphabet"); del recs
+            _flush_temp(recs, "alphabet")
+            del recs
             _release_mediapipe_worker_pool()
 
             recs = processor.process_asl_citizen(split=split)
-            _flush_temp(recs, "citizen"); del recs
+            _flush_temp(recs, "citizen")
+            del recs
             _release_mediapipe_worker_pool()
 
             recs = processor.process_chicago_fswild(split=split)
-            _flush_temp(recs, "chicago"); del recs
+            _flush_temp(recs, "chicago")
+            del recs
             _release_mediapipe_worker_pool()
 
             recs = processor.process_synthetic_numbers(split=split)
-            _flush_temp(recs, "numbers"); del recs
+            _flush_temp(recs, "numbers")
+            del recs
             _release_mediapipe_worker_pool()
 
             recs = processor.process_wlasl(split=split)
-            _flush_temp(recs, "wlasl"); del recs
+            _flush_temp(recs, "wlasl")
+            del recs
             _release_mediapipe_worker_pool()
 
             sentence_records = processor.process_how2sign_holistic(split=split)
@@ -4876,26 +5325,33 @@ def build_split(processor, split, normalizer, augment=False, label_to_idx=None):
 
             if getattr(processor, "phase", "all") == "extract":
                 if sentence_records:
-                    _flush_temp(sentence_records, "how2sign_holistic"); del sentence_records
-                log_msg(f"[+] GPU Shard Process {processor.gpu_id} completed extraction for split {split}.")
+                    _flush_temp(sentence_records, "how2sign_holistic")
+                    del sentence_records
+                log_msg(
+                    f"[+] GPU Shard Process {processor.gpu_id} completed extraction for split {split}."
+                )
                 return None, None
 
         # Discover all temp shards written across all GPUs and batch flushes.
         log_msg(f"[*] Discovering temp shards across all GPUs in {temp_shard_dir}...")
         temp_shard_paths = sorted(temp_shard_dir.glob("shard_*.pt"))
-        log_msg(f"[*] Found {len(temp_shard_paths)} temp shards for Phase B & Phase C merge.")
+        log_msg(
+            f"[*] Found {len(temp_shard_paths)} temp shards for Phase B & Phase C merge."
+        )
         for sp in list(temp_shard_paths):
             if "how2sign_holistic" in sp.name:
                 try:
                     sentence_records.extend(safe_torch_load(sp, map_location="cpu"))
                 except Exception as e:
-                    log_msg(f"[!] Warning: Failed to load holistic shard {sp.name}: {e}")
+                    log_msg(
+                        f"[!] Warning: Failed to load holistic shard {sp.name}: {e}"
+                    )
                 temp_shard_paths.remove(sp)
 
         # ── Phase B: label-only scan — build vocabulary ——————————————
         if label_to_idx is None:
-            log_msg("[*] Phase B: scanning temp shards for label vocabulary...")
-            all_labels: set = set()
+            log_msg("[*] Phase B: scanning all dataset manifests & temp shards for complete master vocabulary...")
+            all_labels: set = _collect_master_vocabulary_labels(processor)
             for sp in temp_shard_paths:
                 shard_recs = safe_torch_load(sp, map_location="cpu")
                 for r in shard_recs:
@@ -4905,7 +5361,7 @@ def build_split(processor, split, normalizer, augment=False, label_to_idx=None):
             classes = sorted(all_labels)
             label_to_idx_final: dict = {lbl: i for i, lbl in enumerate(classes)}
             idx_to_label: dict = dict(enumerate(classes))
-            log_msg(f"[*] Vocabulary: {len(classes)} classes.")
+            log_msg(f"[*] Master Vocabulary built: {len(classes)} distinct classes.")
         else:
             label_to_idx_final = label_to_idx
             classes = sorted(label_to_idx_final, key=label_to_idx_final.__getitem__)
@@ -4923,8 +5379,8 @@ def build_split(processor, split, normalizer, augment=False, label_to_idx=None):
         cur_shard: list = []
         cur_shard_idx = 0
         out_shard_manifest: list = []
-        all_lengths: list = []      # frame counts, one int per record (tiny)
-        global_rec_idx = 0          # records written so far (across all shards)
+        all_lengths: list = []  # frame counts, one int per record (tiny)
+        global_rec_idx = 0  # records written so far (across all shards)
 
         def _flush_out_shard() -> None:
             """Write the current output shard to disk and free its RAM."""
@@ -4932,8 +5388,7 @@ def build_split(processor, split, normalizer, augment=False, label_to_idx=None):
             if not cur_shard:
                 return
             sp = (
-                out_shard_dir
-                / f"asl_frankenstein_{split}_shard_{cur_shard_idx:03d}.pt"
+                out_shard_dir / f"asl_frankenstein_{split}_shard_{cur_shard_idx:03d}.pt"
             )
             tmp_sp = sp.with_suffix(".pt.tmp")
             shard_start = global_rec_idx - len(cur_shard)
@@ -5033,7 +5488,7 @@ def build_split(processor, split, normalizer, augment=False, label_to_idx=None):
         "vocabulary": classes,
         "label_to_idx": label_to_idx_final,
         "sentence_records": sentence_records,
-        "lengths": lengths,          # (N,) int32 — small
+        "lengths": lengths,  # (N,) int32 — small
         "shard_manifest_path": str(manifest_path),
         "metadata": {
             "split": split,
@@ -5048,6 +5503,7 @@ def build_split(processor, split, normalizer, augment=False, label_to_idx=None):
     # Proxy returned as 'fused_dataset' for API compatibility with main().
     class _VocabProxy:
         """Minimal stand-in for FusedASLDataset used only for vocab access."""
+
         def __init__(self):
             self.label_to_idx = label_to_idx_final
             self.idx_to_label = idx_to_label
@@ -5055,7 +5511,6 @@ def build_split(processor, split, normalizer, augment=False, label_to_idx=None):
 
     processor.save_quality_summary(split)
     return canonical_payload, _VocabProxy()
-
 
 
 def main(argv=None):
@@ -5096,13 +5551,20 @@ def main(argv=None):
         help="Number of multi-processing workers (overrides NUM_MP_GPU_WORKERS)",
     )
     parser.add_argument(
-        "--gpu-id", type=int, default=None, help="Assigned GPU ID for multi-process sharding"
+        "--gpu-id",
+        type=int,
+        default=None,
+        help="Assigned GPU ID for multi-process sharding",
     )
     parser.add_argument(
         "--num-gpus", type=int, default=1, help="Total number of GPU shard processes"
     )
     parser.add_argument(
-        "--phase", type=str, default="all", choices=["all", "extract", "merge"], help="Execution phase when sharding"
+        "--phase",
+        type=str,
+        default="all",
+        choices=["all", "extract", "merge"],
+        help="Execution phase when sharding",
     )
     args = parser.parse_args(argv)
 
@@ -5157,8 +5619,13 @@ def main(argv=None):
         # Check if we should run section-by-section multi-GPU extraction for this split
         if args.gpu_id is None and n_gpus > 1 and args.phase in ("all", "extract"):
             import subprocess
-            log_msg(f"[*] Master Orchestrator: Section '{split.upper()}' - Launching {n_gpus} independent OS processes (1 per GPU)...")
-            total_workers = args.workers if args.workers is not None else NUM_MP_GPU_WORKERS
+
+            log_msg(
+                f"[*] Master Orchestrator: Section '{split.upper()}' - Launching {n_gpus} independent OS processes (1 per GPU)..."
+            )
+            total_workers = (
+                args.workers if args.workers is not None else NUM_MP_GPU_WORKERS
+            )
             workers_per_gpu = max(1, total_workers // n_gpus)
             procs = []
             for i in range(n_gpus):
@@ -5175,19 +5642,27 @@ def main(argv=None):
                 try:
                     _so = ensure_gpu_interceptor()
                     if _so:
-                        env["LD_PRELOAD"] = f"{_so}:{env.get('LD_PRELOAD', '')}".rstrip(":")
+                        env["LD_PRELOAD"] = f"{_so}:{env.get('LD_PRELOAD', '')}".rstrip(
+                            ":"
+                        )
                 except Exception:
                     pass
 
                 cmd = [
                     sys.executable,
                     sys.argv[0],
-                    "--phase", "extract",
-                    "--split", split,
-                    "--gpu-id", str(i),
-                    "--num-gpus", str(n_gpus),
-                    "--workers", str(workers_per_gpu),
-                    "--batch-flush-size", str(args.batch_flush_size),
+                    "--phase",
+                    "extract",
+                    "--split",
+                    split,
+                    "--gpu-id",
+                    str(i),
+                    "--num-gpus",
+                    str(n_gpus),
+                    "--workers",
+                    str(workers_per_gpu),
+                    "--batch-flush-size",
+                    str(args.batch_flush_size),
                 ]
                 if args.test:
                     cmd.append("--test")
@@ -5198,26 +5673,36 @@ def main(argv=None):
                 if args.shard_size:
                     cmd.extend(["--shard-size", str(args.shard_size)])
 
-                log_msg(f"[*] Launching GPU Shard Process {i} for split '{split}': {' '.join(cmd)}")
+                log_msg(
+                    f"[*] Launching GPU Shard Process {i} for split '{split}': {' '.join(cmd)}"
+                )
                 procs.append((i, subprocess.Popen(cmd, env=env)))
 
             failed = False
             for i, p in procs:
                 ret = p.wait()
                 if ret != 0:
-                    log_msg(f"[!] Error: GPU Shard Process {i} exited with error code {ret} on split '{split}'")
+                    log_msg(
+                        f"[!] Error: GPU Shard Process {i} exited with error code {ret} on split '{split}'"
+                    )
                     failed = True
                 else:
-                    log_msg(f"[+] GPU Shard Process {i} completed extraction for split '{split}'.")
+                    log_msg(
+                        f"[+] GPU Shard Process {i} completed extraction for split '{split}'."
+                    )
 
             if failed:
-                raise RuntimeError(f"One or more GPU shard processes failed during Phase A extraction on split '{split}'.")
+                raise RuntimeError(
+                    f"One or more GPU shard processes failed during Phase A extraction on split '{split}'."
+                )
 
             if args.phase == "extract":
                 continue
 
             processor.phase = "merge"
-            log_msg(f"[*] All GPU shard extractions finished for section '{split}'. Master Orchestrator starting merge...")
+            log_msg(
+                f"[*] All GPU shard extractions finished for section '{split}'. Master Orchestrator starting merge..."
+            )
         else:
             processor.phase = args.phase
 

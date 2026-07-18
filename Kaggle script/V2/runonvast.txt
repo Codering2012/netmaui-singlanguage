@@ -31,5 +31,5 @@ cd netmaui-singlanguage
 cd "Kaggle script"
 cd V2
 pip install -r requirements.txt
-python3 train_sign_pipeline.py --test --split train --workers 26 --num-gpus 2
-# python3 train_sign_pipeline.py --split all --workers 26 --num-gpus 2
+python3 train_sign_pipeline.py --split all --workers 10 --num-gpus 2
+# python3 train_sign_pipeline.py --split all --workers 10 --num-gpus 2
