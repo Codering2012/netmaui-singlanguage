@@ -76,32 +76,57 @@ static int get_assigned_gpu_id(void) {
 static const char* redirect_path(const char *pathname, char *buf, size_t buflen) {
     if (!pathname) return pathname;
     int gid = get_assigned_gpu_id();
-    if (gid <= 0) return pathname;
+    if (gid < 0) return pathname;
 
-    if (strcmp(pathname, "/dev/dri/renderD128") == 0 || strstr(pathname, "renderD128") != NULL) {
-        if (strstr(pathname, "/sys/class/drm/renderD128")) {
-            snprintf(buf, buflen, "%s", pathname);
-            char *pos = strstr(buf, "renderD128");
-            if (pos) snprintf(pos, buflen - (pos - buf), "renderD%d%s", 128 + gid, pos + 10);
+    // Intercept any renderD<number> (e.g. /dev/dri/renderD128..135, /sys/class/drm/renderD128..135)
+    const char *pos_render = strstr(pathname, "renderD");
+    if (pos_render != NULL) {
+        const char *digits = pos_render + 7;
+        if (digits[0] >= '0' && digits[0] <= '9') {
+            int target_dev = 128 + gid;
+            size_t prefix_len = pos_render - pathname + 7;
+            if (prefix_len >= buflen) return pathname;
+            strncpy(buf, pathname, prefix_len);
+            buf[prefix_len] = '\0';
+            const char *suffix = digits;
+            while (*suffix >= '0' && *suffix <= '9') suffix++;
+            snprintf(buf + prefix_len, buflen - prefix_len, "%d%s", target_dev, suffix);
             return buf;
         }
-        snprintf(buf, buflen, "/dev/dri/renderD%d", 128 + gid);
-        return buf;
     }
-    if (strcmp(pathname, "/dev/dri/card0") == 0 || strstr(pathname, "/dev/dri/card0") != NULL || strstr(pathname, "/sys/class/drm/card0") != NULL) {
-        if (strstr(pathname, "/sys/class/drm/card0")) {
-            snprintf(buf, buflen, "%s", pathname);
-            char *pos = strstr(buf, "card0");
-            if (pos) snprintf(pos, buflen - (pos - buf), "card%d%s", gid, pos + 5);
+
+    // Intercept any card<number> (e.g. /dev/dri/card0..3, /sys/class/drm/card0..3)
+    const char *pos_card = strstr(pathname, "card");
+    if (pos_card != NULL && (pos_card == pathname || *(pos_card - 1) == '/' || *(pos_card - 1) == 'm')) {
+        const char *digits = pos_card + 4;
+        if (digits[0] >= '0' && digits[0] <= '9') {
+            size_t prefix_len = pos_card - pathname + 4;
+            if (prefix_len >= buflen) return pathname;
+            strncpy(buf, pathname, prefix_len);
+            buf[prefix_len] = '\0';
+            const char *suffix = digits;
+            while (*suffix >= '0' && *suffix <= '9') suffix++;
+            snprintf(buf + prefix_len, buflen - prefix_len, "%d%s", gid, suffix);
             return buf;
         }
-        snprintf(buf, buflen, "/dev/dri/card%d", gid);
-        return buf;
     }
-    if (strcmp(pathname, "/dev/nvidia0") == 0 || (strstr(pathname, "/dev/nvidia0") != NULL && strstr(pathname, "nvidia-") == NULL)) {
-        snprintf(buf, buflen, "/dev/nvidia%d", gid);
-        return buf;
+
+    // Intercept any /dev/nvidia<number> (e.g. /dev/nvidia0..3) while leaving /dev/nvidia-ctl and /dev/nvidia-uvm alone
+    const char *pos_nvidia = strstr(pathname, "/dev/nvidia");
+    if (pos_nvidia != NULL) {
+        const char *digits = pos_nvidia + 11;
+        if (digits[0] >= '0' && digits[0] <= '9') {
+            size_t prefix_len = pos_nvidia - pathname + 11;
+            if (prefix_len >= buflen) return pathname;
+            strncpy(buf, pathname, prefix_len);
+            buf[prefix_len] = '\0';
+            const char *suffix = digits;
+            while (*suffix >= '0' && *suffix <= '9') suffix++;
+            snprintf(buf + prefix_len, buflen - prefix_len, "%d%s", gid, suffix);
+            return buf;
+        }
     }
+
     return pathname;
 }
 
