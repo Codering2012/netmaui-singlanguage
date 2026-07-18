@@ -73,6 +73,36 @@ static int get_assigned_gpu_id(void) {
     return cached_id;
 }
 
+static int get_nth_render_d(int n) {
+    int (*local_access)(const char*, int) = real_access;
+    if (!local_access) local_access = dlsym(RTLD_NEXT, "access");
+    int count = 0;
+    for (int i = 128; i < 256; i++) {
+        char path[64];
+        snprintf(path, sizeof(path), "/dev/dri/renderD%d", i);
+        if (local_access && local_access(path, F_OK) == 0) {
+            if (count == n) return i;
+            count++;
+        }
+    }
+    return 128 + n;
+}
+
+static int get_nth_card(int n) {
+    int (*local_access)(const char*, int) = real_access;
+    if (!local_access) local_access = dlsym(RTLD_NEXT, "access");
+    int count = 0;
+    for (int i = 0; i < 128; i++) {
+        char path[64];
+        snprintf(path, sizeof(path), "/dev/dri/card%d", i);
+        if (local_access && local_access(path, F_OK) == 0) {
+            if (count == n) return i;
+            count++;
+        }
+    }
+    return n;
+}
+
 static const char* redirect_path(const char *pathname, char *buf, size_t buflen) {
     if (!pathname) return pathname;
     int gid = get_assigned_gpu_id();
@@ -83,7 +113,7 @@ static const char* redirect_path(const char *pathname, char *buf, size_t buflen)
     if (pos_render != NULL) {
         const char *digits = pos_render + 7;
         if (digits[0] >= '0' && digits[0] <= '9') {
-            int target_dev = 128 + gid;
+            int target_dev = get_nth_render_d(gid);
             size_t prefix_len = pos_render - pathname + 7;
             if (prefix_len >= buflen) return pathname;
             strncpy(buf, pathname, prefix_len);
@@ -100,13 +130,14 @@ static const char* redirect_path(const char *pathname, char *buf, size_t buflen)
     if (pos_card != NULL && (pos_card == pathname || *(pos_card - 1) == '/' || *(pos_card - 1) == 'm')) {
         const char *digits = pos_card + 4;
         if (digits[0] >= '0' && digits[0] <= '9') {
+            int target_card = get_nth_card(gid);
             size_t prefix_len = pos_card - pathname + 4;
             if (prefix_len >= buflen) return pathname;
             strncpy(buf, pathname, prefix_len);
             buf[prefix_len] = '\0';
             const char *suffix = digits;
             while (*suffix >= '0' && *suffix <= '9') suffix++;
-            snprintf(buf + prefix_len, buflen - prefix_len, "%d%s", gid, suffix);
+            snprintf(buf + prefix_len, buflen - prefix_len, "%d%s", target_card, suffix);
             return buf;
         }
     }
