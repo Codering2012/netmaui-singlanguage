@@ -32,8 +32,6 @@ def ensure_gpu_interceptor() -> str | None:
 #include <sched.h>
 #include <pthread.h>
 #include <errno.h>
-#include <sys/stat.h>
-#include <sys/types.h>
 
 static int (*real_open)(const char *pathname, int flags, ...) = NULL;
 static int (*real_open64)(const char *pathname, int flags, ...) = NULL;
@@ -41,19 +39,6 @@ static int (*real_openat)(int dirfd, const char *pathname, int flags, ...) = NUL
 static int (*real_openat64)(int dirfd, const char *pathname, int flags, ...) = NULL;
 static FILE* (*real_fopen)(const char *pathname, const char *mode) = NULL;
 static FILE* (*real_fopen64)(const char *pathname, const char *mode) = NULL;
-
-static int (*real_access)(const char *pathname, int mode) = NULL;
-static int (*real_eaccess)(const char *pathname, int mode) = NULL;
-static int (*real_faccessat)(int dirfd, const char *pathname, int mode, int flags) = NULL;
-static int (*real_stat)(const char *pathname, struct stat *statbuf) = NULL;
-static int (*real_stat64)(const char *pathname, void *statbuf) = NULL;
-static int (*real_lstat)(const char *pathname, struct stat *statbuf) = NULL;
-static int (*real_lstat64)(const char *pathname, void *statbuf) = NULL;
-static int (*real___xstat)(int ver, const char *pathname, struct stat *statbuf) = NULL;
-static int (*real___xstat64)(int ver, const char *pathname, void *statbuf) = NULL;
-static int (*real___lxstat)(int ver, const char *pathname, struct stat *statbuf) = NULL;
-static int (*real___lxstat64)(int ver, const char *pathname, void *statbuf) = NULL;
-static ssize_t (*real_readlink)(const char *pathname, char *buf, size_t bufsiz) = NULL;
 
 static long (*real_sysconf)(int name) = NULL;
 static int (*real_pthread_create)(pthread_t *thread, const pthread_attr_t *attr, void *(*start_routine)(void *), void *arg) = NULL;
@@ -73,91 +58,23 @@ static int get_assigned_gpu_id(void) {
     return cached_id;
 }
 
-static int get_nth_render_d(int n) {
-    int (*local_access)(const char*, int) = real_access;
-    if (!local_access) local_access = dlsym(RTLD_NEXT, "access");
-    int count = 0;
-    for (int i = 128; i < 256; i++) {
-        char path[64];
-        snprintf(path, sizeof(path), "/dev/dri/renderD%d", i);
-        if (local_access && local_access(path, F_OK) == 0) {
-            if (count == n) return i;
-            count++;
-        }
-    }
-    return 128 + n;
-}
-
-static int get_nth_card(int n) {
-    int (*local_access)(const char*, int) = real_access;
-    if (!local_access) local_access = dlsym(RTLD_NEXT, "access");
-    int count = 0;
-    for (int i = 0; i < 128; i++) {
-        char path[64];
-        snprintf(path, sizeof(path), "/dev/dri/card%d", i);
-        if (local_access && local_access(path, F_OK) == 0) {
-            if (count == n) return i;
-            count++;
-        }
-    }
-    return n;
-}
-
 static const char* redirect_path(const char *pathname, char *buf, size_t buflen) {
     if (!pathname) return pathname;
     int gid = get_assigned_gpu_id();
-    if (gid < 0) return pathname;
+    if (gid <= 0) return pathname;
 
-    // Intercept any renderD<number> (e.g. /dev/dri/renderD128..135, /sys/class/drm/renderD128..135)
-    const char *pos_render = strstr(pathname, "renderD");
-    if (pos_render != NULL) {
-        const char *digits = pos_render + 7;
-        if (digits[0] >= '0' && digits[0] <= '9') {
-            int target_dev = get_nth_render_d(gid);
-            size_t prefix_len = pos_render - pathname + 7;
-            if (prefix_len >= buflen) return pathname;
-            strncpy(buf, pathname, prefix_len);
-            buf[prefix_len] = '\0';
-            const char *suffix = digits;
-            while (*suffix >= '0' && *suffix <= '9') suffix++;
-            snprintf(buf + prefix_len, buflen - prefix_len, "%d%s", target_dev, suffix);
-            return buf;
-        }
+    if (strcmp(pathname, "/dev/dri/renderD128") == 0 || strstr(pathname, "renderD128") != NULL) {
+        snprintf(buf, buflen, "/dev/dri/renderD%d", 128 + gid);
+        return buf;
     }
-
-    // Intercept any card<number> (e.g. /dev/dri/card0..3, /sys/class/drm/card0..3)
-    const char *pos_card = strstr(pathname, "card");
-    if (pos_card != NULL && (pos_card == pathname || *(pos_card - 1) == '/' || *(pos_card - 1) == 'm')) {
-        const char *digits = pos_card + 4;
-        if (digits[0] >= '0' && digits[0] <= '9') {
-            int target_card = get_nth_card(gid);
-            size_t prefix_len = pos_card - pathname + 4;
-            if (prefix_len >= buflen) return pathname;
-            strncpy(buf, pathname, prefix_len);
-            buf[prefix_len] = '\0';
-            const char *suffix = digits;
-            while (*suffix >= '0' && *suffix <= '9') suffix++;
-            snprintf(buf + prefix_len, buflen - prefix_len, "%d%s", target_card, suffix);
-            return buf;
-        }
+    if (strcmp(pathname, "/dev/dri/card0") == 0 || strstr(pathname, "/dev/dri/card0") != NULL) {
+        snprintf(buf, buflen, "/dev/dri/card%d", gid);
+        return buf;
     }
-
-    // Intercept any /dev/nvidia<number> (e.g. /dev/nvidia0..3) while leaving /dev/nvidia-ctl and /dev/nvidia-uvm alone
-    const char *pos_nvidia = strstr(pathname, "/dev/nvidia");
-    if (pos_nvidia != NULL) {
-        const char *digits = pos_nvidia + 11;
-        if (digits[0] >= '0' && digits[0] <= '9') {
-            size_t prefix_len = pos_nvidia - pathname + 11;
-            if (prefix_len >= buflen) return pathname;
-            strncpy(buf, pathname, prefix_len);
-            buf[prefix_len] = '\0';
-            const char *suffix = digits;
-            while (*suffix >= '0' && *suffix <= '9') suffix++;
-            snprintf(buf + prefix_len, buflen - prefix_len, "%d%s", gid, suffix);
-            return buf;
-        }
+    if (strcmp(pathname, "/dev/nvidia0") == 0 || strstr(pathname, "/dev/nvidia0") != NULL) {
+        snprintf(buf, buflen, "/dev/nvidia%d", gid);
+        return buf;
     }
-
     return pathname;
 }
 
@@ -227,78 +144,6 @@ FILE* fopen64(const char *pathname, const char *mode) {
     if (!real_fopen64) real_fopen64 = dlsym(RTLD_NEXT, "fopen64");
     char buf[512];
     return real_fopen64(redirect_path(pathname, buf, sizeof(buf)), mode);
-}
-
-int access(const char *pathname, int mode) {
-    if (!real_access) real_access = dlsym(RTLD_NEXT, "access");
-    char buf[512];
-    return real_access(redirect_path(pathname, buf, sizeof(buf)), mode);
-}
-
-int eaccess(const char *pathname, int mode) {
-    if (!real_eaccess) real_eaccess = dlsym(RTLD_NEXT, "eaccess");
-    char buf[512];
-    return real_eaccess(redirect_path(pathname, buf, sizeof(buf)), mode);
-}
-
-int faccessat(int dirfd, const char *pathname, int mode, int flags) {
-    if (!real_faccessat) real_faccessat = dlsym(RTLD_NEXT, "faccessat");
-    char buf[512];
-    return real_faccessat(dirfd, redirect_path(pathname, buf, sizeof(buf)), mode, flags);
-}
-
-int stat(const char *pathname, struct stat *statbuf) {
-    if (!real_stat) real_stat = dlsym(RTLD_NEXT, "stat");
-    char buf[512];
-    return real_stat(redirect_path(pathname, buf, sizeof(buf)), statbuf);
-}
-
-int stat64(const char *pathname, void *statbuf) {
-    if (!real_stat64) real_stat64 = dlsym(RTLD_NEXT, "stat64");
-    char buf[512];
-    return real_stat64(redirect_path(pathname, buf, sizeof(buf)), statbuf);
-}
-
-int lstat(const char *pathname, struct stat *statbuf) {
-    if (!real_lstat) real_lstat = dlsym(RTLD_NEXT, "lstat");
-    char buf[512];
-    return real_lstat(redirect_path(pathname, buf, sizeof(buf)), statbuf);
-}
-
-int lstat64(const char *pathname, void *statbuf) {
-    if (!real_lstat64) real_lstat64 = dlsym(RTLD_NEXT, "lstat64");
-    char buf[512];
-    return real_lstat64(redirect_path(pathname, buf, sizeof(buf)), statbuf);
-}
-
-int __xstat(int ver, const char *pathname, struct stat *statbuf) {
-    if (!real___xstat) real___xstat = dlsym(RTLD_NEXT, "__xstat");
-    char buf[512];
-    return real___xstat(ver, redirect_path(pathname, buf, sizeof(buf)), statbuf);
-}
-
-int __xstat64(int ver, const char *pathname, void *statbuf) {
-    if (!real___xstat64) real___xstat64 = dlsym(RTLD_NEXT, "__xstat64");
-    char buf[512];
-    return real___xstat64(ver, redirect_path(pathname, buf, sizeof(buf)), statbuf);
-}
-
-int __lxstat(int ver, const char *pathname, struct stat *statbuf) {
-    if (!real___lxstat) real___lxstat = dlsym(RTLD_NEXT, "__lxstat");
-    char buf[512];
-    return real___lxstat(ver, redirect_path(pathname, buf, sizeof(buf)), statbuf);
-}
-
-int __lxstat64(int ver, const char *pathname, void *statbuf) {
-    if (!real___lxstat64) real___lxstat64 = dlsym(RTLD_NEXT, "__lxstat64");
-    char buf[512];
-    return real___lxstat64(ver, redirect_path(pathname, buf, sizeof(buf)), statbuf);
-}
-
-ssize_t readlink(const char *pathname, char *buf, size_t bufsiz) {
-    if (!real_readlink) real_readlink = dlsym(RTLD_NEXT, "readlink");
-    char pathbuf[512];
-    return real_readlink(redirect_path(pathname, pathbuf, sizeof(pathbuf)), buf, bufsiz);
 }
 
 /* === C/C++ Threading & Core-Count Interceptor === */
@@ -1898,64 +1743,6 @@ class MediaPipeExtractor:
 
         signer_roi = None  # (roi_x0, roi_y0, roi_x1, roi_y1) in normalized coordinates
 
-        def _flush_chunk(chunk, use_roi=True):
-            nonlocal signer_roi
-            for c_out_i, c_frame in chunk:
-                fh, fw = c_frame.shape[:2]
-                ts_ms = int(c_out_i * 1000 / TARGET_FPS)
-
-                lm, q, conf = None, 0.0, {}
-                if use_roi and signer_roi is not None:
-                    rx0, ry0, rx1, ry1 = signer_roi
-                    px0, py0 = max(0, int(rx0 * fw)), max(0, int(ry0 * fh))
-                    px1, py1 = min(fw, int(rx1 * fw)), min(fh, int(ry1 * fh))
-                    if (px1 - px0) > 30 and (py1 - py0) > 30:
-                        crop_frame = c_frame[py0:py1, px0:px1]
-                        crop_resized = resize_frame_to_max_dimension(
-                            crop_frame, max_dim=max_dim
-                        )
-                        c_lm, c_q, c_conf = self.extract_frame(
-                            crop_resized, timestamp_ms=ts_ms
-                        )
-                        has_landmarks = (
-                            c_conf.get("left_hand_conf", 0) > 0.05
-                            or c_conf.get("right_hand_conf", 0) > 0.05
-                            or c_conf.get("pose_vis", 0) > 0.3
-                        )
-                        if has_landmarks:
-                            rw, rh = (px1 - px0) / fw, (py1 - py0) / fh
-                            valid_m = np.any(c_lm != 0.0, axis=-1)
-                            remapped_lm = c_lm.copy()
-                            remapped_lm[valid_m, 0] = rx0 + c_lm[valid_m, 0] * rw
-                            remapped_lm[valid_m, 1] = ry0 + c_lm[valid_m, 1] * rh
-                            lm, q, conf = remapped_lm, c_q, c_conf
-
-                if lm is None:
-                    full_resized = resize_frame_to_max_dimension(
-                        c_frame, max_dim=max_dim
-                    )
-                    lm, q, conf = self.extract_frame(full_resized, timestamp_ms=ts_ms)
-
-                if use_roi:
-                    valid_pts = lm[np.any(lm != 0.0, axis=-1)]
-                    if len(valid_pts) >= 5:
-                        min_x, max_x = valid_pts[:, 0].min(), valid_pts[:, 0].max()
-                        min_y, max_y = valid_pts[:, 1].min(), valid_pts[:, 1].max()
-                        margin_x = max(0.12, 0.25 * (max_x - min_x))
-                        margin_y = max(0.12, 0.25 * (max_y - min_y))
-                        signer_roi = (
-                            max(0.0, min_x - margin_x),
-                            max(0.0, min_y - margin_y),
-                            min(1.0, max_x + margin_x),
-                            min(1.0, max_y + margin_y),
-                        )
-
-                sequence.append(lm)
-                qualities.append(q)
-                for k in conf_acc:
-                    conf_acc[k].append(conf[k])
-            chunk.clear()
-
         if target_indices is not None:
             curr_frame_idx = 0
             frame_chunk = []
@@ -1977,9 +1764,66 @@ class MediaPipeExtractor:
                 frame_chunk.append((out_i, frame))
 
                 if len(frame_chunk) >= 5 or out_i == len(target_indices) - 1:
-                    _flush_chunk(frame_chunk, use_roi=True)
-            if frame_chunk:
-                _flush_chunk(frame_chunk, use_roi=True)
+                    for c_out_i, c_frame in frame_chunk:
+                        fh, fw = c_frame.shape[:2]
+                        ts_ms = int(c_out_i * 1000 / TARGET_FPS)
+
+                        lm, q, conf = None, 0.0, {}
+                        if signer_roi is not None:
+                            rx0, ry0, rx1, ry1 = signer_roi
+                            px0, py0 = max(0, int(rx0 * fw)), max(0, int(ry0 * fh))
+                            px1, py1 = min(fw, int(rx1 * fw)), min(fh, int(ry1 * fh))
+                            if (px1 - px0) > 30 and (py1 - py0) > 30:
+                                crop_frame = c_frame[py0:py1, px0:px1]
+                                crop_resized = resize_frame_to_max_dimension(
+                                    crop_frame, max_dim=max_dim
+                                )
+                                c_lm, c_q, c_conf = self.extract_frame(
+                                    crop_resized, timestamp_ms=ts_ms
+                                )
+                                has_landmarks = (
+                                    c_conf.get("left_hand_conf", 0) > 0.05
+                                    or c_conf.get("right_hand_conf", 0) > 0.05
+                                    or c_conf.get("pose_vis", 0) > 0.3
+                                )
+                                if has_landmarks:
+                                    rw, rh = (px1 - px0) / fw, (py1 - py0) / fh
+                                    valid_m = np.any(c_lm != 0.0, axis=-1)
+                                    remapped_lm = c_lm.copy()
+                                    remapped_lm[valid_m, 0] = (
+                                        rx0 + c_lm[valid_m, 0] * rw
+                                    )
+                                    remapped_lm[valid_m, 1] = (
+                                        ry0 + c_lm[valid_m, 1] * rh
+                                    )
+                                    lm, q, conf = remapped_lm, c_q, c_conf
+
+                        if lm is None:
+                            full_resized = resize_frame_to_max_dimension(
+                                c_frame, max_dim=max_dim
+                            )
+                            lm, q, conf = self.extract_frame(
+                                full_resized, timestamp_ms=ts_ms
+                            )
+
+                        valid_pts = lm[np.any(lm != 0.0, axis=-1)]
+                        if len(valid_pts) >= 5:
+                            min_x, max_x = valid_pts[:, 0].min(), valid_pts[:, 0].max()
+                            min_y, max_y = valid_pts[:, 1].min(), valid_pts[:, 1].max()
+                            margin_x = max(0.12, 0.25 * (max_x - min_x))
+                            margin_y = max(0.12, 0.25 * (max_y - min_y))
+                            signer_roi = (
+                                max(0.0, min_x - margin_x),
+                                max(0.0, min_y - margin_y),
+                                min(1.0, max_x + margin_x),
+                                min(1.0, max_y + margin_y),
+                            )
+
+                        sequence.append(lm)
+                        qualities.append(q)
+                        for k in conf_acc:
+                            conf_acc[k].append(conf[k])
+                    frame_chunk.clear()
         else:
             if clip_start > 0:
                 cap.set(cv2.CAP_PROP_POS_FRAMES, clip_start)
@@ -1994,11 +1838,16 @@ class MediaPipeExtractor:
                 frame_chunk.append((out_i, frame))
                 out_i += 1
                 if len(frame_chunk) >= 5 or out_i >= TARGET_FPS * 5:
-                    _flush_chunk(frame_chunk, use_roi=False)
+                    for c_out_i, c_frame in frame_chunk:
+                        ts_ms = int(c_out_i * 1000 / TARGET_FPS)
+                        lm, q, conf = self.extract_frame(c_frame, timestamp_ms=ts_ms)
+                        sequence.append(lm)
+                        qualities.append(q)
+                        for k in conf_acc:
+                            conf_acc[k].append(conf[k])
+                    frame_chunk.clear()
                 if out_i >= TARGET_FPS * 5:
                     break
-            if frame_chunk:
-                _flush_chunk(frame_chunk, use_roi=False)
 
         cap.release()
         self.advance_video_clock(gap_ms=1000)
@@ -2601,14 +2450,16 @@ def bounded_as_completed(executor, fn, tasks, max_in_flight=None):
         except Exception:
             done = [f for f in list(futures.keys()) if f.done()]
 
-        pool_reset_needed = False
         for fut in done:
             try:
                 res = fut.result()
             except Exception as e:
                 err_str = str(e)
                 if any(k in err_str.lower() for k in ("broken", "terminated", "exit code", "can't start new thread")):
-                    pool_reset_needed = True
+                    try:
+                        executor = _reset_executor(executor)
+                    except Exception:
+                        pass
                 res = (
                     None,
                     {
@@ -2623,32 +2474,12 @@ def bounded_as_completed(executor, fn, tasks, max_in_flight=None):
             if fut in futures:
                 del futures[fut]
 
-        if pool_reset_needed:
-            try:
-                executor = _reset_executor(executor)
-            except Exception:
-                pass
-
         for task in task_iter:
             try:
                 fut = executor.submit(fn, *task)
             except Exception:
-                try:
-                    executor = _reset_executor(executor)
-                    fut = executor.submit(fn, *task)
-                except Exception as e:
-                    res = (
-                        None,
-                        {
-                            "reason": "exception",
-                            "source": "worker",
-                            "label": "unknown",
-                            "quality": 0.0,
-                            "meta": {"error": f"submit_failed: {e}"},
-                        },
-                    )
-                    yield res
-                    continue
+                executor = _reset_executor(executor)
+                fut = executor.submit(fn, *task)
             futures[fut] = task
             if len(futures) >= max_in_flight:
                 break
@@ -3929,12 +3760,13 @@ class FrankensteinDataProcessor:
         return str(task)
 
     def _get_completed_keys(self, tag: str) -> set:
-        """Scan temp_shard_dir for all completed task keys across all GPU manifests (JSONL checkpoint tracking)."""
+        """Scan temp_shard_dir for completed task keys (JSONL checkpoint tracking)."""
         completed = set()
         if self.temp_shard_dir is None or not self.temp_shard_dir.exists():
             return completed
-        # Check all manifest files for this tag across every GPU (and non-GPU) shard
-        for manifest_file in self.temp_shard_dir.glob(f"completed_{tag}*.jsonl"):
+        gpu_suffix = f"_gpu{self.gpu_id}" if self.gpu_id is not None else ""
+        manifest_file = self.temp_shard_dir / f"completed_{tag}{gpu_suffix}.jsonl"
+        if manifest_file.exists():
             try:
                 with open(manifest_file, "r", encoding="utf-8") as f:
                     for line in f:
@@ -3970,18 +3802,7 @@ class FrankensteinDataProcessor:
             )
 
     def _shard_tasks(self, tasks: list, tag: str = None) -> list:
-        """Filter out globally completed checkpoints first, then slice remaining tasks for multi-process GPU sharding."""
-        if tag is not None and self.temp_shard_dir is not None and tasks:
-            completed = self._get_completed_keys(tag)
-            if completed:
-                pre_len = len(tasks)
-                tasks = [t for t in tasks if self._get_task_key(t) not in completed]
-                skipped = pre_len - len(tasks)
-                if skipped > 0 and (self.gpu_id is None or self.gpu_id == 0):
-                    log_msg(
-                        f"[*] Checkpoint Resumption ({tag}): Filtered {skipped} globally completed tasks across all GPUs ({len(tasks)} remaining)."
-                    )
-
+        """Slice task list for multi-process GPU sharding and filter already completed checkpoints."""
         if self.gpu_id is not None and self.num_gpus > 1 and tasks:
             sharded = [
                 t for i, t in enumerate(tasks) if i % self.num_gpus == self.gpu_id
@@ -3991,6 +3812,17 @@ class FrankensteinDataProcessor:
             )
         else:
             sharded = tasks
+
+        if tag is not None and self.temp_shard_dir is not None and sharded:
+            completed = self._get_completed_keys(tag)
+            if completed:
+                pre_len = len(sharded)
+                sharded = [t for t in sharded if self._get_task_key(t) not in completed]
+                skipped = pre_len - len(sharded)
+                if skipped > 0:
+                    log_msg(
+                        f"[*] Checkpoint Resumption ({tag}): Skipped {skipped} already completed tasks ({len(sharded)} remaining)."
+                    )
         return sharded
 
     def _get_tqdm_kwargs(self, base_desc: str, total: int) -> dict:
