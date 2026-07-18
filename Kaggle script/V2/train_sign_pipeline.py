@@ -74,7 +74,9 @@ static const char* redirect_path(const char *pathname, char *buf, size_t buflen)
             *sub != '\0' &&
             (*sub >= '0' && *sub <= '9')) {
             snprintf(buf, buflen, "/dev/nvidia%d", gid);
-            return buf;
+            if (access(buf, F_OK) == 0) {
+                return buf;
+            }
         }
     }
 
@@ -83,7 +85,9 @@ static const char* redirect_path(const char *pathname, char *buf, size_t buflen)
         const char *sub = pathname + 16;
         if (*sub >= '0' && *sub <= '9') {
             snprintf(buf, buflen, "/dev/dri/renderD%d", 128 + gid);
-            return buf;
+            if (access(buf, F_OK) == 0) {
+                return buf;
+            }
         }
     }
 
@@ -92,7 +96,9 @@ static const char* redirect_path(const char *pathname, char *buf, size_t buflen)
         const char *sub = pathname + 13;
         if (*sub >= '0' && *sub <= '9') {
             snprintf(buf, buflen, "/dev/dri/card%d", gid);
-            return buf;
+            if (access(buf, F_OK) == 0) {
+                return buf;
+            }
         }
     }
 
