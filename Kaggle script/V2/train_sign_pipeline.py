@@ -5696,17 +5696,17 @@ def main(argv=None):
                     cmd.extend(["--output-dir", str(args.output_dir)])
                 if args.shard_size:
                     cmd.extend(["--shard-size", str(args.shard_size)])
-                if args.alphabet_dir:
+                if getattr(args, "alphabet_dir", None):
                     cmd.extend(["--alphabet-dir", str(args.alphabet_dir)])
-                if args.citizen_dir:
+                if getattr(args, "citizen_dir", None):
                     cmd.extend(["--citizen-dir", str(args.citizen_dir)])
-                if args.wlasl_dir:
+                if getattr(args, "wlasl_dir", None):
                     cmd.extend(["--wlasl-dir", str(args.wlasl_dir)])
-                if args.aslex_dir:
+                if getattr(args, "aslex_dir", None):
                     cmd.extend(["--aslex-dir", str(args.aslex_dir)])
-                if args.chicago_dir:
+                if getattr(args, "chicago_dir", None):
                     cmd.extend(["--chicago-dir", str(args.chicago_dir)])
-                if args.number_dir:
+                if getattr(args, "number_dir", None):
                     cmd.extend(["--number-dir", str(args.number_dir)])
 
                 log_msg(
