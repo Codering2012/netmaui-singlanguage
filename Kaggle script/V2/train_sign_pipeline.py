@@ -1712,15 +1712,20 @@ class MediaPipeExtractor:
         if frame is None:
             return None, 0.0, {}
         frame = resize_frame_to_max_dimension(frame, max_dim=max_dim)
-        # Pre-enhance before inference so we only run the models once.
-        # We never trigger the cascade retry here (that would call
-        # _get_process_extractor(static_mode=True) which is *this* extractor,
-        # doubling inference cost for every low-quality static image).
-        if enhance:
-            frame = enhance_frame_adaptive(frame)
         landmarks, quality, confidence = self.extract_frame(
             frame, timestamp_ms=0, allow_cascade_retry=False
         )
+        if enhance and (quality < 0.35 or max(confidence.get("left_hand_conf", 0.0), confidence.get("right_hand_conf", 0.0)) < 0.35):
+            enhanced_frame = enhance_frame_adaptive(frame)
+            if enhanced_frame is not frame:
+                try:
+                    landmarks_p2, quality_p2, confidence_p2 = self.extract_frame(
+                        enhanced_frame, timestamp_ms=0, allow_cascade_retry=False
+                    )
+                    if quality_p2 > quality:
+                        landmarks, quality, confidence = landmarks_p2, quality_p2, confidence_p2
+                except Exception:
+                    pass
         return landmarks.reshape(1, NUM_LANDMARKS, 3), quality, confidence
 
     def extract_video(self, video_path, start_frame=None, end_frame=None, max_dim=320):
@@ -2747,6 +2752,8 @@ def _assess_quality_static(sequence, base_quality: float = 0.0, confidence=None)
         return 0.0, {"reason": "empty_sequence"}
     vis = compute_visibility_scores(seq[:1])
     best_hand = max(vis["left"], vis["right"])
+    if confidence and isinstance(confidence, dict):
+        best_hand = max(best_hand, float(confidence.get("left_hand_conf", 0.0)), float(confidence.get("right_hand_conf", 0.0)))
     has_pose = vis["pose"] > 0.05
     has_lips = vis["lips"] > 0.05
 
@@ -3940,8 +3947,10 @@ class FrankensteinDataProcessor:
             json.dump(payload, f, indent=2, ensure_ascii=False)
 
     def _discard(
-        self, *, split, source, task, label, quality, reason, meta=None, breakdown=None
+        self, *, split, source, task, label, quality, reason, threshold=None, meta=None, breakdown=None
     ):
+        if threshold is None and meta is not None and isinstance(meta, dict):
+            threshold = meta.get("threshold")
         payload = {
             "timestamp": datetime.now(timezone.utc),
             "split": split,
@@ -3949,7 +3958,7 @@ class FrankensteinDataProcessor:
             "task": task,
             "label": label,
             "quality": float(quality),
-            "threshold": float(self.quality_threshold),
+            "threshold": float(threshold if threshold is not None else self.quality_threshold),
             "reason": reason,
             "meta": meta or {},
             "breakdown": breakdown or {},
@@ -5687,6 +5696,18 @@ def main(argv=None):
                     cmd.extend(["--output-dir", str(args.output_dir)])
                 if args.shard_size:
                     cmd.extend(["--shard-size", str(args.shard_size)])
+                if args.alphabet_dir:
+                    cmd.extend(["--alphabet-dir", str(args.alphabet_dir)])
+                if args.citizen_dir:
+                    cmd.extend(["--citizen-dir", str(args.citizen_dir)])
+                if args.wlasl_dir:
+                    cmd.extend(["--wlasl-dir", str(args.wlasl_dir)])
+                if args.aslex_dir:
+                    cmd.extend(["--aslex-dir", str(args.aslex_dir)])
+                if args.chicago_dir:
+                    cmd.extend(["--chicago-dir", str(args.chicago_dir)])
+                if args.number_dir:
+                    cmd.extend(["--number-dir", str(args.number_dir)])
 
                 log_msg(
                     f"[*] Launching GPU Shard Process {i} for split '{split}': {' '.join(cmd)}"
