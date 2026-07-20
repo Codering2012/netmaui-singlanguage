@@ -691,7 +691,7 @@ MEDIAPIPE_MODEL_DIR = Path(
 )
 
 # Quality management — global fallback; per-dataset thresholds below take precedence.
-QUALITY_THRESHOLD = 0.60
+QUALITY_THRESHOLD = 0.00
 QUALITY_LOG_DIRNAME = "quality_logs"
 QUALITY_EPS = 1e-6
 BATCH_FLUSH_SIZE = int(os.environ.get("BATCH_FLUSH_SIZE", "1500"))
@@ -699,12 +699,12 @@ BATCH_FLUSH_SIZE = int(os.environ.get("BATCH_FLUSH_SIZE", "1500"))
 # Per-dataset quality thresholds, calibrated to each corpus's noise floor.
 # Higher = stricter = fewer but cleaner samples fed to the transformer.
 DATASET_QUALITY_THRESHOLDS: dict = {
-    "ASL_Alphabet": 0.33,  # Static images
-    "WLASL_v0.3": 0.20,  # Calibrated for web video noise & single-hand signs.
-    "ChicagoFSWild": 0.22,  # Calibrated for fingerspelling in the wild.
-    "ASL_Citizen": 0.20,  # Calibrated for crowdsourced webcams.
-    "How2Sign_Holistic": 0.25,  # Pre-extracted holistic features.
-    "Synthetic_Numbers": 0.35,
+    "ASL_Alphabet": 0.00,  # Static images
+    "WLASL_v0.3": 0.00,  # Calibrated for web video noise & single-hand signs.
+    "ChicagoFSWild": 0.00,  # Calibrated for fingerspelling in the wild.
+    "ASL_Citizen": 0.00,  # Calibrated for crowdsourced webcams.
+    "How2Sign_Holistic": 0.00,  # Pre-extracted holistic features.
+    "Synthetic_Numbers": 0.00,
 }
 
 # Splits
@@ -4471,15 +4471,15 @@ class FrankensteinDataProcessor:
         target_partition = "dev" if split == "val" else split
         partition_df = df[df["partition"] == target_partition].copy()
         unavailable = set()
-        if unavailable_path.exists():
-            try:
-                udf = pd.read_csv(unavailable_path)
-                if "filename" in udf.columns:
-                    unavailable = set(udf["filename"].astype(str).str.strip().tolist())
-                else:
-                    unavailable = set(udf.iloc[:, 0].astype(str).str.strip().tolist())
-            except Exception as exc:
-                log_msg(f"[!] Could not read unavailable.csv: {exc}")
+        # if unavailable_path.exists():
+        #     try:
+        #         udf = pd.read_csv(unavailable_path)
+        #         if "filename" in udf.columns:
+        #             unavailable = set(udf["filename"].astype(str).str.strip().tolist())
+        #         else:
+        #             unavailable = set(udf.iloc[:, 0].astype(str).str.strip().tolist())
+        #     except Exception as exc:
+        #         log_msg(f"[!] Could not read unavailable.csv: {exc}")
         frame_root = KAGGLE_TEMP_DIR / "ChicagoFSWild-Frames"
         if not frame_root.exists():
             # Check if there is an uncompressed directory inside the dataset dir
@@ -4822,9 +4822,9 @@ class FrankensteinDataProcessor:
             log_msg(f"[!] Missing: {json_path}. Skipping.")
             return []
         missing_ids = set()
-        if missing_path.exists():
-            with open(missing_path, "r") as f:
-                missing_ids = {line.strip() for line in f if line.strip()}
+        # if missing_path.exists():
+        #     with open(missing_path, "r") as f:
+        #         missing_ids = {line.strip() for line in f if line.strip()}
         with open(json_path, "r") as f:
             wlasl_data = json.load(f)
         threshold = self._get_quality_threshold("WLASL_v0.3")
