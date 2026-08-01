@@ -626,7 +626,7 @@ def create_dataloader(
     max_len: int = 256,
     worker_idx: int = 0,
     num_workers: int = 1,
-    num_dataloader_workers: int = 4,
+    num_dataloader_workers: int = 8,
     shuffle: bool = True,
     stage: str = "full_mixture",
     augment: bool = False

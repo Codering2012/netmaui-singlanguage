@@ -97,6 +97,7 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--max-len", type=int, default=256, help="Max sequence length")
     parser.add_argument("--save-dir", type=str, default="/kaggle/working/checkpoints", help="Output directory")
+    parser.add_argument("--num-workers", type=int, default=8, help="Number of DataLoader CPU worker processes")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -114,7 +115,7 @@ def main():
         max_len=args.max_len,
         worker_idx=0,
         num_workers=1,
-        num_dataloader_workers=4,
+        num_dataloader_workers=args.num_workers,
         shuffle=True,
         augment=True
     )
