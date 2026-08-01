@@ -32,39 +32,48 @@ from train_all_in_one_tpu import (
 # Import dataset utilities from the older dataset script
 from dataset import create_dataloader
 
-def wrap_dataloader_for_seq2seq(loader, vocab, device):
+class Seq2SeqDataLoaderWrapper:
     """
     Wraps the older ASLShardedDataset (which returns tuples for classification)
     to yield dictionaries expected by the ASLFoundationModel seq2seq training loop.
     """
-    for batch_data in loader:
-        if len(batch_data) == 5:
-            features, mask, targets, sample_weights, lex_targets = batch_data
-        else:
-            features, mask, targets, sample_weights = batch_data
+    def __init__(self, loader, vocab, device):
+        self.loader = loader
+        self.vocab = vocab
+        self.device = device
         
-        B = features.size(0)
+    def __len__(self):
+        return len(self.loader)
         
-        # Construct seq2seq dummy targets from the integer classification label
-        # [BOS, target_token, EOS]
-        gloss_seq = torch.zeros((B, 3), dtype=torch.long, device=device)
-        gloss_seq[:, 0] = vocab.BOS_ID
-        gloss_seq[:, 1] = targets.to(device) + vocab.OFFSET
-        gloss_seq[:, 2] = vocab.EOS_ID
-        
-        gloss_len = torch.full((B,), 3, dtype=torch.long, device=device)
-        
-        yield {
-            "feature": features.to(device),
-            "mask": mask.to(device),
-            "label": targets.to(device),
-            "domain_label": torch.zeros_like(targets, device=device),
-            "has_domain_label": torch.zeros_like(targets, dtype=torch.bool, device=device),
-            "gloss_seq": gloss_seq,
-            "gloss_len": gloss_len,
-            "has_valid_gloss": torch.ones(B, dtype=torch.bool, device=device),
-            "mlm_mask": None
-        }
+    def __iter__(self):
+        for batch_data in self.loader:
+            if len(batch_data) == 5:
+                features, mask, targets, sample_weights, lex_targets = batch_data
+            else:
+                features, mask, targets, sample_weights = batch_data
+            
+            B = features.size(0)
+            
+            # Construct seq2seq dummy targets from the integer classification label
+            # [BOS, target_token, EOS]
+            gloss_seq = torch.zeros((B, 3), dtype=torch.long, device=self.device)
+            gloss_seq[:, 0] = self.vocab.BOS_ID
+            gloss_seq[:, 1] = targets.to(self.device) + self.vocab.OFFSET
+            gloss_seq[:, 2] = self.vocab.EOS_ID
+            
+            gloss_len = torch.full((B,), 3, dtype=torch.long, device=self.device)
+            
+            yield {
+                "feature": features.to(self.device),
+                "mask": mask.to(self.device),
+                "label": targets.to(self.device),
+                "domain_label": torch.zeros_like(targets, device=self.device),
+                "has_domain_label": torch.zeros_like(targets, dtype=torch.bool, device=self.device),
+                "gloss_seq": gloss_seq,
+                "gloss_len": gloss_len,
+                "has_valid_gloss": torch.ones(B, dtype=torch.bool, device=self.device),
+                "mlm_mask": None
+            }
 
 def get_dataset_dir(args):
     data_dir = Path(args.data_dir)
@@ -120,12 +129,14 @@ def main():
     print("[*] Initializing ASLFoundationModel (MobileConformer + Transformer Decoder)...")
     model = ASLFoundationModel(
         vocab_size=vocab.vocab_size,
-        num_classes=num_classes,
-        d_model=320,
-        encoder_layers=8,
-        decoder_layers=8,
-        nhead=8,
-        dim_feedforward=1280
+        d_enc=320,
+        num_enc_layers=8,
+        nhead_enc=8,
+        ffn_enc=1280,
+        d_dec=320,
+        num_dec_layers=8,
+        nhead_dec=8,
+        ffn_dec=1280
     ).to(device)
 
     # Wrap for multi-GPU
@@ -145,7 +156,7 @@ def main():
         print(f"\n--- Epoch {epoch}/{args.epochs} ---")
         
         # Generator wrapper to feed dicts to train_epoch_tpu
-        wrapped_loader = wrap_dataloader_for_seq2seq(train_loader_base, vocab, device)
+        wrapped_loader = Seq2SeqDataLoaderWrapper(train_loader_base, vocab, device)
         
         # Use existing monolithic training loop
         avg_loss, token_acc = train_epoch_tpu(
