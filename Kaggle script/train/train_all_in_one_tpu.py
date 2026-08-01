@@ -2449,7 +2449,18 @@ def train_epoch_tpu(
     correct_tok_val = torch.tensor(0.0, device=device, dtype=torch.float32)
     total_tok_val = torch.tensor(0.0, device=device, dtype=torch.float32)
 
-    tracker = {"loss": 0.0, "corr": 0.0, "total": 0.0}
+    tracker = {
+        "loss": 0.0,
+        "corr": 0.0,
+        "total": 0.0,
+        "seq": 0.0,
+        "ctc": 0.0,
+        "sem": 0.0,
+        "supcon": 0.0,
+        "dom": 0.0,
+        "mlm": 0.0,
+    }
+    epoch_start_time = time.time()
 
     is_xla = _XLA_AVAILABLE and "xla" in str(device).lower()
     device_type = "cuda" if "cuda" in str(device).lower() else "cpu"
@@ -2602,13 +2613,22 @@ def train_epoch_tpu(
                 nc_t = ((preds == gt_tokens).float() * valid_f).sum()
                 nt_t = valid_f.sum()
 
-            return raw_loss, dec_logits, nc_t, nt_t
+            sub_dict = {
+                "seq": loss_seq.detach().item(),
+                "ctc": loss_ctc.detach().item(),
+                "sem": loss_dense_sem.detach().item(),
+                "supcon": loss_supcon.detach().item(),
+                "dom": loss_domain.detach().item(),
+                "mlm": loss_mlm.detach().item(),
+            }
+
+            return raw_loss, dec_logits, nc_t, nt_t, sub_dict
 
         if use_autocast:
             with torch.autocast(device_type, dtype=prec_dtype):
-                raw_loss, dec_logits, nc_t, nt_t = forward_and_losses()
+                raw_loss, dec_logits, nc_t, nt_t, sub_dict = forward_and_losses()
         else:
-            raw_loss, dec_logits, nc_t, nt_t = forward_and_losses()
+            raw_loss, dec_logits, nc_t, nt_t, sub_dict = forward_and_losses()
 
         loss = raw_loss / float(accum_steps)
         if scaler is not None:
@@ -2648,16 +2668,33 @@ def train_epoch_tpu(
         if is_xla:
             xm.mark_step()
 
-        def update_stats(tl, ct, tt, s_idx):
+        def update_stats(tl, ct, tt, s_dict, s_idx):
             tracker["loss"] += tl.item()
             tracker["corr"] += ct.item()
             tracker["total"] += tt.item()
-            if (s_idx % 25 == 0) or (s_idx == min_batches):
+            if isinstance(s_dict, dict):
+                for k, v in s_dict.items():
+                    tracker[k] += v
+
+            if (s_idx % 20 == 0) or (s_idx == min_batches):
                 if is_master:
                     c_loss = tracker["loss"] / float(s_idx)
                     c_acc = (tracker["corr"] / max(1.0, tracker["total"])) * 100.0
+                    avg_seq = tracker["seq"] / float(s_idx)
+                    avg_ctc = tracker["ctc"] / float(s_idx)
+                    avg_sem = tracker["sem"] / float(s_idx)
+                    avg_sup = tracker["supcon"] / float(s_idx)
+                    avg_dom = tracker["dom"] / float(s_idx)
+                    avg_mlm = tracker["mlm"] / float(s_idx)
+
+                    cur_lr = optimizer.param_groups[0]["lr"]
+                    elapsed = max(0.001, time.time() - epoch_start_time)
+                    speed = float(s_idx) / elapsed
+
                     print(
-                        f"  [Step {s_idx:04d}/{min_batches:04d}] Loss: {c_loss:.4f} | TF-Acc: {c_acc:.2f}%",
+                        f"  [Step {s_idx:04d}/{min_batches:04d}] "
+                        f"Loss: {c_loss:.4f} (Seq:{avg_seq:.2f} CTC:{avg_ctc:.2f} Sem:{avg_sem:.2f} Sup:{avg_sup:.2f} Dom:{avg_dom:.2f} MLM:{avg_mlm:.2f}) | "
+                        f"TF-Acc: {c_acc:.2f}% | LR: {cur_lr:.2e} | {speed:.1f} it/s",
                         flush=True,
                     )
 
@@ -2668,11 +2705,12 @@ def train_epoch_tpu(
                     raw_loss.detach(),
                     nc_t.detach(),
                     nt_t.detach(),
+                    sub_dict,
                     step_idx,
                 ),
             )
         else:
-            update_stats(raw_loss.detach(), nc_t.detach(), nt_t.detach(), step_idx)
+            update_stats(raw_loss.detach(), nc_t.detach(), nt_t.detach(), sub_dict, step_idx)
 
     if is_xla:
         xm.mark_step()
