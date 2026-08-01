@@ -2455,9 +2455,7 @@ def train_epoch_tpu(
     )
 
     progress = float(max(0, epoch)) / float(max(1, total_epochs - 1))
-    grl_alpha_val = float(2.0 / (1.0 + np.exp(-10.0 * progress)) - 1.0)
-    grl_alpha = torch.zeros((), device=device, dtype=prec_dtype)
-    grl_alpha.fill_(grl_alpha_val)
+    grl_alpha = float(2.0 / (1.0 + np.exp(-10.0 * progress)) - 1.0)
 
     label_smoothing = max(0.05, 0.15 - 0.10 * progress)
     teacher_forcing_ratio = max(0.50, 1.0 - 0.50 * progress)
