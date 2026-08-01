@@ -2430,7 +2430,7 @@ def train_epoch_tpu(
 
     if loss_wrapper is not None and len(list(loss_wrapper.parameters())) > 0:
         found = any(
-            p in group["params"]
+            any(p is param for param in group["params"])
             for group in optimizer.param_groups
             for p in loss_wrapper.parameters()
         )
