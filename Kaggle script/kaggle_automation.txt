@@ -4,12 +4,9 @@
 # It handles moving the files, verifying the GPUs, and starting the training.
 # =====================================================================================
 
-# 1. Copy the entire 'Kaggle script' folder from your uploaded dataset into Kaggle's working directory.
-# (Replace 'your-uploaded-dataset-name' with the actual name of your script dataset in Kaggle)
-!cp -r /kaggle/input/your-uploaded-dataset-name/* /kaggle/working/
-
-# 2. Change directory into the train folder where our new script is located
-%cd /kaggle/working/train
+# 1. Clone the repository directly into Kaggle's working directory
+!git clone https://github.com/Codering2012/netmaui-singlanguage.git
+%cd netmaui-singlanguage/"Kaggle script"/train
 
 # 3. (Optional) Verify the dual T4 GPUs are visible to PyTorch
 import torch
