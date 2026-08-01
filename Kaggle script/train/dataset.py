@@ -493,9 +493,7 @@ class ASLShardedDataset(Dataset):
         
         temp_metadata.sort(key=lambda x: x.get("difficulty", 0.5))
         
-        # Group active records by shard_path so DataLoader reads contiguous records from 1 shard at a time
-        from collections import defaultdict
-        import random
+        # Group active records by shard_path so DataLoader reads contiguous records from 1 shard at a time        # Local defaultdict import removed to avoid UnboundLocalError        import random
         records_by_shard = defaultdict(list)
         for r in temp_metadata:
             records_by_shard[str(r["shard_path"])].append(r)
