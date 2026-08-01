@@ -2390,7 +2390,8 @@ def _compute_ctc_loss_safe(
     )
     loss_vec = torch.nan_to_num(loss_vec)
     valid_f = valid_ctc.float()
-    return (loss_vec * valid_f).sum() / valid_f.sum().clamp(min=1.0)
+    loss_ctc = (loss_vec * valid_f).sum() / valid_f.sum().clamp(min=1.0)
+    return loss_ctc.clamp(max=15.0)
 
 
 def _compute_mlm_loss_safe(
