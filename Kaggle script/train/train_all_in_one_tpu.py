@@ -2449,7 +2449,7 @@ def train_epoch_tpu(
         not is_xla and "cuda" in str(device).lower() and prec_dtype != torch.float32
     )
     scaler = (
-        torch.cuda.amp.GradScaler()
+        torch.amp.GradScaler('cuda')
         if use_autocast and prec_dtype == torch.float16
         else None
     )

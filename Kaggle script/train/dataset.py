@@ -135,7 +135,7 @@ class LandmarkAugmenter:
             new_T = int(round(T * stretch_factor))
             if new_T > 4:
                 idx = np.linspace(0, T - 1, num=new_T, dtype=int)
-                pos = pos[idx]; vel = vel[idx] * (float(T) / float(new_T)); acc = acc[idx] * (float(T) / float(new_T)) ** 2; T = new_T
+                pos = pos[idx]; T = new_T
                 aug = np.zeros((T, K, C), dtype=np.float32)
 
         # 5e. Dynamic In-Place Physiological Stalling (1% to 20%: Palm 3D Drift & Finger Contraction in-place)
@@ -205,8 +205,8 @@ class LandmarkAugmenter:
             vel[1:-1] = (pos[2:] - pos[:-2]) / 2.0
             vel[0] = pos[1] - pos[0]
             vel[-1] = pos[-1] - pos[-2]
-        elif T > 1:
-            vel[1:] = pos[1:] - pos[:-1]
+        elif T == 2:
+            vel[:] = pos[1] - pos[0]
         
         acc = np.zeros_like(pos)
         if T > 2:
@@ -493,7 +493,9 @@ class ASLShardedDataset(Dataset):
         
         temp_metadata.sort(key=lambda x: x.get("difficulty", 0.5))
         
-        # Group active records by shard_path so DataLoader reads contiguous records from 1 shard at a time        # Local defaultdict import removed to avoid UnboundLocalError        import random
+        # Group active records by shard_path so DataLoader reads contiguous records from 1 shard at a time
+        # Local defaultdict import removed to avoid UnboundLocalError
+        import random
         records_by_shard = defaultdict(list)
         for r in temp_metadata:
             records_by_shard[str(r["shard_path"])].append(r)
