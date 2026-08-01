@@ -639,7 +639,7 @@ class TokenMergingBlock(nn.Module):
             sim_matrix = sim_matrix.masked_fill(mlm_pair_mask, -1e4)
 
         scores, dst_idx = sim_matrix.max(dim=-1)
-        r_clamp = min(r, min_half)
+        r_clamp = min(r_clamp, min_half)
         _, merge_idx = scores.topk(r_clamp, dim=-1, largest=True, sorted=False)
 
         matched_b_indices_local = dst_idx.gather(1, merge_idx)

@@ -4,6 +4,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional, Tuple, Union
 
+try:
+    import torch_xla
+    _XLA_AVAILABLE = True
+except ImportError:
+    _XLA_AVAILABLE = False
+
 class PositionalEncoding(nn.Module):
     """Learned positional encoding for sequence tokens."""
     def __init__(self, d_model: int, max_len: int = 256, dropout: float = 0.1):
