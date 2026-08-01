@@ -649,6 +649,8 @@ def create_dataloader(
         shuffle=False,  # Sharding is pre-shuffled at the shard & block level in ASLShardedDataset
         num_workers=num_dataloader_workers,
         pin_memory=True,
+        persistent_workers=True if num_dataloader_workers > 0 else False,
+        prefetch_factor=4 if num_dataloader_workers > 0 else None,
         drop_last=True,  # Ensure static batch size for TPU XLA recompilation protection
         worker_init_fn=_seed_worker
     )
