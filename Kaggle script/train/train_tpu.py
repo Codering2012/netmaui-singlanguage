@@ -131,8 +131,7 @@ def train_epoch_tpu(
         # Backward pass with NaN guard & Gradient Clipping
         loss.backward()
         if _XLA_AVAILABLE and "xla" in str(device).lower():
-            import torch_xla.utils.utils as xu
-            xu.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             xm.optimizer_step(optimizer)
         else:
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
