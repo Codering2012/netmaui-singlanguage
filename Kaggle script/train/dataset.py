@@ -584,6 +584,7 @@ class ASLShardedDataset(Dataset):
         # Real-World Camera Noise Data Augmentation during training
         if self.augment and self.augmenter is not None and T > 0:
             feat_arr = self.augmenter(feat_arr)
+            T = feat_arr.shape[0]
 
         # Enforce static sequence length (max_len) with Motion-Aware Priority Sampling
         features = np.zeros((self.max_len, self.num_keypoints, self.channels_per_kp), dtype=np.float32)
