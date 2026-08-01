@@ -119,7 +119,7 @@ class LandmarkTransformer(nn.Module):
             mean_pool = (feat * mask_expanded).sum(dim=1) / mask_expanded.sum(dim=1).clamp(min=1.0)
             
             attn_weights = self.attention_pool(feat)  # (B, T, 1)
-            attn_weights = attn_weights.masked_fill(~mask_expanded.bool(), -1e9)
+            attn_weights = attn_weights.masked_fill(~mask_expanded.bool(), -1e4)
             attn_weights = F.softmax(attn_weights, dim=1)
             attn_pool = (feat * attn_weights).sum(dim=1)
         else:
@@ -244,7 +244,7 @@ class RelativePositionMultiheadAttention(nn.Module):
 
         if key_padding_mask is not None:
             mask = key_padding_mask.view(B, 1, 1, T)
-            attn_scores = attn_scores.masked_fill(mask, -1e9)
+            attn_scores = attn_scores.masked_fill(mask, -1e4)
 
         attn_probs = torch.softmax(attn_scores, dim=-1)
         out = torch.matmul(attn_probs, v).permute(0, 2, 1, 3).reshape(B, T, C)
@@ -403,7 +403,7 @@ class SupervisedContrastiveLoss(nn.Module):
         pos_mask = pos_mask * (1.0 - self_mask)
 
         cos_sim = torch.matmul(features, all_feats.T)
-        neg_sim = cos_sim.masked_fill(pos_mask.bool() | self_mask.bool(), -1e9)
+        neg_sim = cos_sim.masked_fill(pos_mask.bool() | self_mask.bool(), -1e4)
 
         k = min(self.top_k_negatives, max(1, cos_sim.shape[1] - 2))
         topk_neg_sim, _ = torch.topk(neg_sim, k=k, dim=-1)
@@ -587,7 +587,7 @@ class UltraLightSignModel(nn.Module):
                 if mask is not None:
                     mask_exp_l3 = mask.unsqueeze(-1).to(h_l3_seq.dtype)
                     h_l3_mean = (h_l3_seq * mask_exp_l3).sum(dim=1) / mask_exp_l3.sum(dim=1).clamp(min=1.0)
-                    attn_w_l3 = F.softmax(self.attn_pool(h_l3_seq).masked_fill(~mask_exp_l3.bool(), -1e9), dim=1)
+                    attn_w_l3 = F.softmax(self.attn_pool(h_l3_seq).masked_fill(~mask_exp_l3.bool(), -1e4), dim=1)
                     h_l3_attn = (h_l3_seq * attn_w_l3).sum(dim=1)
                 else:
                     h_l3_mean = h_l3_seq.mean(dim=1)
@@ -614,7 +614,7 @@ class UltraLightSignModel(nn.Module):
         if mask is not None:
             mask_exp = mask.unsqueeze(-1).to(h_seq.dtype)
             h_mean = (h_seq * mask_exp).sum(dim=1) / mask_exp.sum(dim=1).clamp(min=1.0)
-            attn_w = self.attn_pool(h_seq).masked_fill(~mask_exp.bool(), -1e9)
+            attn_w = self.attn_pool(h_seq).masked_fill(~mask_exp.bool(), -1e4)
             attn_w = F.softmax(attn_w, dim=1)
             h_attn = (h_seq * attn_w).sum(dim=1)
         else:

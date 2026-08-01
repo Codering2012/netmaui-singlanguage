@@ -1881,8 +1881,8 @@ class CrossModalInfoNCE(nn.Module):
             torch.arange(s_global.size(0), device=s.device).unsqueeze(0)
             != lbl.unsqueeze(1)
         )
-        sim1.masked_fill_(false_neg_mask, -1e9)
-        sim2.masked_fill_(false_neg_mask, -1e9)
+        sim1.masked_fill_(false_neg_mask, -1e4)
+        sim2.masked_fill_(false_neg_mask, -1e4)
         return (F.cross_entropy(sim1, lbl) + F.cross_entropy(sim2, lbl)) * 0.5
 
 
