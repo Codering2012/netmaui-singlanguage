@@ -2653,11 +2653,15 @@ def train_epoch_tpu(
                     max_norm=1.0,
                 )
                 if scaler is not None:
+                    scale_before = scaler.get_scale()
                     scaler.step(optimizer)
                     scaler.update()
+                    scale_after = scaler.get_scale()
+                    step_performed = scale_before <= scale_after
                 else:
                     optimizer.step()
-            if scheduler is not None:
+                    step_performed = True
+            if scheduler is not None and step_performed:
                 scheduler.step()
             raw_m = model.module if hasattr(model, "module") else model
             if ema is not None:
