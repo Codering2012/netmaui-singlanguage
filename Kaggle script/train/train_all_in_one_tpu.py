@@ -1922,9 +1922,17 @@ class DenseSentenceSemanticLoss(nn.Module):
         valid_counts = m.sum(dim=1).clamp(min=1.0)
         has_tokens = (m.sum(dim=(1, 2)) > 0).float()
 
-        gt_sent = (gt_lex_embs * m).sum(dim=1) / valid_counts
+        if last_hidden.dim() == 3:
+            pred_sent = (last_hidden * m).sum(dim=1) / valid_counts
+        else:
+            pred_sent = last_hidden
 
-        p = F.normalize(self.proj_pred(last_hidden).float(), p=2, dim=-1, eps=1e-8)
+        if gt_lex_embs.dim() == 3:
+            gt_sent = (gt_lex_embs * m).sum(dim=1) / valid_counts
+        else:
+            gt_sent = gt_lex_embs
+
+        p = F.normalize(self.proj_pred(pred_sent).float(), p=2, dim=-1, eps=1e-8)
         g = F.normalize(self.proj_gt(gt_sent).float(), p=2, dim=-1, eps=1e-8).detach()
 
         # MATH: Cosine similarity loss to align predicted sentence embedding with ground truth
