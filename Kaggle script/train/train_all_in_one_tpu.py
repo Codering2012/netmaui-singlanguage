@@ -31,15 +31,27 @@ from torch.utils.data import Dataset, DataLoader
 # Set up for Kaggle 2x T4 GPUs
 os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
 
-try:
-    import torch_xla
-    import torch_xla.core.xla_model as xm
-    import torch_xla.distributed.parallel_loader as pl
-    import torch_xla.distributed.xla_multiprocessing as xmp
+# Force Local PJRT mode to avoid gRPC proxy concurrency limit and fork deadlocks
+os.environ.pop("TPU_PROCESS_ADDRESSES", None)
+os.environ.pop("TPU_NAME", None)
+os.environ["PJRT_DEVICE"] = "TPU"
+os.environ["XLA_USE_BF16"] = "1"
 
-    _XLA_AVAILABLE = True
-except ImportError:
+# Fix for Kaggle TPU conflicts: MUST be done BEFORE importing torch_xla
+os.environ.pop("TPU_PROCESS_ADDRESSES", None)
+os.environ.pop("TPU_NAME", None)
+os.environ["PJRT_DEVICE"] = "TPU"
+
+try:
+    import importlib.util
+    _XLA_AVAILABLE = importlib.util.find_spec("torch_xla") is not None
+except Exception:
     _XLA_AVAILABLE = False
+
+train_dir = Path(__file__).resolve().parent
+if str(train_dir) not in sys.path:
+    sys.path.insert(0, str(train_dir))
+from dataset import create_dataloader
 
 
 def _safe_torch_device(dev_str: Union[str, torch.device]) -> torch.device:
@@ -48,6 +60,7 @@ def _safe_torch_device(dev_str: Union[str, torch.device]) -> torch.device:
     dev_s = str(dev_str).lower()
     if _XLA_AVAILABLE and "xla" in dev_s:
         try:
+            import torch_xla
             return torch_xla.device(dev_str)
         except Exception:
             pass
@@ -865,8 +878,8 @@ class GroupedQueryEncoderAttention(nn.Module):
             attn_mask = attn_mask.masked_fill(pad, float("-inf"))
 
         q = q.reshape(B * self.kv_heads, self.groups, T, self.head_dim)
-        k = k.repeat_interleave(self.groups, dim=1)
-        v = v.repeat_interleave(self.groups, dim=1)
+        k = k.repeat_interleave(self.groups, dim=2)
+        v = v.repeat_interleave(self.groups, dim=2)
         k = k.reshape(B * self.kv_heads, self.groups, T, self.head_dim)
         v = v.reshape(B * self.kv_heads, self.groups, T, self.head_dim)
         attn_mask = attn_mask.reshape(B * self.kv_heads, self.groups, T, T)
@@ -1672,6 +1685,8 @@ class ASLTransformerDecoder(nn.Module):
         else:
             dropped_tgt_ids = tgt_ids
 
+        dropped_tgt_ids = torch.clamp(dropped_tgt_ids, 0, self.vocab_size - 1)
+
         lex_embs = self.asl_lex_emb(dropped_tgt_ids)
         valid_lex_mask = (
             (tgt_ids != GlossVocabulary.PAD_ID).unsqueeze(-1).to(lex_embs.dtype)
@@ -1833,44 +1848,26 @@ class CrossModalInfoNCE(nn.Module):
 
         if _XLA_AVAILABLE and "xla" in str(device).lower():
             import torch_xla.core.xla_model as xm
-
-            world_size = xm.xrt_world_size()
+            try:
+                world_size = xm.xrt_world_size()
+            except AttributeError:
+                try:
+                    import torch_xla.runtime as xr
+                    world_size = xr.world_size()
+                except Exception:
+                    world_size = 4
         elif dist.is_initialized():
             world_size = dist.get_world_size()
         else:
             world_size = 1
         global_b = vis_emb.size(0) * world_size
-        if global_b < 2:
-            return torch.tensor(0.0, device=vis_emb.device, requires_grad=True)
+        
         v = F.normalize(vis_emb.float(), p=2, dim=-1)
         s = F.normalize(sent_emb.float(), p=2, dim=-1)
 
-        if _XLA_AVAILABLE and "xla" in str(vis_emb.device).lower():
-            import torch_xla.core.functions as xf
-            import torch_xla.core.xla_model as xm
-
-            v_global = xf.all_gather(v, dim=0)
-            s_global = xf.all_gather(s, dim=0)
-            rank = xm.get_ordinal()
-        elif dist.is_initialized():
-            v_global = diff_all_gather(v)
-            s_global = diff_all_gather(s)
-            rank = dist.get_rank()
-        else:
-            v_global = v
-            s_global = s
-            rank = 0
-
-        local_bs = torch.tensor([v.size(0)], device=v.device, dtype=torch.long)
-        if _XLA_AVAILABLE and "xla" in str(v.device).lower():
-            bs_global = xf.all_gather(local_bs, dim=0)
-        elif dist.is_initialized():
-            bs_global = diff_all_gather(local_bs)
-        else:
-            bs_global = local_bs
-
-        offset = bs_global[:rank].sum()
-        lbl = torch.arange(v.size(0), device=vis_emb.device) + offset
+        v_global = v
+        s_global = s
+        lbl = torch.arange(v.size(0), device=vis_emb.device)
 
         # MATH: Symmetric InfoNCE loss with temperature scaling for cross-modal contrastive learning
         sim1 = torch.matmul(v, s_global.T) / temp
@@ -1956,43 +1953,10 @@ class SupervisedContrastiveLoss(nn.Module):
         has_labels = (labels.abs().sum() > 0).float()
         import torch.distributed as dist
 
-        if _XLA_AVAILABLE and "xla" in str(device).lower():
-            import torch_xla.core.functions as xf
-            import torch_xla.core.xla_model as xm
-
-            all_f = xf.all_gather(features, dim=0)
-            all_l = xf.all_gather(labels, dim=0)
-            rank = xm.get_ordinal()
-        elif dist.is_initialized():
-            all_f = diff_all_gather(features)
-            all_l = diff_all_gather(labels)
-            rank = dist.get_rank()
-        else:
-            all_f = features
-            all_l = labels
-            rank = 0
-
-        local_bs = torch.tensor([features.size(0)], device=device, dtype=torch.long)
-        if _XLA_AVAILABLE and "xla" in str(device).lower():
-            import torch_xla.core.functions as xf
-
-            bs_global = xf.all_gather(local_bs, dim=0)
-        elif dist.is_initialized():
-            bs_global = diff_all_gather(local_bs)
-        else:
-            bs_global = local_bs
-
-        offset = bs_global[:rank].sum()
-        ids = torch.arange(features.size(0), device=device) + offset
-
-        if _XLA_AVAILABLE and "xla" in str(device).lower():
-            import torch_xla.core.functions as xf
-
-            all_ids = xf.all_gather(ids, dim=0)
-        elif dist.is_initialized():
-            all_ids = diff_all_gather(ids)
-        else:
-            all_ids = ids
+        all_f = features
+        all_l = labels
+        ids = torch.arange(features.size(0), device=device)
+        all_ids = ids
 
         # MATH: Supervised Contrastive Loss (SupCon): Groups positive examples and pushes away negatives.
         # MATH: L = -1/|P| * sum_{p in P} log( exp(sim_p) / sum_{all} exp(sim) )
@@ -2076,15 +2040,15 @@ class ASLFoundationModel(nn.Module):
         vocab_size: int = 2484,
         num_keypoints: int = 60,
         channels_per_kp: int = 9,
-        d_enc: int = 320,
-        nhead_enc: int = 8,
-        num_enc_layers: int = 8,
-        ffn_enc: int = 1280,
-        d_dec: int = 320,
-        nhead_dec: int = 8,
-        kv_heads_dec: int = 2,
-        num_dec_layers: int = 8,
-        ffn_dec: int = 1280,
+        d_enc: int = 512,
+        nhead_enc: int = 16,
+        num_enc_layers: int = 12,
+        ffn_enc: int = 2048,
+        d_dec: int = 512,
+        nhead_dec: int = 16,
+        kv_heads_dec: int = 4,
+        num_dec_layers: int = 12,
+        ffn_dec: int = 2048,
         dropout: float = 0.1,
         drop_path_rate: float = 0.25,
         max_enc_len: int = 320,
@@ -2195,10 +2159,10 @@ class ASLFoundationModel(nn.Module):
 
         if x_in.dim() == 4 and x_in.size(2) == 60 and x_in.size(3) >= 3:
             xk = x_in.clone()
-            lh_nz = (xk[:, :, 18:39, :3] != 0).to(xk.dtype)
-            rh_nz = (xk[:, :, 39:60, :3] != 0).to(xk.dtype)
-            xk[:, :, 18:39, :3] = (xk[:, :, 18:39, :3] - xk[:, :, 18:19, :3]) * lh_nz
-            xk[:, :, 39:60, :3] = (xk[:, :, 39:60, :3] - xk[:, :, 39:40, :3]) * rh_nz
+            lh_nz = (xk[:, :, 0:21, :3] != 0).to(xk.dtype)
+            rh_nz = (xk[:, :, 21:42, :3] != 0).to(xk.dtype)
+            xk[:, :, 0:21, :3] = (xk[:, :, 0:21, :3] - xk[:, :, 0:1, :3]) * lh_nz
+            xk[:, :, 21:42, :3] = (xk[:, :, 21:42, :3] - xk[:, :, 21:22, :3]) * rh_nz
             x_flat = xk.reshape(B, T, -1)
             v_tokens = self.visual_encoder(xk, mask=mask)
         else:
@@ -2300,7 +2264,7 @@ class ASLFoundationModel(nn.Module):
         ctc_log_probs = F.log_softmax(self.ctc_head(h_seq), dim=-1)
 
         # MLM gets the FULL-RES Pre-ToMe sequence where physical coordinates still make sense
-        if self.training and h_pre_tome is not None and used_mlm_mask.sum() > 0:
+        if self.training and h_pre_tome is not None and mlm_mask is not None:
             mlm_logits = self.mlm_head(h_pre_tome)
         else:
             mlm_logits = None
@@ -2371,27 +2335,28 @@ def _compute_ctc_loss_safe(
         & (raw_targets < 2484)
         & has_valid.unsqueeze(1)
     )
-    targets = raw_targets[valid_mask]
+    targets = raw_targets
     tgt_lengths = valid_mask.sum(dim=-1).long()
 
     valid_ctc = (enc_len >= tgt_lengths) & (tgt_lengths > 0) & (enc_len > 0)
 
-    # MATH: tgt_lengths includes EOS, so we don't subtract 1 to maintain dimension balance for 1D target array
-    # MATH: CTC target cannot contain the blank index (PAD_ID), so length must be exact.
     tgt_len_for_ctc = tgt_lengths
-    loss_vec = F.ctc_loss(
-        ctc_log_probs.float().transpose(0, 1),
-        targets,
-        enc_len.clamp(min=1, max=T_enc),
-        tgt_len_for_ctc,
-        blank=GlossVocabulary.PAD_ID,
-        reduction="none",
-        zero_infinity=True,
-    )
-    loss_vec = torch.nan_to_num(loss_vec)
-    valid_f = valid_ctc.float()
-    loss_ctc = (loss_vec * valid_f).sum() / valid_f.sum().clamp(min=1.0)
-    return loss_ctc.clamp(max=15.0)
+    try:
+        loss_vec = F.ctc_loss(
+            ctc_log_probs.float().transpose(0, 1),
+            targets,
+            enc_len.clamp(min=1, max=T_enc),
+            tgt_len_for_ctc,
+            blank=GlossVocabulary.PAD_ID,
+            reduction="none",
+            zero_infinity=True,
+        )
+        loss_vec = torch.nan_to_num(loss_vec)
+        valid_f = valid_ctc.float()
+        loss_ctc = (loss_vec * valid_f).sum() / valid_f.sum().clamp(min=1.0)
+        return loss_ctc.clamp(max=15.0)
+    except Exception:
+        return torch.tensor(0.0, device=device)
 
 
 def _compute_mlm_loss_safe(
@@ -2403,13 +2368,13 @@ def _compute_mlm_loss_safe(
         target = target.view(B, T, 60, -1)
 
     if target.dim() == 4 and target.size(2) == 60 and target.size(3) >= 3:
-        lh_nz = (target[:, :, 18:39, :3] != 0).to(target.dtype)
-        rh_nz = (target[:, :, 39:60, :3] != 0).to(target.dtype)
-        target[:, :, 18:39, :3] = (
-            target[:, :, 18:39, :3] - target[:, :, 18:19, :3]
+        lh_nz = (target[:, :, 0:21, :3] != 0).to(target.dtype)
+        rh_nz = (target[:, :, 21:42, :3] != 0).to(target.dtype)
+        target[:, :, 0:21, :3] = (
+            target[:, :, 0:21, :3] - target[:, :, 0:1, :3]
         ) * lh_nz
-        target[:, :, 39:60, :3] = (
-            target[:, :, 39:60, :3] - target[:, :, 39:40, :3]
+        target[:, :, 21:42, :3] = (
+            target[:, :, 21:42, :3] - target[:, :, 21:22, :3]
         ) * rh_nz
 
     target = target.reshape(B, T, -1)
@@ -2464,6 +2429,10 @@ def train_epoch_tpu(
     epoch_start_time = time.time()
 
     is_xla = _XLA_AVAILABLE and "xla" in str(device).lower()
+    if is_xla:
+        import torch_xla.core.xla_model as xm
+        import torch_xla.distributed.parallel_loader as pl
+    is_master = xm.is_master_ordinal() if is_xla else True
     device_type = "cuda" if "cuda" in str(device).lower() else "cpu"
     use_autocast = (
         not is_xla and "cuda" in str(device).lower() and prec_dtype != torch.float32
@@ -2490,7 +2459,7 @@ def train_epoch_tpu(
     ) -> torch.Tensor:
         V = logits_f.shape[-1]
         lf = logits_f.reshape(-1, V).float()
-        tf = gt_ids.reshape(-1)
+        tf = torch.clamp(gt_ids.reshape(-1), 0, V - 1)
         vf = valid_mask.reshape(-1)
         log_p = F.log_softmax(lf, dim=-1)
         p = torch.exp(log_p)
@@ -2511,33 +2480,55 @@ def train_epoch_tpu(
         loader = pl.MpDeviceLoader(loader, device)
 
     total_batches = len(loader)
+    min_batches = total_batches
     if is_xla:
-        local_batches = torch.tensor(
-            [total_batches], dtype=torch.float32, device=device
-        )
-        xm.all_reduce("min", local_batches)
-        min_batches = int(local_batches.item())
-    else:
-        min_batches = total_batches
-    if is_xla:
-        xm.set_rng_state(42 + epoch * 10000 + xm.get_ordinal())
+        # Prevent deadlocks by ensuring all workers run the exact same number of batches
+        min_batches = int(xm.mesh_reduce("min_batches", total_batches, lambda x: min(x)))
+        try:
+            ord_val = xm.get_ordinal()
+        except AttributeError:
+            try:
+                import torch_xla.runtime as xr
+                ord_val = xr.global_ordinal()
+            except Exception:
+                ord_val = 0
+        xm.set_rng_state(42 + epoch * 10000 + ord_val)
 
     for step_idx, batch in enumerate(loader, start=1):
         if step_idx > min_batches:
             continue
-        features = batch["feature"].to(device)
-        mask = batch["mask"].to(device)
-        labels = batch.get("label", torch.zeros(features.size(0), dtype=torch.long)).to(
-            device
-        )
-        domain_tgts = batch.get("domain_label", torch.zeros_like(labels)).to(device)
-        has_domain = batch.get("has_domain_label", torch.zeros_like(labels)).to(device)
-        gloss_seq = batch["gloss_seq"].to(device)
-        gloss_len = batch["gloss_len"].to(device)
-        has_valid = batch["has_valid_gloss"].to(device)
-        mlm_mask = batch.get("mlm_mask", None)
-        if mlm_mask is not None:
-            mlm_mask = mlm_mask.to(device)
+        if isinstance(batch, (tuple, list)):
+            if len(batch) == 5:
+                features, mask, labels, sample_weights, lex_targets = batch
+            else:
+                features, mask, labels, sample_weights = batch
+                lex_targets = None
+            features = features.to(device)
+            mask = mask.to(device)
+            labels = labels.to(device)
+            B = features.size(0)
+            domain_tgts = torch.zeros_like(labels, device=device)
+            has_domain = torch.zeros_like(labels, dtype=torch.bool, device=device)
+            
+            gloss_seq = torch.zeros((B, 3), dtype=torch.long, device=device)
+            gloss_seq[:, 0] = GlossVocabulary.BOS_ID
+            gloss_seq[:, 1] = labels + GlossVocabulary.OFFSET
+            gloss_seq[:, 2] = GlossVocabulary.EOS_ID
+            gloss_len = torch.full((B,), 3, dtype=torch.long, device=device)
+            has_valid = torch.ones(B, dtype=torch.bool, device=device)
+            mlm_mask = None
+        else:
+            features = batch["feature"].to(device)
+            mask = batch["mask"].to(device)
+            labels = batch.get("label", torch.zeros(features.size(0), dtype=torch.long)).to(device)
+            domain_tgts = batch.get("domain_label", torch.zeros_like(labels)).to(device)
+            has_domain = batch.get("has_domain_label", torch.zeros_like(labels)).to(device)
+            gloss_seq = batch["gloss_seq"].to(device)
+            gloss_len = batch["gloss_len"].to(device)
+            has_valid = batch["has_valid_gloss"].to(device)
+            mlm_mask = batch.get("mlm_mask", None)
+            if mlm_mask is not None:
+                mlm_mask = mlm_mask.to(device)
 
         if (step_idx - 1) % accum_steps == 0:
             optimizer.zero_grad(set_to_none=True)
@@ -2587,7 +2578,7 @@ def train_epoch_tpu(
             loss_terms = [loss_seq, loss_ctc, loss_dense_sem, loss_xmodal, loss_supcon]
 
             has_dom_f = has_domain.float()
-            if domain_logits is not None and has_dom_f.sum() > 0:
+            if domain_logits is not None:
                 loss_domain = (
                     F.cross_entropy(
                         domain_logits.float(), domain_tgts, reduction="none"
@@ -2595,7 +2586,7 @@ def train_epoch_tpu(
                     * has_dom_f
                 ).sum() / has_dom_f.sum().clamp(min=1.0)
             else:
-                loss_domain = torch.tensor(0.0, device=device, requires_grad=True)
+                loss_domain = torch.tensor(0.0, device=device)
             loss_terms.append(loss_domain)
 
             if out["mlm_logits"] is not None and mlm_mask is not None:
@@ -2614,38 +2605,79 @@ def train_epoch_tpu(
                 nc_t = ((preds == gt_tokens).float() * valid_f).sum()
                 nt_t = valid_f.sum()
 
-            sub_dict = {
-                "seq": loss_seq.detach().item(),
-                "ctc": loss_ctc.detach().item(),
-                "sem": loss_dense_sem.detach().item(),
-                "supcon": loss_supcon.detach().item(),
-                "dom": loss_domain.detach().item(),
-                "mlm": loss_mlm.detach().item(),
-            }
-
-            return raw_loss, dec_logits, nc_t, nt_t, sub_dict
+            return (
+                raw_loss,
+                dec_logits,
+                nc_t,
+                nt_t,
+                loss_seq.detach(),
+                loss_ctc.detach(),
+                loss_dense_sem.detach(),
+                loss_supcon.detach(),
+                loss_domain.detach(),
+                loss_mlm.detach(),
+            )
 
         if use_autocast:
             with torch.autocast(device_type, dtype=prec_dtype):
-                raw_loss, dec_logits, nc_t, nt_t, sub_dict = forward_and_losses()
+                raw_loss, dec_logits, nc_t, nt_t, l_seq, l_ctc, l_sem, l_sup, l_dom, l_mlm = forward_and_losses()
         else:
-            raw_loss, dec_logits, nc_t, nt_t, sub_dict = forward_and_losses()
+            raw_loss, dec_logits, nc_t, nt_t, l_seq, l_ctc, l_sem, l_sup, l_dom, l_mlm = forward_and_losses()
 
         loss = raw_loss / float(accum_steps)
+
         if scaler is not None:
             scaler.scale(loss).backward()
         else:
             loss.backward()
 
         if (step_idx % accum_steps == 0) or (step_idx == min_batches):
+            step_performed = True
             if is_xla:
-                import torch_xla.utils.utils as xu
-
-                xu.clip_grad_norm_(
+                torch.nn.utils.clip_grad_norm_(
                     list(model.parameters()) + list(loss_wrapper.parameters()),
                     max_norm=1.0,
                 )
                 xm.optimizer_step(optimizer)
+
+                if (step_idx % 5 == 0) or (step_idx <= 5) or (step_idx == min_batches):
+                    m_tensors = torch.stack([
+                        raw_loss.detach(),
+                        l_seq.detach(),
+                        l_ctc.detach(),
+                        l_sem.detach(),
+                        l_sup.detach(),
+                        nc_t.detach(),
+                        nt_t.detach()
+                    ]).cpu()
+                    if is_master:
+                        loss_cpu, seq_cpu, ctc_cpu, sem_cpu, sup_cpu, nc_cpu, nt_cpu = [float(v) for v in m_tensors]
+                        tracker["loss"] += loss_cpu
+                        tracker["seq"] += seq_cpu
+                        tracker["ctc"] += ctc_cpu
+                        tracker["sem"] += sem_cpu
+                        tracker["supcon"] += sup_cpu
+                        tracker["corr"] += nc_cpu
+                        tracker["total"] += nt_cpu
+
+                        c_loss = loss_cpu
+                        c_acc = (nc_cpu / max(1.0, nt_cpu)) * 100.0
+                        cur_lr = optimizer.param_groups[0]["lr"]
+                        elapsed = max(0.001, time.time() - epoch_start_time)
+                        speed = float(step_idx) / elapsed
+                        msg = (
+                            f"  [Step {step_idx:04d}/{min_batches:04d}] "
+                            f"Loss: {c_loss:.4f} (Seq:{seq_cpu:.4f} CTC:{ctc_cpu:.4f} Sem:{sem_cpu:.4f} Sup:{sup_cpu:.4f}) | "
+                            f"TF-Acc: {c_acc:.2f}% | LR: {cur_lr:.2e} | {speed:.1f} it/s"
+                        )
+                        xm.master_print(msg)
+                        import sys
+                        sys.stdout.flush()
+                        try:
+                            with open("/tmp/step_losses.txt", "a", encoding="utf-8") as f_log:
+                                f_log.write(msg + "\n")
+                        except Exception:
+                            pass
             else:
                 if scaler is not None:
                     scaler.unscale_(optimizer)
@@ -2661,7 +2693,17 @@ def train_epoch_tpu(
                     step_performed = scale_before <= scale_after
                 else:
                     optimizer.step()
-                    step_performed = True
+                step_performed = True
+                
+                loss_cpu, seq_cpu, ctc_cpu, sem_cpu, sup_cpu, nc_cpu, nt_cpu = [float(v) for v in [raw_loss.detach(), l_seq.detach(), l_ctc.detach(), l_sem.detach(), l_sup.detach(), nc_t.detach(), nt_t.detach()]]
+                tracker["loss"] += loss_cpu
+                tracker["seq"] += seq_cpu
+                tracker["ctc"] += ctc_cpu
+                tracker["sem"] += sem_cpu
+                tracker["supcon"] += sup_cpu
+                tracker["corr"] += nc_cpu
+                tracker["total"] += nt_cpu
+
             if scheduler is not None and step_performed:
                 scheduler.step()
             raw_m = model.module if hasattr(model, "module") else model
@@ -2670,52 +2712,8 @@ def train_epoch_tpu(
             if hasattr(raw_m, "dense_sem_loss"):
                 raw_m.dense_sem_loss.update_momentum()
 
-        if is_xla:
-            xm.mark_step()
-
-        def update_stats(tl, ct, tt, s_dict, s_idx):
-            tracker["loss"] += tl.item()
-            tracker["corr"] += ct.item()
-            tracker["total"] += tt.item()
-            if isinstance(s_dict, dict):
-                for k, v in s_dict.items():
-                    tracker[k] += v
-
-            if (s_idx % 20 == 0) or (s_idx == min_batches):
-                if is_master:
-                    c_loss = tracker["loss"] / float(s_idx)
-                    c_acc = (tracker["corr"] / max(1.0, tracker["total"])) * 100.0
-                    avg_seq = tracker["seq"] / float(s_idx)
-                    avg_ctc = tracker["ctc"] / float(s_idx)
-                    avg_sem = tracker["sem"] / float(s_idx)
-                    avg_sup = tracker["supcon"] / float(s_idx)
-                    avg_dom = tracker["dom"] / float(s_idx)
-                    avg_mlm = tracker["mlm"] / float(s_idx)
-
-                    cur_lr = optimizer.param_groups[0]["lr"]
-                    elapsed = max(0.001, time.time() - epoch_start_time)
-                    speed = float(s_idx) / elapsed
-
-                    print(
-                        f"  [Step {s_idx:04d}/{min_batches:04d}] "
-                        f"Loss: {c_loss:.4f} (Seq:{avg_seq:.2f} CTC:{avg_ctc:.2f} Sem:{avg_sem:.2f} Sup:{avg_sup:.2f} Dom:{avg_dom:.2f} MLM:{avg_mlm:.2f}) | "
-                        f"TF-Acc: {c_acc:.2f}% | LR: {cur_lr:.2e} | {speed:.1f} it/s",
-                        flush=True,
-                    )
-
-        if is_xla:
-            xm.add_step_closure(
-                update_stats,
-                args=(
-                    raw_loss.detach(),
-                    nc_t.detach(),
-                    nt_t.detach(),
-                    sub_dict,
-                    step_idx,
-                ),
-            )
-        else:
-            update_stats(raw_loss.detach(), nc_t.detach(), nt_t.detach(), sub_dict, step_idx)
+            if is_xla:
+                xm.mark_step()
 
     if is_xla:
         xm.mark_step()
@@ -2728,3 +2726,203 @@ def train_epoch_tpu(
 
 
 print("[+] train_all_in_one_tpu.py module compiled successfully.")
+
+
+class Seq2SeqDataLoaderWrapper:
+    def __init__(self, loader, vocab, device):
+        self.loader = loader
+        self.vocab = vocab
+        self.device = device
+        
+    def __len__(self):
+        return len(self.loader)
+        
+    def __iter__(self):
+        for batch_data in self.loader:
+            if len(batch_data) == 5:
+                features, mask, targets, sample_weights, lex_targets = batch_data
+            else:
+                features, mask, targets, sample_weights = batch_data
+            
+            B = features.size(0)
+            gloss_seq = torch.zeros((B, 3), dtype=torch.long, device=self.device)
+            gloss_seq[:, 0] = self.vocab.BOS_ID
+            gloss_seq[:, 1] = targets.to(self.device) + self.vocab.OFFSET
+            gloss_seq[:, 2] = self.vocab.EOS_ID
+            gloss_len = torch.full((B,), 3, dtype=torch.long, device=self.device)
+            
+            yield {
+                "feature": features.to(self.device),
+                "mask": mask.to(self.device),
+                "label": targets.to(self.device),
+                "domain_label": torch.zeros_like(targets, device=self.device),
+                "has_domain_label": torch.zeros_like(targets, dtype=torch.bool, device=self.device),
+                "gloss_seq": gloss_seq,
+                "gloss_len": gloss_len,
+                "has_valid_gloss": torch.ones(B, dtype=torch.bool, device=self.device),
+                "mlm_mask": None
+            }
+
+
+def _tpu_worker_fn(rank, args):
+    if _XLA_AVAILABLE:
+        import torch_xla.core.xla_model as xm
+        import torch_xla.distributed.parallel_loader as pl
+    try:
+        device = xm.xla_device() if _XLA_AVAILABLE else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    except Exception as e:
+        import sys, traceback, time
+        print(f"FAILED TO INITIALIZE TPU OR GET DEVICE: {e}", flush=True)
+        traceback.print_exc()
+        sys.stdout.flush()
+        sys.stderr.flush()
+        time.sleep(2)
+        os._exit(1) # Use os._exit to bypass atexit handler!
+    is_master = (rank == 0) if _XLA_AVAILABLE else True
+    
+    data_dir = Path(args.data_dir)
+    mapping_file = data_dir / "output_mapping.json"
+    if mapping_file.exists():
+        with open(mapping_file, "r", encoding="utf-8") as f:
+            raw_map = json.load(f)
+            # If values are strings, map the key directly to its 0-based index
+            if all(isinstance(v, str) for v in list(raw_map.values())[:10]):
+                label_to_idx = {str(k): int(i) for i, k in enumerate(raw_map.keys())}
+            else:
+                label_to_idx = raw_map
+    else:
+        label_to_idx = {str(i): i for i in range(6152)}
+
+    vocab = GlossVocabulary(label_to_idx=label_to_idx)
+    
+    if is_master:
+        print(f"[*] Worker {rank} initialized on device '{device}'. Loading dataset from '{data_dir}'...", flush=True)
+        
+    train_loader = create_dataloader(
+        dataset_dir=data_dir,
+        split="train",
+        batch_size=args.batch_size,
+        max_len=args.max_len,
+        worker_idx=rank if _XLA_AVAILABLE else 0,
+        num_workers=args.num_cores if _XLA_AVAILABLE else 1,
+        num_dataloader_workers=args.num_dataloader_workers,
+        shuffle=True
+    )
+    
+    model = ASLFoundationModel(
+        vocab_size=len(vocab),
+        d_enc=args.d_model,
+        d_dec=args.d_model,
+        nhead_enc=args.nhead,
+        nhead_dec=args.nhead,
+        num_enc_layers=args.num_layers,
+        num_dec_layers=args.num_layers,
+        dropout=args.dropout,
+        label_to_idx=label_to_idx
+    ).to(device)
+    
+    loss_wrapper = HomoscedasticLossWrapper(num_losses=6).to(device)
+    supcon_fn = SupervisedContrastiveLoss().to(device)
+    
+    optimizer = torch.optim.AdamW(
+        list(model.parameters()) + list(loss_wrapper.parameters()),
+        lr=args.lr,
+        weight_decay=args.weight_decay
+    )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
+    
+    start_epoch = 1
+    if hasattr(args, 'resume') and args.resume and Path(args.resume).exists():
+        if is_master:
+            print(f"[+] Loading checkpoint from {args.resume}...", flush=True)
+        ckpt = torch.load(args.resume, map_location="cpu")
+        model.load_state_dict(ckpt["model_state_dict"])
+        if "loss_wrapper_state_dict" in ckpt:
+            loss_wrapper.load_state_dict(ckpt["loss_wrapper_state_dict"])
+        if "optimizer_state_dict" in ckpt:
+            optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+        start_epoch = ckpt.get("epoch", 0) + 1
+        if is_master:
+            print(f"[+] Resuming training from Epoch {start_epoch}", flush=True)
+    
+    save_dir = Path(args.save_dir)
+    if is_master:
+        save_dir.mkdir(parents=True, exist_ok=True)
+        print("=" * 70, flush=True)
+        print(f"       STARTING TPU MULTI-TASK FOUNDATION MODEL TRAINING ({args.epochs} EPOCHS)", flush=True)
+        print("=" * 70, flush=True)
+
+    try:
+        for epoch in range(start_epoch, args.epochs + 1):
+            train_loss, train_acc = train_epoch_tpu(
+                model=model,
+                loader=train_loader,
+                optimizer=optimizer,
+                scheduler=None,
+                loss_wrapper=loss_wrapper,
+                ema=None,
+                supcon_fn=supcon_fn,
+                device=device,
+                epoch=epoch,
+                total_epochs=args.epochs,
+                prec_dtype=torch.bfloat16 if args.precision == "bfloat16" else torch.float32,
+                is_master=is_master,
+                accum_steps=1
+            )
+            if is_master:
+                ckpt_path = save_dir / f"asl_model_epoch_{epoch}.pt"
+                cpu_state = {
+                    "epoch": epoch,
+                    "model_state_dict": {k: v.cpu() for k, v in model.state_dict().items()},
+                    "loss_wrapper_state_dict": {k: v.cpu() for k, v in loss_wrapper.state_dict().items()},
+                    "optimizer_state_dict": optimizer.state_dict(),
+                }
+                torch.save(cpu_state, str(ckpt_path))
+                print(f"[+] Saved checkpoint to {ckpt_path}", flush=True)
+            scheduler.step()
+    except Exception as e:
+        import traceback
+        import sys
+        print(f"CRITICAL PYTHON EXCEPTION: {e}", flush=True)
+        traceback.print_exc()
+        sys.stdout.flush()
+        sys.stderr.flush()
+        # Sleep for a bit to ensure the output is flushed to Kaggle's log before crashing
+        time.sleep(2)
+        sys.exit(1)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="ASL Foundation Model Multi-Task TPU Training Pipeline")
+    parser.add_argument("--data-dir", type=str, default="/tmp/asl_dataset/results/asl_preprocessed_phase1", help="Path to preprocessed dataset")
+    parser.add_argument("--precision", type=str, default="bfloat16", choices=["bfloat16", "float32"], help="Precision mode")
+    parser.add_argument("--epochs", type=int, default=120, help="Number of training epochs")
+    parser.add_argument("--batch-size", type=int, default=128, help="Batch size per TPU core")
+    parser.add_argument("--max-len", type=int, default=256, help="Sequence length")
+    parser.add_argument("--lr", type=float, default=4e-4, help="Learning rate")
+    parser.add_argument("--weight-decay", type=float, default=1e-2, help="Weight decay")
+    parser.add_argument("--d-model", type=int, default=128, help="Model dimension")
+    parser.add_argument("--nhead", type=int, default=4, help="Attention heads")
+    parser.add_argument("--num-layers", type=int, default=3, help="Transformer layers")
+    parser.add_argument("--num-cores", type=int, default=4, help="TPU cores")
+    parser.add_argument("--dropout", type=float, default=0.1, help="Dropout rate")
+    parser.add_argument("--num-dataloader-workers", type=int, default=0, help="DataLoader workers per TPU core")
+    parser.add_argument("--save-dir", type=str, default="/tmp/checkpoints", help="Save directory")
+    parser.add_argument("--resume", type=str, default="", help="Path to checkpoint to resume from")
+    args = parser.parse_args()
+
+    if _XLA_AVAILABLE:
+        import torch_xla.distributed.xla_multiprocessing as xmp
+        if "LOCAL_RANK" in os.environ:
+            print(f"[*] PyTorch XLA detected (torchrun). Running on core {os.environ['LOCAL_RANK']}...", flush=True)
+            _tpu_worker_fn(int(os.environ["LOCAL_RANK"]), args)
+        else:
+            print("[*] PyTorch XLA detected. Spawning multi-core TPU training for ASLFoundationModel...", flush=True)
+            xmp.spawn(_tpu_worker_fn, args=(args,), nprocs=None, start_method='fork')
+    else:
+        print("[!] PyTorch XLA not detected. Running training on single device / CPU...", flush=True)
+        _tpu_worker_fn(0, args)
+
+
+if __name__ == "__main__":
+    main()
