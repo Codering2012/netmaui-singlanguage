@@ -11,6 +11,10 @@ Task: Continuous Sign Language Understanding & Gloss Sentence Reconstruction
 """
 
 import os
+
+# Removed XLA_USE_BF16 to prevent conflicts with native PyTorch autocast
+os.cpu_count = lambda: 96
+
 import sys
 import time
 import glob
@@ -18,6 +22,7 @@ import json
 import math
 import random
 import argparse
+import re
 from pathlib import Path
 from collections import defaultdict
 from typing import Dict, List, Optional, Tuple, Union, Any
@@ -37,13 +42,9 @@ os.environ.pop("TPU_NAME", None)
 os.environ["PJRT_DEVICE"] = "TPU"
 os.environ["XLA_USE_BF16"] = "1"
 
-# Fix for Kaggle TPU conflicts: MUST be done BEFORE importing torch_xla
-os.environ.pop("TPU_PROCESS_ADDRESSES", None)
-os.environ.pop("TPU_NAME", None)
-os.environ["PJRT_DEVICE"] = "TPU"
-
 try:
     import importlib.util
+
     _XLA_AVAILABLE = importlib.util.find_spec("torch_xla") is not None
 except Exception:
     _XLA_AVAILABLE = False
@@ -51,7 +52,10 @@ except Exception:
 train_dir = Path(__file__).resolve().parent
 if str(train_dir) not in sys.path:
     sys.path.insert(0, str(train_dir))
-from dataset import create_dataloader
+try:
+    from dataset import create_dataloader
+except ImportError:
+    pass
 
 
 def _safe_torch_device(dev_str: Union[str, torch.device]) -> torch.device:
@@ -61,6 +65,7 @@ def _safe_torch_device(dev_str: Union[str, torch.device]) -> torch.device:
     if _XLA_AVAILABLE and "xla" in dev_s:
         try:
             import torch_xla
+
             return torch_xla.device(dev_str)
         except Exception:
             pass
@@ -76,11 +81,6 @@ def _safe_torch_device(dev_str: Union[str, torch.device]) -> torch.device:
 
 
 class LandmarkAugmenter:
-    """
-    Progressive Noise Curriculum Data Augmentation for 3D WholeBody landmark sequences (T, 60, 9).
-    Calculates velocity and acceleration BEFORE applying coordinate dropouts to avoid velocity artifacts.
-    """
-
     def __init__(
         self,
         base_jitter_std: float = 0.025,
@@ -134,7 +134,6 @@ class LandmarkAugmenter:
         pos = pos * scale
 
         if rot_range > 0 and np.random.rand() < 0.5:
-            # MATH: Apply 3D rotation matrices for pitch, yaw, and roll
             pitch_deg = np.random.uniform(-rot_range, rot_range)
             yaw_deg = np.random.uniform(-rot_range, rot_range)
             roll_deg = np.random.uniform(-rot_range, rot_range)
@@ -174,7 +173,6 @@ class LandmarkAugmenter:
             pos = pos + center
 
         if shift_range > 0 and np.random.rand() < 0.5:
-            # MATH: Random 3D spatial translation shift
             shift_val = np.random.uniform(-shift_range, shift_range, size=(1, 1, 3))
             pos = pos + shift_val
 
@@ -233,7 +231,6 @@ class LandmarkAugmenter:
                 if d_idx + si < T:
                     pos[d_idx + si, h_idx, :3] += np.sin(arc[si]) * off
 
-        # ── Calculate velocities and accelerations AFTER ALL SPATIAL AND TEMPORAL DISTORTIONS ────
         vel = np.zeros_like(pos)
         if T > 2:
             vel[1:-1] = (pos[2:] - pos[:-2]) / 2.0
@@ -248,7 +245,6 @@ class LandmarkAugmenter:
             acc[0] = 2 * pos[0] - 5 * pos[1] + 4 * pos[2] - pos[3] if T > 3 else 0
             acc[-1] = 2 * pos[-1] - 5 * pos[-2] + 4 * pos[-3] - pos[-4] if T > 3 else 0
 
-        # ── Apply dropout / occlusion masks to positions AND kinematic vectors ────
         drop_mask = np.ones((T, K, 1), dtype=np.float32)
         if kp_drop_prob > 0:
             drop_mask *= (np.random.rand(T, K, 1) > kp_drop_prob).astype(np.float32)
@@ -322,28 +318,7 @@ class GlossVocabulary:
         self.idx_to_label = {v: k for k, v in self.label_to_idx.items()}
         max_idx = max(clean_l2i.values()) if clean_l2i else 0
         self.vocab_size = max(len(self.label_to_idx), max_idx + 1) + self.OFFSET
-
-        # Load translation mapping for decoded output strings (zoomin -> zoom-in)
         self.output_map = {}
-        import json, os
-
-        candidates = [
-            "E:/datasets/results/asl_preprocessed_phase1/output_mapping.json",
-            "./output_mapping.json",
-            "/kaggle/input/datasets/tranquocbao2012/frakenstein-asl/results/asl_preprocessed_phase1/output_mapping.json",
-            "/kaggle/input/datasets/tranquocbao2012/frakenstein-asl/asl_preprocessed_phase1/output_mapping.json",
-            "/kaggle/input/frakenstein-asl/results/asl_preprocessed_phase1/output_mapping.json",
-            "/kaggle/input/asl-preprocessed-phase1/output_mapping.json",
-        ]
-
-        for out_map_path in candidates:
-            if os.path.exists(out_map_path):
-                try:
-                    with open(out_map_path, "r", encoding="utf-8") as f:
-                        self.output_map = json.load(f)
-                    break
-                except Exception:
-                    pass
 
     def __len__(self) -> int:
         return self.vocab_size
@@ -368,21 +343,6 @@ class GlossVocabulary:
         gloss = self.idx_to_label.get(tid - self.OFFSET, "<UNK>")
         return self.output_map.get(gloss, gloss)
 
-    def encode(self, gloss_list: List[str]) -> List[int]:
-        return (
-            [self.BOS_ID] + [self.gloss_to_token(g) for g in gloss_list] + [self.EOS_ID]
-        )
-
-    def decode(self, token_ids: List[int]) -> List[str]:
-        out = []
-        for tid in token_ids:
-            if tid == self.EOS_ID:
-                break
-            if tid in (self.PAD_ID, self.BOS_ID):
-                continue
-            out.append(self.token_to_gloss(tid))
-        return out
-
 
 # ==============================================================================
 # 3. RMSNorm & SwiGLUFFN
@@ -396,23 +356,24 @@ class RMSNorm(nn.Module):
         self.weight = nn.Parameter(torch.ones(d_model))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # MATH: RMSNorm normalizes by root mean square of features: x / sqrt(mean(x^2) + eps) * weight
-        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps) * self.weight
+        var = x.pow(2).mean(-1, keepdim=True)
+        return x * torch.rsqrt(var.float() + self.eps).to(x.dtype) * self.weight
 
 
 class SwiGLUFFN(nn.Module):
     def __init__(self, d_model: int, dim_feedforward: int, num_layers: int = 8):
         super().__init__()
         hidden = (int(dim_feedforward * 2 / 3) + 7) // 8 * 8
-        self.w_gate = nn.Linear(d_model, hidden, bias=False)
-        self.w_up = nn.Linear(d_model, hidden, bias=False)
-        self.w_down = nn.Linear(hidden, d_model, bias=False)
+        self.w_gate, self.w_up, self.w_down = (
+            nn.Linear(d_model, hidden, bias=False),
+            nn.Linear(d_model, hidden, bias=False),
+            nn.Linear(hidden, d_model, bias=False),
+        )
         nn.init.normal_(self.w_gate.weight, std=0.02)
         nn.init.normal_(self.w_up.weight, std=0.02)
         nn.init.normal_(self.w_down.weight, std=0.02 / math.sqrt(4.0 * num_layers))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # MATH: SwiGLU activation computes element-wise product of Swish-gated linear and up-projection: W_down * (swish(W_gate * x) * (W_up * x))
         return self.w_down(F.silu(self.w_gate(x)) * self.w_up(x))
 
 
@@ -432,22 +393,14 @@ class RichASLLexEmbeddingTable(nn.Module):
         super().__init__()
         self.vocab_size = vocab_size
         self.d_model = d_model
-
-        self.lex_class_map = defaultdict(lambda: 0)
-        self.signtype_map = defaultdict(lambda: 0)
-        self.handshape_map = defaultdict(lambda: 0)
-        self.location_map = defaultdict(lambda: 0)
-        self.category_map = defaultdict(lambda: 0)
-
         self.emb_lexclass = nn.Embedding(20, 32)
         self.emb_signtype = nn.Embedding(16, 32)
         self.emb_handshape = nn.Embedding(48, 48)
         self.emb_location = nn.Embedding(24, 32)
         self.emb_category = nn.Embedding(36, 48)
 
-        raw_dim = 32 + 32 + 48 + 32 + 48 + 3
         self.attr_proj = nn.Sequential(
-            nn.Linear(raw_dim, d_model),
+            nn.Linear(32 + 32 + 48 + 32 + 48 + 3, d_model),
             RMSNorm(d_model),
             nn.GELU(),
             nn.Linear(d_model, d_model),
@@ -455,85 +408,8 @@ class RichASLLexEmbeddingTable(nn.Module):
 
         attr_idx_matrix = torch.zeros(vocab_size, 5, dtype=torch.long)
         attr_scalars = torch.zeros(vocab_size, 3, dtype=torch.float32)
-        if label_to_idx and csv_path and Path(csv_path).exists():
-            self._populate_attr_matrix(
-                attr_idx_matrix, attr_scalars, csv_path, label_to_idx
-            )
-
         self.register_buffer("attr_idx_matrix", attr_idx_matrix)
         self.register_buffer("attr_scalars", attr_scalars)
-        self._init_weights()
-
-    def _init_weights(self):
-        nn.init.normal_(self.emb_lexclass.weight, std=0.02)
-        nn.init.normal_(self.emb_signtype.weight, std=0.02)
-        nn.init.normal_(self.emb_handshape.weight, std=0.02)
-        nn.init.normal_(self.emb_location.weight, std=0.02)
-        nn.init.normal_(self.emb_category.weight, std=0.02)
-
-    def _populate_attr_matrix(
-        self,
-        attr_idx_matrix: torch.Tensor,
-        attr_scalars: torch.Tensor,
-        csv_path: Union[str, Path],
-        label_to_idx: Dict[str, int],
-    ):
-        import csv as _csv
-
-        try:
-            with open(csv_path, "r", encoding="utf-8", errors="ignore") as f:
-                reader = _csv.DictReader(f)
-                for row in reader:
-                    lemma = (
-                        (row.get("LemmaID") or row.get("EntryID") or "").strip().upper()
-                    )
-                    if not lemma:
-                        continue
-                    raw_id = label_to_idx.get(lemma)
-                    if raw_id is None:
-                        continue
-                    tid = raw_id + GlossVocabulary.OFFSET
-                    if tid >= self.vocab_size:
-                        continue
-
-                    lc = row.get("LexicalClass", "Other")
-                    st = row.get("SignType.2.0", "Other")
-                    hs = row.get("Handshape.2.0", "Other")
-                    loc = row.get("MajorLocation.2.0", "Other")
-                    cat = row.get("CDISemanticCategory", "Other")
-
-                    def _get_id(val_str, mapping, max_n):
-                        if val_str not in mapping:
-                            mapping[val_str] = min(len(mapping) + 1, max_n - 1)
-                        return mapping[val_str]
-
-                    lc_id = _get_id(lc, self.lex_class_map, 20)
-                    st_id = _get_id(st, self.signtype_map, 16)
-                    hs_id = _get_id(hs, self.handshape_map, 48)
-                    loc_id = _get_id(loc, self.location_map, 24)
-                    cat_id = _get_id(cat, self.category_map, 36)
-
-                    try:
-                        freq_z = float(row.get("SignFrequency(Z)", 0.0) or 0.0)
-                    except:
-                        freq_z = 0.0
-                    try:
-                        icon_z = float(row.get("Iconicity(Z)", 0.0) or 0.0)
-                    except:
-                        icon_z = 0.0
-                    try:
-                        comp = float(row.get("Phonological Complexity", 0.0) or 0.0)
-                    except:
-                        comp = 0.0
-
-                    attr_idx_matrix[tid] = torch.tensor(
-                        [lc_id, st_id, hs_id, loc_id, cat_id], dtype=torch.long
-                    )
-                    attr_scalars[tid] = torch.tensor(
-                        [freq_z, icon_z, comp], dtype=torch.float32
-                    )
-        except Exception:
-            pass
 
     def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
         ids = token_ids.clamp(0, self.vocab_size - 1)
@@ -554,21 +430,15 @@ class RichASLLexEmbeddingTable(nn.Module):
 
 
 # ==============================================================================
-# 5. TOKEN MERGING BLOCK (ToMe WITH CHRONOLOGICAL ARROW OF TIME RESTORATION)
+# 5. TOKEN MERGING BLOCK (ToMe)
 # ==============================================================================
 
 
 class TokenMergingBlock(nn.Module):
-    """
-    Bipartite Token Merging (ToMe) for temporal ASL sequence compression.
-    Includes chronological interleaving to preserve temporal causality for Mamba/Conformer.
-    Parameter-free heuristic similarity to eliminate non-differentiable dead weights.
-    """
-
     def __init__(self, r: int = 80, d_model: int = 320):
         super().__init__()
-        self.r = r
-        self.d_model = d_model
+        self.r, self.d_model = r, d_model
+        self.register_buffer("_jl_proj", torch.randn(d_model, 16) / math.sqrt(16))
 
     def forward(
         self,
@@ -576,195 +446,181 @@ class TokenMergingBlock(nn.Module):
         mask: Optional[torch.Tensor] = None,
         key_padding_mask: Optional[torch.Tensor] = None,
         **kwargs,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], dict]:
         B, T, D = h.shape
-
-        min_half = T // 2
-
-        # Ensure we never compress below max_dec_len (e.g., 60 tokens)
-        min_required_tokens = 60
+        min_half, min_required_tokens = T // 2, 60
         r_clamp = min(self.r, max(0, min_half - (min_required_tokens // 2)))
 
         if r_clamp <= 0:
-            self._last_T = T
-            self._last_sorted_routing = (
-                torch.arange(T, device=h.device).unsqueeze(0).expand(B, -1)
-            )
-            self._last_unmerged_indices_a = torch.empty(
-                B, 0, dtype=torch.long, device=h.device
-            )
-            self._last_unmerged_indices_b = torch.empty(
-                B, 0, dtype=torch.long, device=h.device
-            )
-            self._last_merged_indices = torch.empty(
-                B, 0, dtype=torch.long, device=h.device
-            )
-            self._last_matched_b_indices = torch.empty(
-                B, 0, dtype=torch.long, device=h.device
-            )
             return (
                 h,
                 mask,
-                {"T_orig": T, "sorted_routing": torch.arange(T, device=h.device)},
+                {
+                    "T_orig": T,
+                    "sorted_routing": torch.arange(T, device=h.device),
+                    "mlm_out": kwargs.get("mlm_mask", None),
+                },
             )
 
         if T > 1:
-            kernel = (
+            h_smooth = F.conv1d(
+                F.pad(h.transpose(1, 2), (1, 1), mode="replicate"),
                 torch.tensor([0.25, 0.5, 0.25], device=h.device, dtype=h.dtype)
                 .view(1, 1, 3)
-                .expand(D, 1, 3)
-            )
-            h_pad = F.pad(h.transpose(1, 2), (1, 1), mode="replicate")
-            h_smooth = F.conv1d(h_pad, kernel, groups=D).transpose(1, 2)
+                .expand(D, 1, 3),
+                groups=D,
+            ).transpose(1, 2)
         else:
             h_smooth = h
 
-        a = h[:, 0::2]
-        b = h[:, 1::2]
-        a_smooth = h_smooth[:, 0::2]
-        b_smooth = h_smooth[:, 1::2]
+        a, b = h[:, 0::2], h[:, 1::2]
+        a_smooth, b_smooth = h_smooth[:, 0::2], h_smooth[:, 1::2]
         min_half = min(a.size(1), b.size(1))
-        a, b = a[:, :min_half], b[:, :min_half]
-        a_smooth, b_smooth = a_smooth[:, :min_half], b_smooth[:, :min_half]
+        a, b, a_smooth, b_smooth = (
+            a[:, :min_half],
+            b[:, :min_half],
+            a_smooth[:, :min_half],
+            b_smooth[:, :min_half],
+        )
 
-        # MATH: Compute pairwise cosine similarity between consecutive temporal tokens
-        # MATH: Bipartite matching maps A set (even indices) to B set (odd indices) for downsampling
-        ka = F.normalize(a_smooth, p=2, dim=-1)
-        kb = F.normalize(b_smooth, p=2, dim=-1)
+        a_proj = torch.matmul(a_smooth, self._jl_proj)
+        b_proj = torch.matmul(b_smooth, self._jl_proj)
+        ka = F.normalize(a_proj.float(), p=2, dim=-1, eps=1e-5).to(a_proj.dtype)
+        kb = F.normalize(b_proj.float(), p=2, dim=-1, eps=1e-5).to(b_proj.dtype)
         sim_matrix = torch.matmul(ka, kb.transpose(-1, -2))
         if mask is not None:
-            ma = mask[:, 0::2][:, :min_half]  # True = Valid
-            mb = mask[:, 1::2][:, :min_half]
-
-            # Target cross-boundaries (Valid to Pad)
-            cross_boundary = ma.unsqueeze(-1) ^ mb.unsqueeze(-2)
-            # Target pad-to-pad (Pad to Pad)
-            pad_to_pad = (~ma).unsqueeze(-1) & (~mb).unsqueeze(-2)
-
-            sim_matrix = sim_matrix.masked_fill(pad_to_pad, -1e4)
-            sim_matrix = sim_matrix.masked_fill(cross_boundary, -1e4)
+            ma, mb = mask[:, 0::2][:, :min_half], mask[:, 1::2][:, :min_half]
+            sim_matrix = sim_matrix.masked_fill(
+                (~ma).unsqueeze(-1) & (~mb).unsqueeze(-2), -1e4
+            ).masked_fill(ma.unsqueeze(-1) ^ mb.unsqueeze(-2), -1e4)
 
         mlm_mask = kwargs.get("mlm_mask", None)
         if mlm_mask is not None:
-            mlm_a = mlm_mask[:, 0::2][:, :min_half]
-            mlm_b = mlm_mask[:, 1::2][:, :min_half]
-            mlm_pair_mask = mlm_a.unsqueeze(-1) ^ mlm_b.unsqueeze(-2)
-            sim_matrix = sim_matrix.masked_fill(mlm_pair_mask, -1e4)
+            sim_matrix = sim_matrix.masked_fill(
+                mlm_mask[:, 0::2][:, :min_half].unsqueeze(-1)
+                ^ mlm_mask[:, 1::2][:, :min_half].unsqueeze(-2),
+                -1e4,
+            )
 
         scores, dst_idx = sim_matrix.max(dim=-1)
         r_clamp = min(r_clamp, min_half)
         _, merge_idx = scores.topk(r_clamp, dim=-1, largest=True, sorted=False)
 
         matched_b_indices_local = dst_idx.gather(1, merge_idx)
-        unmerged_scores = torch.zeros(B, min_half, device=h.device)
-        unmerged_scores.scatter_(1, merge_idx, -1e4)
+        unmerged_scores = torch.zeros(B, min_half, device=h.device).scatter_(
+            1, merge_idx, -1e4
+        )
         _, kept_idx_a = unmerged_scores.topk(min_half - r_clamp, dim=-1, sorted=True)
         kept_idx_a, _ = kept_idx_a.sort(dim=-1)
         kept_a = a.gather(1, kept_idx_a.unsqueeze(-1).expand(-1, -1, D))
 
-        a_merged = a.gather(1, merge_idx.unsqueeze(-1).expand(-1, -1, D))
-        b_updated = b.clone()
-        dst_idx_exp = matched_b_indices_local.unsqueeze(-1).expand(-1, -1, D)
-        b_updated.scatter_add_(1, dst_idx_exp, a_merged)
-
-        counts = torch.ones(B, min_half, 1, device=h.device, dtype=h.dtype)
-        counts_add = torch.ones(B, r_clamp, 1, device=h.device, dtype=h.dtype)
-        counts.scatter_add_(1, matched_b_indices_local.unsqueeze(-1), counts_add)
+        b_updated = b.clone().scatter_add_(
+            1,
+            matched_b_indices_local.unsqueeze(-1).expand(-1, -1, D),
+            a.gather(1, merge_idx.unsqueeze(-1).expand(-1, -1, D)),
+        )
+        counts = torch.ones(
+            B, min_half, 1, device=h.device, dtype=h.dtype
+        ).scatter_add_(
+            1,
+            matched_b_indices_local.unsqueeze(-1),
+            torch.ones(B, r_clamp, 1, device=h.device, dtype=h.dtype),
+        )
         b_updated = b_updated / counts
 
-        unmerged_indices_a = kept_idx_a * 2
         unmerged_indices_b = (
-            torch.arange(min_half, device=h.device).unsqueeze(0).expand(B, -1) * 2 + 1
+            torch.cat(
+                [
+                    torch.arange(min_half, device=h.device).unsqueeze(0).expand(B, -1)
+                    * 2
+                    + 1,
+                    torch.full((B, 1), h.shape[1] - 1, device=h.device),
+                ],
+                dim=1,
+            )
+            if h.shape[1] % 2 != 0
+            else torch.arange(min_half, device=h.device).unsqueeze(0).expand(B, -1) * 2
+            + 1
         )
-        if h.shape[1] % 2 != 0:
-            tail_idx = torch.full((B, 1), h.shape[1] - 1, device=h.device)
-            unmerged_indices_b = torch.cat([unmerged_indices_b, tail_idx], dim=1)
-
-        all_out_indices = torch.cat([unmerged_indices_a, unmerged_indices_b], dim=1)
+        all_out_indices = torch.cat([kept_idx_a * 2, unmerged_indices_b], dim=1)
         _, sorted_routing = torch.sort(all_out_indices, dim=1)
 
-        h_unordered = torch.cat([kept_a, b_updated], dim=1)
-        if h.shape[1] % 2 != 0:
-            h_unordered = torch.cat([h_unordered, h[:, -1:]], dim=1)
+        h_unordered = torch.cat(
+            (
+                [kept_a, b_updated, h[:, -1:]]
+                if h.shape[1] % 2 != 0
+                else [kept_a, b_updated]
+            ),
+            dim=1,
+        )
         h_out = h_unordered.gather(1, sorted_routing.unsqueeze(-1).expand(-1, -1, D))
 
-        mask_out = None
+        mask_out, mlm_out = None, None
         if mask is not None:
-            ma = mask[:, 0::2][:, :min_half]
-            mb = mask[:, 1::2][:, :min_half]
-            kept_mask_a = ma.gather(1, kept_idx_a)
-            merged_mask = ma.gather(1, merge_idx) | mb.gather(
-                1, matched_b_indices_local
+            mask_unordered = torch.cat(
+                (
+                    [
+                        ma.gather(1, kept_idx_a),
+                        mb.clone().scatter_(
+                            1,
+                            matched_b_indices_local,
+                            ma.gather(1, merge_idx)
+                            | mb.gather(1, matched_b_indices_local),
+                        ),
+                        mask[:, -1:],
+                    ]
+                    if h.shape[1] % 2 != 0
+                    else [
+                        ma.gather(1, kept_idx_a),
+                        mb.clone().scatter_(
+                            1,
+                            matched_b_indices_local,
+                            ma.gather(1, merge_idx)
+                            | mb.gather(1, matched_b_indices_local),
+                        ),
+                    ]
+                ),
+                dim=1,
             )
-            b_mask_updated = mb.clone()
-            b_mask_updated.scatter_(1, matched_b_indices_local, merged_mask)
-            mask_unordered = torch.cat([kept_mask_a, b_mask_updated], dim=1)
-            if h.shape[1] % 2 != 0:
-                mask_unordered = torch.cat([mask_unordered, mask[:, -1:]], dim=1)
             mask_out = mask_unordered.gather(1, sorted_routing)
 
-        mlm_out = None
         if mlm_mask is not None:
-            mlm_kept = mlm_a.gather(1, kept_idx_a)
-            mlm_merged = mlm_a.gather(1, merge_idx) | mlm_b.gather(
-                1, matched_b_indices_local
+            mlm_unordered = torch.cat(
+                (
+                    [
+                        mlm_a.gather(1, kept_idx_a),
+                        mlm_b.clone().scatter_(
+                            1,
+                            matched_b_indices_local,
+                            mlm_a.gather(1, merge_idx)
+                            | mlm_b.gather(1, matched_b_indices_local),
+                        ),
+                        mlm_mask[:, -1:],
+                    ]
+                    if mlm_mask.shape[1] % 2 != 0
+                    else [
+                        mlm_a.gather(1, kept_idx_a),
+                        mlm_b.clone().scatter_(
+                            1,
+                            matched_b_indices_local,
+                            mlm_a.gather(1, merge_idx)
+                            | mlm_b.gather(1, matched_b_indices_local),
+                        ),
+                    ]
+                ),
+                dim=1,
             )
-            mlm_b_upd = mlm_b.clone()
-            mlm_b_upd.scatter_(1, matched_b_indices_local, mlm_merged)
-            mlm_unord = torch.cat([mlm_kept, mlm_b_upd], dim=1)
-            if mlm_mask.shape[1] % 2 != 0:
-                mlm_unord = torch.cat([mlm_unord, mlm_mask[:, -1:]], dim=1)
-            mlm_out = mlm_unord.gather(1, sorted_routing)
+            mlm_out = mlm_unordered.gather(1, sorted_routing)
 
-        routing_info = {
-            "kept_idx_a": kept_idx_a,
-            "merge_idx": merge_idx,
-            "matched_b_indices": matched_b_indices_local,
-            "T_orig": T,
-            "sorted_routing": sorted_routing,
-            "mlm_out": mlm_out,
-        }
-        return h_out, mask_out, routing_info
-
-    def unmerge(self, x_comp: torch.Tensor, routing_info: dict) -> torch.Tensor:
-        B, T_comp, D = x_comp.shape
-        T_orig = routing_info["T_orig"]
-        x_full = torch.zeros(B, T_orig, D, device=x_comp.device, dtype=x_comp.dtype)
-        x_unord = torch.zeros_like(x_comp)
-        x_unord.scatter_(
-            1, routing_info["sorted_routing"].unsqueeze(-1).expand(-1, -1, D), x_comp
+        return (
+            h_out,
+            mask_out,
+            {"T_orig": T, "sorted_routing": sorted_routing, "mlm_out": mlm_out},
         )
-        ka_len = routing_info["kept_idx_a"].size(1)
-        kb_len = T_comp - ka_len - (1 if T_orig % 2 != 0 else 0)
-        x_ka = x_unord[:, :ka_len]
-        x_b_updated = x_unord[:, ka_len : ka_len + kb_len]
-        x_m = x_b_updated.gather(
-            1, routing_info["matched_b_indices"].unsqueeze(-1).expand(-1, -1, D)
-        )
-        x_full.scatter_(
-            1, (routing_info["kept_idx_a"] * 2).unsqueeze(-1).expand(-1, -1, D), x_ka
-        )
-        x_full.scatter_(
-            1,
-            (
-                torch.arange(kb_len, device=x_comp.device).unsqueeze(0).expand(B, -1)
-                * 2
-                + 1
-            )
-            .unsqueeze(-1)
-            .expand(-1, -1, D),
-            x_b_updated,
-        )
-        x_full.scatter_(
-            1, (routing_info["merge_idx"] * 2).unsqueeze(-1).expand(-1, -1, D), x_m
-        )
-        if T_orig % 2 != 0:
-            x_full[:, -1:] = x_unord[:, -1:]
-        return x_full
 
 
 # ==============================================================================
-# 6. ENCODER & DECODER ARCHITECTURE
+# 6. ENCODER ARCHITECTURE
 # ==============================================================================
 
 
@@ -774,9 +630,12 @@ def drop_path(
     if drop_prob == 0.0 or not training:
         return x
     keep_prob = 1.0 - drop_prob
-    shape = (x.shape[0],) + (1,) * (x.ndim - 1)
-    random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
-    random_tensor.floor_()
+    random_tensor = (
+        keep_prob
+        + torch.rand(
+            (x.shape[0],) + (1,) * (x.ndim - 1), dtype=x.dtype, device=x.device
+        ).floor_()
+    )
     return x.div(keep_prob) * random_tensor
 
 
@@ -799,49 +658,28 @@ class GroupedQueryEncoderAttention(nn.Module):
         dropout_p: float = 0.1,
     ):
         super().__init__()
-        assert nhead % kv_heads == 0
-        self.d_model = d_model
-        self.nhead = nhead
-        self.kv_heads = kv_heads
-        self.dropout_p = dropout_p
-        self.groups = nhead // kv_heads
-        self.head_dim = d_model // nhead
-        self.scale = 1.0 / np.sqrt(self.head_dim)
-        self.max_len = max_len
-        self.max_relative_position = max_len - 1
-        self.q_proj = nn.Linear(d_model, d_model, bias=False)
-        self.k_proj = nn.Linear(d_model, kv_heads * self.head_dim, bias=False)
-        self.v_proj = nn.Linear(d_model, kv_heads * self.head_dim, bias=False)
-        self.out_proj = nn.Linear(d_model, d_model, bias=False)
-        self.q_norm = RMSNorm(d_model)
-        self.k_norm = RMSNorm(d_model)
-        self.relative_position_bias = nn.Embedding(2 * max_len - 1, nhead)
-
-    def _get_relative_position_bias(
-        self,
-        T: int,
-        device: torch.device,
-        dtype: torch.dtype,
-        frame_indices: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        # MATH: Calculate relative positional bias between queries and keys.
-        # MATH: RelPos = q_pos - k_pos. Clamped to [-max_relative_position, max_relative_position]
-        if frame_indices is not None:
-            coords = frame_indices.to(device=device, dtype=torch.float32)
-            rel_pos = coords.unsqueeze(-1) - coords.unsqueeze(-2)
-        else:
-            # Inject the missing batch dimension [1, T]
-            coords = torch.arange(T, device=device, dtype=torch.float32).unsqueeze(0)
-            rel_pos = coords.unsqueeze(-1) - coords.unsqueeze(-2)
-
-        rel_pos_clamped = torch.clamp(
-            rel_pos, -self.max_relative_position, self.max_relative_position
+        self.nhead, self.kv_heads, self.groups, self.head_dim = (
+            nhead,
+            kv_heads,
+            nhead // kv_heads,
+            d_model // nhead,
         )
-        rel_pos_idx = (rel_pos_clamped + self.max_relative_position).long()
-        values = self.relative_position_bias(rel_pos_idx)
-        # values shape: (1, T, T, kv_heads, groups)
-        values = values.view(1, T, T, self.kv_heads, self.groups)
-        return values.permute(0, 3, 4, 1, 2).to(dtype=dtype)
+        self.scale, self.max_relative_position = (
+            1.0 / np.sqrt(self.head_dim),
+            max_len - 1,
+        )
+        self.q_proj, self.k_proj, self.v_proj, self.out_proj = (
+            nn.Linear(d_model, d_model, bias=False),
+            nn.Linear(d_model, kv_heads * self.head_dim, bias=False),
+            nn.Linear(d_model, kv_heads * self.head_dim, bias=False),
+            nn.Linear(d_model, d_model, bias=False),
+        )
+        self.q_norm, self.k_norm, self.relative_position_bias = (
+            RMSNorm(d_model),
+            RMSNorm(d_model),
+            nn.Embedding(2 * max_len - 1, nhead),
+        )
+        self.dropout_p = dropout_p
 
     def forward(
         self,
@@ -850,54 +688,68 @@ class GroupedQueryEncoderAttention(nn.Module):
         frame_indices: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         B, T, _ = x.shape
-        q_in = self.q_norm(x)
-        k_in = self.k_norm(x)
-        q = (
-            self.q_proj(q_in)
+        q, k, v = (
+            self.q_proj(self.q_norm(x))
             .view(B, T, self.kv_heads, self.groups, self.head_dim)
-            .permute(0, 2, 3, 1, 4)
-        )
-        k = (
-            self.k_proj(k_in)
+            .permute(0, 2, 3, 1, 4),
+            self.k_proj(self.k_norm(x))
             .view(B, T, self.kv_heads, 1, self.head_dim)
-            .permute(0, 2, 3, 1, 4)
-        )
-        v = (
+            .permute(0, 2, 3, 1, 4),
             self.v_proj(x)
             .view(B, T, self.kv_heads, 1, self.head_dim)
-            .permute(0, 2, 3, 1, 4)
+            .permute(0, 2, 3, 1, 4),
         )
 
+        coords = (
+            frame_indices.to(device=x.device, dtype=torch.float32)
+            if frame_indices is not None
+            else torch.arange(T, device=x.device, dtype=torch.float32).unsqueeze(0)
+        )
         attn_mask = (
-            self._get_relative_position_bias(T, x.device, x.dtype, frame_indices)
+            self.relative_position_bias(
+                (
+                    torch.clamp(
+                        coords.unsqueeze(-1) - coords.unsqueeze(-2),
+                        -self.max_relative_position,
+                        self.max_relative_position,
+                    )
+                    + self.max_relative_position
+                ).long()
+            )
+            .view(1, T, T, self.kv_heads, self.groups)
+            .permute(0, 3, 4, 1, 2)
+            .to(dtype=x.dtype)
             .expand(B, -1, -1, -1, -1)
             .contiguous()
         )
         if key_padding_mask is not None:
-            pad = key_padding_mask.view(B, 1, 1, 1, T)
-            attn_mask = attn_mask.masked_fill(pad, float("-inf"))
+            attn_mask = attn_mask.masked_fill(
+                key_padding_mask.view(B, 1, 1, 1, T), float("-inf")
+            )
 
         q = q.reshape(B * self.kv_heads, self.groups, T, self.head_dim)
-        k = k.repeat_interleave(self.groups, dim=2)
-        v = v.repeat_interleave(self.groups, dim=2)
-        k = k.reshape(B * self.kv_heads, self.groups, T, self.head_dim)
-        v = v.reshape(B * self.kv_heads, self.groups, T, self.head_dim)
-        attn_mask = attn_mask.reshape(B * self.kv_heads, self.groups, T, T)
-
-        attn_out = F.scaled_dot_product_attention(
-            q,
-            k,
-            v,
-            attn_mask=attn_mask,
-            dropout_p=self.dropout_p if self.training else 0.0,
-            is_causal=False,
-        )
-        attn_out = (
-            attn_out.view(B, self.kv_heads, self.groups, T, self.head_dim)
+        k = k.repeat_interleave(self.groups, dim=2).reshape(
+            B * self.kv_heads, self.groups, T, self.head_dim
+        )[:, :, ::2, :]
+        v = v.repeat_interleave(self.groups, dim=2).reshape(
+            B * self.kv_heads, self.groups, T, self.head_dim
+        )[:, :, ::2, :]
+        
+        attn_mask = attn_mask.reshape(B * self.kv_heads, self.groups, T, T)[:, :, :, ::2]
+        
+        return self.out_proj(
+            F.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                attn_mask=attn_mask,
+                dropout_p=self.dropout_p if self.training else 0.0,
+                is_causal=False,
+            )
+            .view(B, self.kv_heads, self.groups, T, self.head_dim)
             .permute(0, 3, 1, 2, 4)
             .reshape(B, T, -1)
         )
-        return self.out_proj(attn_out)
 
 
 class SpatialTemporalSE(nn.Module):
@@ -916,8 +768,7 @@ class SpatialTemporalSE(nn.Module):
     ) -> torch.Tensor:
         if key_padding_mask is not None:
             valid_mask = (~key_padding_mask).unsqueeze(-1).to(x.dtype)
-            x_valid = x * valid_mask
-            mean_x = x_valid.sum(dim=1) / valid_mask.sum(dim=1).clamp(min=1.0)
+            mean_x = (x * valid_mask).sum(dim=1) / valid_mask.sum(dim=1).clamp(min=1.0)
         else:
             mean_x = x.mean(dim=1)
         return x * torch.max(self.cSE(mean_x).unsqueeze(1), self.sSE(x))
@@ -926,7 +777,6 @@ class SpatialTemporalSE(nn.Module):
 class ConvNeXtTemporalBlock(nn.Module):
     def __init__(self, channels: int, expansion: int = 2):
         super().__init__()
-        hidden = channels * expansion
         self.dw_conv = nn.Conv1d(
             channels,
             channels,
@@ -936,34 +786,33 @@ class ConvNeXtTemporalBlock(nn.Module):
             padding_mode="reflect",
         )
         self.norm = RMSNorm(channels)
-        self.pw_conv1 = nn.Linear(channels, hidden)
-        self.act = nn.GELU()
-        self.pw_conv2 = nn.Linear(hidden, channels)
-        self.se = SpatialTemporalSE(channels)
+        self.pw_conv1, self.pw_conv2 = nn.Linear(
+            channels, channels * expansion
+        ), nn.Linear(channels * expansion, channels)
+        self.act, self.se = nn.GELU(), SpatialTemporalSE(channels)
 
     def forward(
         self, x: torch.Tensor, key_padding_mask: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         if key_padding_mask is not None:
             x = x.masked_fill(key_padding_mask.unsqueeze(-1), 0.0)
-
-        if x.size(1) < 4:
-            xp = F.pad(x.transpose(1, 2), (3, 3), mode="replicate")
-        else:
-            xp = F.pad(x.transpose(1, 2), (3, 3), mode="reflect")
-
-        y = F.conv1d(
-            xp, self.dw_conv.weight, self.dw_conv.bias, groups=self.dw_conv.groups
+        y = self.norm(
+            F.conv1d(
+                F.pad(
+                    x.transpose(1, 2),
+                    (3, 3),
+                    mode="replicate" if x.size(1) < 4 else "reflect",
+                ),
+                self.dw_conv.weight,
+                self.dw_conv.bias,
+                groups=self.dw_conv.groups,
+            ).transpose(1, 2)
         )
-
-        # MATH: Manual padding added 6 to sequence length. F.conv1d(padding=0) with kernel=7 reduces it exactly back to T. No slicing needed.
-        y = y.transpose(1, 2)
-
         if key_padding_mask is not None:
             y = y.masked_fill(key_padding_mask.unsqueeze(-1), 0.0)
-        y = self.norm(y)
-        y = self.pw_conv2(self.act(self.pw_conv1(y)))
-        y = self.se(y, key_padding_mask=key_padding_mask)
+        y = self.se(
+            self.pw_conv2(self.act(self.pw_conv1(y))), key_padding_mask=key_padding_mask
+        )
         if key_padding_mask is not None:
             y = y.masked_fill(key_padding_mask.unsqueeze(-1), 0.0)
         return y
@@ -982,74 +831,74 @@ class BiMamba2SSMBlock(nn.Module):
         init_values: float = 1e-4,
     ):
         super().__init__()
-        self.d_model = d_model
-        self.d_inner = d_model * expand
-        if self.d_inner % headdim == 0:
-            self.headdim = headdim
-            self.nheads = self.d_inner // headdim
-        else:
-            possible_heads = [
-                h for h in range(1, self.d_inner + 1) if self.d_inner % h == 0
-            ]
-            target_heads = max(1, self.d_inner // headdim)
-            self.nheads = min(possible_heads, key=lambda h: abs(h - target_heads))
-            self.headdim = self.d_inner // self.nheads
-        self.d_state = d_state
+        self.d_model, self.d_inner, self.d_state = d_model, d_model * expand, d_state
+        self.nheads, self.headdim = (
+            (self.d_inner // headdim)
+            if self.d_inner % headdim == 0
+            else min(
+                [h for h in range(1, self.d_inner + 1) if self.d_inner % h == 0],
+                key=lambda h: abs(h - max(1, self.d_inner // headdim)),
+            )
+        ), self.d_inner // (
+            self.d_inner // headdim
+            if self.d_inner % headdim == 0
+            else min(
+                [h for h in range(1, self.d_inner + 1) if self.d_inner % h == 0],
+                key=lambda h: abs(h - max(1, self.d_inner // headdim)),
+            )
+        )
 
         self.norm1 = RMSNorm(d_model)
-        self.d_in_proj = 2 * self.d_inner + 2 * self.nheads * d_state + self.nheads
-        self.in_proj = nn.Linear(d_model, self.d_in_proj, bias=False)
+        self.in_proj = nn.Linear(
+            d_model,
+            2 * self.d_inner + 2 * self.nheads * d_state + self.nheads,
+            bias=False,
+        )
         self.bwd_proj = nn.Linear(
             d_model, self.d_inner + 2 * self.nheads * d_state + self.nheads, bias=False
         )
 
         self.fwd_conv1d = nn.Conv1d(
-            in_channels=self.d_inner,
-            out_channels=self.d_inner,
+            self.d_inner,
+            self.d_inner,
             kernel_size=d_conv,
             padding=d_conv - 1,
             groups=self.d_inner,
         )
         self.bwd_conv1d = nn.Conv1d(
-            in_channels=self.d_inner,
-            out_channels=self.d_inner,
+            self.d_inner,
+            self.d_inner,
             kernel_size=d_conv,
             padding=d_conv - 1,
             groups=self.d_inner,
         )
 
-        A_init = torch.arange(1, self.nheads + 1, dtype=torch.float32)
-        self.A_log = nn.Parameter(torch.log(A_init))
-        dt_init = torch.rand(self.nheads) * 0.099 + 0.001
-        self.dt_bias = nn.Parameter(torch.log(torch.exp(dt_init) - 1))
+        self.A_log = nn.Parameter(
+            torch.log(torch.arange(1, self.nheads + 1, dtype=torch.float32))
+        )
+        self.dt_bias = nn.Parameter(
+            torch.log(torch.exp(torch.rand(self.nheads) * 0.099 + 0.001) - 1)
+        )
 
-        self.head_norm_fwd = RMSNorm(self.headdim)
-        self.head_norm_bwd = RMSNorm(self.headdim)
-        self.gated_norm = RMSNorm(self.d_inner)
+        self.head_norm_fwd, self.head_norm_bwd, self.gated_norm = (
+            RMSNorm(self.headdim),
+            RMSNorm(self.headdim),
+            RMSNorm(self.d_inner),
+        )
         self.out_proj = nn.Linear(self.d_inner, d_model, bias=False)
-        self.gamma_1 = nn.Parameter(init_values * torch.ones(d_model))
-        self.drop_path1 = DropPath(drop_path_rate)
+        self.gamma_1, self.drop_path1 = nn.Parameter(
+            init_values * torch.ones(d_model)
+        ), DropPath(drop_path_rate)
+        self.norm2, self.ffn, self.gamma_2, self.drop_path2 = (
+            RMSNorm(d_model),
+            SwiGLUFFN(d_model, ffn_dim),
+            nn.Parameter(init_values * torch.ones(d_model)),
+            DropPath(drop_path_rate),
+        )
 
-        self.norm2 = RMSNorm(d_model)
-        self.ffn = SwiGLUFFN(d_model, ffn_dim)
-        self.gamma_2 = nn.Parameter(init_values * torch.ones(d_model))
-        self.drop_path2 = DropPath(drop_path_rate)
-
-        self._init_weights()
-
-    def _init_weights(self):
         nn.init.orthogonal_(self.in_proj.weight)
         nn.init.orthogonal_(self.bwd_proj.weight)
         nn.init.orthogonal_(self.out_proj.weight)
-
-        # Scale B and C initialization
-        start_fwd = 2 * self.d_inner
-        end_fwd = start_fwd + 2 * self.nheads * self.d_state
-        self.in_proj.weight.data[start_fwd:end_fwd] /= math.sqrt(self.d_inner)
-
-        start_bwd = self.d_inner
-        end_bwd = start_bwd + 2 * self.nheads * self.d_state
-        self.bwd_proj.weight.data[start_bwd:end_bwd] /= math.sqrt(self.d_inner)
 
     def _ssd_multihead_scan(
         self,
@@ -1063,113 +912,97 @@ class BiMamba2SSMBlock(nn.Module):
         chunk_size: int = 64,
     ) -> torch.Tensor:
         B_sz, T_sz, H_sz, P_sz = x.shape
-        N_sz = B.shape[-1]
-        device = x.device
-
+        N_sz, device = B.shape[-1], x.device
         if reverse:
-            x = x.flip(1)
-            dt = dt.flip(1)
-            B = B.flip(1)
-            C = C.flip(1)
+            x, dt, B, C = x.flip(1), dt.flip(1), B.flip(1), C.flip(1)
             if key_padding_mask is not None:
                 key_padding_mask = key_padding_mask.flip(1)
 
-        # MATH: Discretize continuous time scale: delta_t = softplus(dt)
-        # MATH: Compute log decay for state transition: log(A_bar) = -delta_t * A
         dt_act = F.softplus(dt).clamp(max=20.0)
-        decay_mag = (dt_act * A.view(1, 1, H_sz)).clamp(min=1e-4, max=20.0)
-        log_decay = -decay_mag
-
+        log_decay = -(dt_act * A.view(1, 1, H_sz)).clamp(min=1e-4, max=20.0)
         if key_padding_mask is not None:
             log_decay = log_decay.masked_fill(key_padding_mask.unsqueeze(-1), 0.0)
 
         Q = min(chunk_size, T_sz)
         pad_len = (Q - (T_sz % Q)) % Q
         if pad_len > 0:
-            x = F.pad(x, (0, 0, 0, 0, 0, pad_len))
-            log_decay = F.pad(log_decay, (0, 0, 0, pad_len), value=-1e4)
-            B = F.pad(B, (0, 0, 0, 0, 0, pad_len))
-            C = F.pad(C, (0, 0, 0, 0, 0, pad_len))
-            dt_act = F.pad(dt_act, (0, 0, 0, pad_len), value=0.0)
+            x, B, C, log_decay, dt_act = (
+                F.pad(x, (0, 0, 0, 0, 0, pad_len)),
+                F.pad(B, (0, 0, 0, 0, 0, pad_len)),
+                F.pad(C, (0, 0, 0, 0, 0, pad_len)),
+                F.pad(log_decay, (0, 0, 0, pad_len), value=-1e4),
+                F.pad(dt_act, (0, 0, 0, pad_len), value=0.0),
+            )
 
-        T_pad = x.shape[1]
-        n_chunks = T_pad // Q
+        T_pad, n_chunks = x.shape[1], x.shape[1] // Q
 
         x_chunk = x.view(B_sz, n_chunks, Q, H_sz, P_sz).permute(0, 3, 1, 2, 4)
         B_chunk = B.view(B_sz, n_chunks, Q, H_sz, N_sz).permute(0, 3, 1, 2, 4)
         C_chunk = C.view(B_sz, n_chunks, Q, H_sz, N_sz).permute(0, 3, 1, 2, 4)
         ld_chunk = log_decay.view(B_sz, n_chunks, Q, H_sz).permute(0, 3, 1, 2)
-        dt_chunk = dt_act.view(B_sz, n_chunks, Q, H_sz).permute(0, 3, 1, 2)
 
-        # MATH: Compute intra-chunk output using semi-separable matrix M = C * exp(log_decay) * B
-        B_chunk_dt = B_chunk * dt_chunk.unsqueeze(-1)
+        B_chunk_dt = B_chunk * dt_act.view(B_sz, n_chunks, Q, H_sz).permute(
+            0, 3, 1, 2
+        ).unsqueeze(-1)
         CB = torch.matmul(C_chunk, B_chunk_dt.transpose(-1, -2)) / math.sqrt(N_sz)
-        cum_decay = (
-            ld_chunk.to(torch.float32).cumsum(dim=-1).to(ld_chunk.dtype)
-        )  # MATH: ld_chunk is [B, H, n, Q] after permute, so dim=-1 is Q
-        decay_diff = cum_decay.unsqueeze(-1) - cum_decay.unsqueeze(-2)
-        causal_mask = torch.tril(torch.ones(Q, Q, device=device, dtype=torch.bool))
-        M = torch.exp(decay_diff.masked_fill(~causal_mask, -float("inf")))
-
+        cum_decay = ld_chunk.to(torch.float32).cumsum(dim=-1).to(ld_chunk.dtype)
+        M = torch.exp(
+            (cum_decay.unsqueeze(-1) - cum_decay.unsqueeze(-2)).masked_fill(
+                ~torch.tril(torch.ones(Q, Q, device=device, dtype=torch.bool)),
+                -float("inf"),
+            )
+        )
         Y_intra = torch.matmul(M * CB, x_chunk)
 
-        # MATH: Calculate total decay across the entire chunk to propagate hidden state to next chunk
-        log_chunk_decay = ld_chunk.sum(
-            dim=-1
-        )  # MATH: sum over sequence length Q (dim=-1)
-        decay_to_end = torch.exp(
-            cum_decay[:, :, :, -1:] - cum_decay
-        )  # FIX: proper indexing for Q dimension
+        log_chunk_decay = ld_chunk.sum(dim=-1)
+        decay_to_end = torch.exp(cum_decay[:, :, :, -1:] - cum_decay)
+        state_gen = torch.einsum(
+            "bhcqp, bhcqn -> bhcpn", x_chunk * decay_to_end.unsqueeze(-1), B_chunk_dt
+        )
 
-        x_weighted = x_chunk * decay_to_end.unsqueeze(-1)
-        state_gen = torch.einsum("bhcqp, bhcqn -> bhcpn", x_weighted, B_chunk_dt)
-
-        # MATH: Compute inter-chunk exponential decay M_inter for passing states between chunks
         L = log_chunk_decay.cumsum(dim=2)
-        zeros_L = torch.zeros_like(L[:, :, :1])
-        L_shifted = torch.cat([zeros_L, L[:, :, :-1]], dim=2)
-
-        diff_L = L_shifted.unsqueeze(-1) - L.unsqueeze(-2)
-        mask_inter = torch.tril(
-            torch.ones(n_chunks, n_chunks, device=device, dtype=torch.bool), diagonal=-1
+        L_shifted = torch.cat([torch.zeros_like(L[:, :, :1]), L[:, :, :-1]], dim=2)
+        M_inter = torch.exp(
+            (L_shifted.unsqueeze(-1) - L.unsqueeze(-2)).masked_fill(
+                ~torch.tril(
+                    torch.ones(n_chunks, n_chunks, device=device, dtype=torch.bool),
+                    diagonal=-1,
+                ),
+                -float("inf"),
+            )
         )
-        M_inter = torch.exp(diff_L.masked_fill(~mask_inter, -float("inf")))
 
-        P_sz, N_sz = state_gen.shape[-2], state_gen.shape[-1]
-        state_gen_flat = state_gen.contiguous().reshape(
-            B_sz, H_sz, n_chunks, P_sz * N_sz
+        state_stack_flat = torch.einsum(
+            "bhij, bhjk -> bhik",
+            M_inter,
+            state_gen.contiguous().reshape(
+                B_sz, H_sz, n_chunks, state_gen.shape[-2] * state_gen.shape[-1]
+            ),
         )
-        state_stack_flat = torch.einsum("bhij, bhjk -> bhik", M_inter, state_gen_flat)
-        state_stack = state_stack_flat.reshape(B_sz, H_sz, n_chunks, P_sz, N_sz)
+        state_stack = state_stack_flat.reshape(
+            B_sz, H_sz, n_chunks, state_gen.shape[-2], state_gen.shape[-1]
+        )
 
         C_state = torch.einsum(
             "bhcqn, bhcpn -> bhcqp", C_chunk, state_stack
         ) / math.sqrt(N_sz)
-        decay_from_start = torch.exp(cum_decay).unsqueeze(-1)
-        Y_inter = C_state * decay_from_start
+        Y_inter = C_state * torch.exp(cum_decay).unsqueeze(-1)
 
-        Y = Y_intra + Y_inter
-        Y_flat = Y.permute(0, 2, 3, 1, 4).reshape(B_sz, T_pad, H_sz, P_sz)
-
-        if reverse:
-            return Y_flat[:, :T_sz].flip(1)
-
-        return Y_flat[:, :T_sz]
+        Y_flat = (
+            (Y_intra + Y_inter).permute(0, 2, 3, 1, 4).reshape(B_sz, T_pad, H_sz, P_sz)
+        )
+        return Y_flat[:, :T_sz].flip(1) if reverse else Y_flat[:, :T_sz]
 
     def forward(
-        self,
-        x: torch.Tensor,
-        key_padding_mask: Optional[torch.Tensor] = None,
+        self, x: torch.Tensor, key_padding_mask: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         if key_padding_mask is not None:
             x = x.masked_fill(key_padding_mask.unsqueeze(-1), 0.0)
-        residual = x
         xn = self.norm1(x)
         B_sz, T_sz, _ = xn.shape
 
-        projected = self.in_proj(xn)
         x_proj, z, B_ssm_fwd, C_ssm_fwd, dt_fwd = torch.split(
-            projected,
+            self.in_proj(xn),
             [
                 self.d_inner,
                 self.d_inner,
@@ -1179,10 +1012,8 @@ class BiMamba2SSMBlock(nn.Module):
             ],
             dim=-1,
         )
-
-        projected_bwd = self.bwd_proj(xn)
         x_proj_bwd, B_ssm_bwd, C_ssm_bwd, dt_bwd = torch.split(
-            projected_bwd,
+            self.bwd_proj(xn),
             [
                 self.d_inner,
                 self.nheads * self.d_state,
@@ -1192,24 +1023,20 @@ class BiMamba2SSMBlock(nn.Module):
             dim=-1,
         )
 
-        x_conv_fwd = F.silu(
+        x_fwd_h = F.silu(
             self.fwd_conv1d(x_proj.transpose(1, 2))[:, :, :T_sz].transpose(1, 2)
-        )
-        x_conv_bwd = F.silu(
+        ).view(B_sz, T_sz, self.nheads, self.headdim)
+        x_bwd_h = F.silu(
             self.bwd_conv1d(x_proj_bwd.transpose(1, 2))[:, :, -T_sz:].transpose(1, 2)
-        )
-
-        x_fwd_h = x_conv_fwd.view(B_sz, T_sz, self.nheads, self.headdim)
-        x_bwd_h = x_conv_bwd.view(B_sz, T_sz, self.nheads, self.headdim)
-        B_h_fwd = B_ssm_fwd.view(B_sz, T_sz, self.nheads, self.d_state)
-        C_h_fwd = C_ssm_fwd.view(B_sz, T_sz, self.nheads, self.d_state)
-
-        B_h_bwd = B_ssm_bwd.view(B_sz, T_sz, self.nheads, self.d_state)
-        C_h_bwd = C_ssm_bwd.view(B_sz, T_sz, self.nheads, self.d_state)
+        ).view(B_sz, T_sz, self.nheads, self.headdim)
+        B_h_fwd, C_h_fwd = B_ssm_fwd.view(
+            B_sz, T_sz, self.nheads, self.d_state
+        ), C_ssm_fwd.view(B_sz, T_sz, self.nheads, self.d_state)
+        B_h_bwd, C_h_bwd = B_ssm_bwd.view(
+            B_sz, T_sz, self.nheads, self.d_state
+        ), C_ssm_bwd.view(B_sz, T_sz, self.nheads, self.d_state)
 
         A = F.softplus(self.A_log)
-
-        # MATH: dt_bias is required before softplus discretization to initialize stable delta time steps
         y_fwd = self._ssd_multihead_scan(
             x_fwd_h,
             dt_fwd + self.dt_bias,
@@ -1230,20 +1057,17 @@ class BiMamba2SSMBlock(nn.Module):
         )
 
         y_normed = 0.5 * (self.head_norm_fwd(y_fwd) + self.head_norm_bwd(y_bwd))
-        y_flat = y_normed.reshape(B_sz, T_sz, self.d_inner)
-
-        y_gated = self.gated_norm(y_flat * F.silu(z))
-        out = self.out_proj(y_gated)
+        out = self.out_proj(
+            self.gated_norm(y_normed.reshape(B_sz, T_sz, self.d_inner) * F.silu(z))
+        )
         if key_padding_mask is not None:
             out = out.masked_fill(key_padding_mask.unsqueeze(-1), 0.0)
 
-        x = residual + self.drop_path1(self.gamma_1 * out)
+        x = x + self.drop_path1(self.gamma_1 * out)
         x2 = self.ffn(self.norm2(x))
         if key_padding_mask is not None:
             x2 = x2.masked_fill(key_padding_mask.unsqueeze(-1), 0.0)
-        x = x + self.drop_path2(self.gamma_2 * x2)
-
-        return x
+        return x + self.drop_path2(self.gamma_2 * x2)
 
 
 class MobileConformerBlock(nn.Module):
@@ -1297,8 +1121,6 @@ class MobileConformerBlock(nn.Module):
         if key_padding_mask is not None:
             x = x.masked_fill(key_padding_mask.unsqueeze(-1), 0.0)
 
-        # MATH: Split into class token and sequence for temporal convolution.
-        # MATH: Apply ConvNeXt 1D depthwise convolution for local temporal modeling.
         cls_t = x[:, :1]
         x_seq = x[:, 1:]
         seq_mask = key_padding_mask[:, 1:] if key_padding_mask is not None else None
@@ -1405,17 +1227,20 @@ class GroupedQuerySelfAttention(nn.Module):
     ):
         super().__init__()
         assert nhead % kv_heads == 0
-        self.nhead = nhead
-        self.kv_heads = kv_heads
-        self.groups = nhead // kv_heads
-        self.head_dim = d_model // nhead
+        self.nhead, self.kv_heads, self.groups, self.head_dim = (
+            nhead,
+            kv_heads,
+            nhead // kv_heads,
+            d_model // nhead,
+        )
         self.scale = self.head_dim**-0.5
-        self.q_proj = nn.Linear(d_model, d_model, bias=False)
-        self.k_proj = nn.Linear(d_model, kv_heads * self.head_dim, bias=False)
-        self.v_proj = nn.Linear(d_model, kv_heads * self.head_dim, bias=False)
+        self.q_proj, self.k_proj, self.v_proj = (
+            nn.Linear(d_model, d_model, bias=False),
+            nn.Linear(d_model, kv_heads * self.head_dim, bias=False),
+            nn.Linear(d_model, kv_heads * self.head_dim, bias=False),
+        )
         self.o_proj = nn.Linear(d_model, d_model, bias=False)
-        self.q_norm = RMSNorm(d_model)
-        self.k_norm = RMSNorm(d_model)
+        self.q_norm, self.k_norm = RMSNorm(d_model), RMSNorm(d_model)
         self.rope = RoPEEmbedding(self.head_dim, max_seq_len=max_seq_len)
         nn.init.normal_(self.q_proj.weight, std=0.02)
         nn.init.normal_(self.k_proj.weight, std=0.02)
@@ -1427,10 +1252,9 @@ class GroupedQuerySelfAttention(nn.Module):
         x: torch.Tensor,
         past_key_value: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         use_cache: bool = False,
-    ) -> Union[torch.Tensor, Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]]:
+    ):
         B, T, _ = x.shape
-        q_in = self.q_norm(x)
-        k_in = self.k_norm(x)
+        q_in, k_in = self.q_norm(x), self.k_norm(x)
         q = self.q_proj(q_in).view(B, T, self.nhead, self.head_dim).transpose(1, 2)
         k = self.k_proj(k_in).view(B, T, self.kv_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(x).view(B, T, self.kv_heads, self.head_dim).transpose(1, 2)
@@ -1439,15 +1263,13 @@ class GroupedQuerySelfAttention(nn.Module):
         q, k = self.rope(q, k, offset=past_len)
 
         if past_key_value is not None:
-            past_k, past_v = past_key_value
-            k = torch.cat([past_k, k], dim=2)
-            v = torch.cat([past_v, v], dim=2)
+            k = torch.cat([past_key_value[0], k], dim=2)
+            v = torch.cat([past_key_value[1], v], dim=2)
 
         current_key_value = (k, v) if use_cache else None
 
         k_exp = k.repeat_interleave(self.groups, dim=1)
         v_exp = v.repeat_interleave(self.groups, dim=1)
-        total_len = k.size(2)
 
         if T == 1:
             out = F.scaled_dot_product_attention(q, k_exp, v_exp, scale=self.scale)
@@ -1457,26 +1279,26 @@ class GroupedQuerySelfAttention(nn.Module):
             )
 
         out = self.o_proj(out.transpose(1, 2).reshape(B, T, -1))
-        if use_cache:
-            return out, current_key_value
-        return out
+        return (out, current_key_value) if use_cache else out
 
 
 class DecoderCrossAttention(nn.Module):
     def __init__(self, d_model: int = 320, nhead: int = 8, kv_heads: int = 2):
         super().__init__()
         assert nhead % kv_heads == 0
-        self.nhead = nhead
-        self.kv_heads = kv_heads
-        self.groups = nhead // kv_heads
-        self.head_dim = d_model // nhead
-        self.scale = self.head_dim**-0.5
-        self.q_proj = nn.Linear(d_model, d_model, bias=False)
-        self.k_proj = nn.Linear(d_model, kv_heads * self.head_dim, bias=False)
-        self.v_proj = nn.Linear(d_model, kv_heads * self.head_dim, bias=False)
+        self.nhead, self.kv_heads, self.groups, self.head_dim = (
+            nhead,
+            kv_heads,
+            nhead // kv_heads,
+            d_model // nhead,
+        )
+        self.q_proj, self.k_proj, self.v_proj = (
+            nn.Linear(d_model, d_model, bias=False),
+            nn.Linear(d_model, kv_heads * self.head_dim, bias=False),
+            nn.Linear(d_model, kv_heads * self.head_dim, bias=False),
+        )
         self.o_proj = nn.Linear(d_model, d_model, bias=False)
-        self.q_norm = RMSNorm(d_model)
-        self.k_norm = RMSNorm(d_model)
+        self.q_norm, self.k_norm = RMSNorm(d_model), RMSNorm(d_model)
         nn.init.normal_(self.q_proj.weight, std=0.02)
         nn.init.normal_(self.k_proj.weight, std=0.02)
         nn.init.normal_(self.v_proj.weight, std=0.02)
@@ -1489,18 +1311,20 @@ class DecoderCrossAttention(nn.Module):
         memory_key_padding_mask: Optional[torch.Tensor] = None,
         past_key_value: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         use_cache: bool = False,
-    ) -> Union[torch.Tensor, Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]]:
+    ):
         B, T, _ = tgt.shape
-        q_in = self.q_norm(tgt)
-        q = self.q_proj(q_in).view(B, T, self.nhead, self.head_dim).transpose(1, 2)
+        q = (
+            self.q_proj(self.q_norm(tgt))
+            .view(B, T, self.nhead, self.head_dim)
+            .transpose(1, 2)
+        )
 
         if past_key_value is not None:
             k, v = past_key_value
         else:
             S = memory.size(1)
-            k_in = self.k_norm(memory)
             k = (
-                self.k_proj(k_in)
+                self.k_proj(self.k_norm(memory))
                 .view(B, S, self.kv_heads, self.head_dim)
                 .transpose(1, 2)
             )
@@ -1510,30 +1334,19 @@ class DecoderCrossAttention(nn.Module):
                 .transpose(1, 2)
             )
 
-        # Cross-Attention keys/values are static from the encoder
         current_key_value = (k, v) if use_cache else None
 
         k_exp = k.repeat_interleave(self.groups, dim=1)
         v_exp = v.repeat_interleave(self.groups, dim=1)
-        S = k.size(2)
 
-        attn_mask = None
-        if memory_key_padding_mask is not None:
-            # MATH: enc_mask is True for Valid. SDPA boolean mask expects True for valid.
-            attn_mask = memory_key_padding_mask.view(B, 1, 1, S).bool()
-
-        # MATH: Scaled Dot-Product Attention: softmax(Q * K^T / sqrt(d)) * V
-        attn_out = F.scaled_dot_product_attention(
-            q,
-            k_exp,
-            v_exp,
-            attn_mask=attn_mask,
+        attn_mask = (
+            memory_key_padding_mask.view(B, 1, 1, k.size(2)).bool()
+            if memory_key_padding_mask is not None
+            else None
         )
-        out = self.o_proj(attn_out.transpose(1, 2).reshape(B, T, -1))
-
-        if use_cache:
-            return out, current_key_value
-        return out
+        out = F.scaled_dot_product_attention(q, k_exp, v_exp, attn_mask=attn_mask)
+        out = self.o_proj(out.transpose(1, 2).reshape(B, T, -1))
+        return (out, current_key_value) if use_cache else out
 
 
 class ASLDecoderLayer(nn.Module):
@@ -1561,9 +1374,11 @@ class ASLDecoderLayer(nn.Module):
         self.norm3 = RMSNorm(d_model)
         self.ffn = SwiGLUFFN(d_model=d_model, dim_feedforward=ffn_dim)
         self.gamma3 = nn.Parameter(iv * torch.ones(d_model))
-        self.drop1 = DropPath(dropout)
-        self.drop2 = DropPath(dropout)
-        self.drop3 = DropPath(dropout)
+        self.drop1, self.drop2, self.drop3 = (
+            DropPath(dropout),
+            DropPath(dropout),
+            DropPath(dropout),
+        )
 
     def forward(
         self,
@@ -1573,14 +1388,7 @@ class ASLDecoderLayer(nn.Module):
         past_self_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         past_cross_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         use_cache: bool = False,
-    ) -> Union[
-        torch.Tensor,
-        Tuple[
-            torch.Tensor,
-            Tuple[torch.Tensor, torch.Tensor],
-            Tuple[torch.Tensor, torch.Tensor],
-        ],
-    ]:
+    ):
         if use_cache:
             sa_out, new_self_kv = self.self_attn(
                 self.norm1(tgt), past_key_value=past_self_kv, use_cache=True
@@ -1621,24 +1429,23 @@ class ASLTransformerDecoder(nn.Module):
         label_to_idx: Optional[Dict[str, int]] = None,
     ):
         super().__init__()
-        self.d_model = d_model
-        self.vocab_size = vocab_size
-        self.max_seq_len = max_seq_len
-        self.input_token_dropout = 0.12
+        self.d_model, self.vocab_size, self.max_seq_len, self.input_token_dropout = (
+            d_model,
+            vocab_size,
+            max_seq_len,
+            0.12,
+        )
 
         self.token_emb = nn.Embedding(
             vocab_size, d_model, padding_idx=GlossVocabulary.PAD_ID
         )
-
         self.asl_lex_emb = RichASLLexEmbeddingTable(
             vocab_size=vocab_size,
             d_model=d_model,
             csv_path=csv_path,
             label_to_idx=label_to_idx,
         )
-
-        self.emb_drop = nn.Dropout(dropout * 0.5)
-        self.emb_scale = math.sqrt(d_model)
+        self.emb_drop, self.emb_scale = nn.Dropout(dropout * 0.5), math.sqrt(d_model)
 
         self.layers = nn.ModuleList(
             [
@@ -1651,9 +1458,6 @@ class ASLTransformerDecoder(nn.Module):
         self.lm_head = nn.Linear(d_model, vocab_size, bias=False)
         self.lm_head.weight = self.token_emb.weight
 
-        self._init_weights()
-
-    def _init_weights(self) -> None:
         nn.init.normal_(self.token_emb.weight, std=0.02)
         with torch.no_grad():
             self.token_emb.weight[GlossVocabulary.PAD_ID].fill_(0)
@@ -1665,18 +1469,13 @@ class ASLTransformerDecoder(nn.Module):
         memory_key_padding_mask: Optional[torch.Tensor] = None,
         past_key_values: Optional[List[Tuple]] = None,
         use_cache: bool = False,
-    ) -> Union[
-        Tuple[torch.Tensor, torch.Tensor],
-        Tuple[torch.Tensor, torch.Tensor, List[Tuple]],
-    ]:
+    ):
         B, S = tgt_ids.shape
-
         if self.training and self.input_token_dropout > 0:
             drop_mask = (
                 torch.rand(tgt_ids.shape, device=tgt_ids.device)
                 < self.input_token_dropout
-            )
-            drop_mask &= tgt_ids >= GlossVocabulary.OFFSET
+            ) & (tgt_ids >= GlossVocabulary.OFFSET)
             dropped_tgt_ids = torch.where(
                 drop_mask,
                 torch.tensor(GlossVocabulary.UNK_ID, device=tgt_ids.device),
@@ -1686,29 +1485,24 @@ class ASLTransformerDecoder(nn.Module):
             dropped_tgt_ids = tgt_ids
 
         dropped_tgt_ids = torch.clamp(dropped_tgt_ids, 0, self.vocab_size - 1)
-
         lex_embs = self.asl_lex_emb(dropped_tgt_ids)
         valid_lex_mask = (
             (tgt_ids != GlossVocabulary.PAD_ID).unsqueeze(-1).to(lex_embs.dtype)
         )
-        h = (
+        h = self.emb_drop(
             self.token_emb(dropped_tgt_ids) * self.emb_scale
             + lex_embs * self.emb_scale * valid_lex_mask
         )
-        h = self.emb_drop(h)
 
         new_key_values = [] if use_cache else None
-
         for idx, layer in enumerate(self.layers):
-            past_self_kv = past_key_values[idx][0] if past_key_values else None
-            past_cross_kv = past_key_values[idx][1] if past_key_values else None
             if use_cache:
                 h, n_self_kv, n_cross_kv = layer(
                     h,
                     memory,
                     memory_key_padding_mask=memory_key_padding_mask,
-                    past_self_kv=past_self_kv,
-                    past_cross_kv=past_cross_kv,
+                    past_self_kv=past_key_values[idx][0] if past_key_values else None,
+                    past_cross_kv=past_key_values[idx][1] if past_key_values else None,
                     use_cache=True,
                 )
                 new_key_values.append((n_self_kv, n_cross_kv))
@@ -1717,9 +1511,7 @@ class ASLTransformerDecoder(nn.Module):
 
         h = self.final_norm(h)
         logits = self.lm_head(h)
-        if use_cache:
-            return logits, h, new_key_values
-        return logits, h
+        return (logits, h, new_key_values) if use_cache else (logits, h)
 
 
 # ==============================================================================
@@ -1733,19 +1525,23 @@ class HomoscedasticLossWrapper(nn.Module):
     Bypasses gradient propagation for zero-valued or uncalculated losses to prevent divergence.
     """
 
-    def __init__(self, num_losses: int = 7):
+    # ─── MATH FIX: BUMPED TO 8 LOSSES TO PREVENT SILENT TRUNCATION ───
+    def __init__(self, num_losses: int = 9): # <--- BUMP TO 9
         super().__init__()
         self.num_losses = num_losses
 
-        # Seq(CE) ~8.0, CTC ~10.0, DenseSem ~1.0, InfoNCE ~4.0, SupCon ~2.0, Domain ~1.0, MLM ~0.1
+        # Seq ~8.0, CTC ~10.0, DenseSem ~1.0, InfoNCE ~4.0, SupCon ~2.0, Domain ~1.0, MLM ~0.1, Aux ~2.0, Length ~1.0
         init_vals = [
-            math.log(8.0),  # Seq
-            math.log(10.0),  # CTC
-            math.log(1.0),  # Dense Sem
-            math.log(4.0),  # InfoNCE
-            math.log(2.0),  # SupCon
+            math.log(8.0),  
+            math.log(10.0), 
+            math.log(1.0),  
+            math.log(4.0),  
+            math.log(2.0),  
+            math.log(1.0),  
+            math.log(0.1),  
+            math.log(2.0),  
+            math.log(1.0),  # <--- NEW: Length Regression Loss
         ]
-        # Pad with 0.0 just in case you pass more losses
         while len(init_vals) < num_losses:
             init_vals.append(0.0)
 
@@ -1762,75 +1558,30 @@ class HomoscedasticLossWrapper(nn.Module):
                 prec = torch.exp(-s)
                 valid_mask = (loss.detach().abs() > 1e-6).to(loss.dtype)
                 s_penalty = 0.5 * s * valid_mask
-                total_loss = total_loss + 0.5 * prec * loss * valid_mask + s_penalty
+                loss_safe = torch.nan_to_num(loss, nan=0.0)
+                total_loss = total_loss + 0.5 * prec * loss_safe * valid_mask + s_penalty
         return total_loss
 
 
-class DiffAllGather(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, tensor):
-        import torch.distributed as dist
+class CosineLinear(nn.Module):
+    def __init__(self, in_features: int, out_features: int, init_tau: float = 20.0):
+        super().__init__()
+        self.weight = nn.Parameter(torch.randn(out_features, in_features))
+        nn.init.xavier_uniform_(self.weight)
+        self.tau = nn.Parameter(torch.tensor(init_tau))
 
-        ctx.rank = dist.get_rank()
-        ctx.world_size = dist.get_world_size()
-        local_size = torch.tensor(
-            [tensor.size(0)], dtype=torch.long, device=tensor.device
-        )
-        size_list = [torch.zeros_like(local_size) for _ in range(ctx.world_size)]
-        dist.all_gather(size_list, local_size)
-        sizes = [s.item() for s in size_list]
-        max_size = max(sizes)
-        ctx.batch_sizes = sizes
-        if tensor.size(0) < max_size:
-            pad_tensor = torch.zeros(
-                (max_size - tensor.size(0), *tensor.shape[1:]),
-                dtype=tensor.dtype,
-                device=tensor.device,
-            )
-            tensor_padded = torch.cat([tensor, pad_tensor], dim=0)
-        else:
-            tensor_padded = tensor
-        gathered = [torch.zeros_like(tensor_padded) for _ in range(ctx.world_size)]
-        dist.all_gather(gathered, tensor_padded)
-        truncated = [g[:s] for g, s in zip(gathered, sizes)]
-        return torch.cat(truncated, dim=0)
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        import torch.distributed as dist
-
-        grad_output = grad_output.contiguous()
-        grad_chunks = torch.split(grad_output, ctx.batch_sizes, dim=0)
-        max_size = max(ctx.batch_sizes)
-        padded_chunks = []
-        for g, s in zip(grad_chunks, ctx.batch_sizes):
-            if s < max_size:
-                pad_tensor = torch.zeros(
-                    (max_size - s, *g.shape[1:]), dtype=g.dtype, device=g.device
-                )
-                padded_chunks.append(torch.cat([g, pad_tensor], dim=0))
-            else:
-                padded_chunks.append(g)
-        grad_tensor = torch.zeros_like(padded_chunks[0])
-        dist.reduce_scatter(grad_tensor, padded_chunks)
-        grad_tensor /= ctx.world_size
-        return grad_tensor[: ctx.batch_sizes[ctx.rank]].contiguous()
-
-
-def diff_all_gather(tensor: torch.Tensor) -> torch.Tensor:
-    import torch.distributed as dist
-
-    if dist.is_initialized():
-        return DiffAllGather.apply(tensor)
-    return tensor
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # L2 normalize features and weights
+        x_norm = F.normalize(x.float(), p=2, dim=-1, eps=1e-5).to(x.dtype)
+        w_norm = F.normalize(self.weight.float(), p=2, dim=-1, eps=1e-5).to(self.weight.dtype)
+        # Cosine similarity scaled by learnable temperature tau
+        return F.linear(x_norm, w_norm) * self.tau
 
 
 class CTCHead(nn.Module):
     def __init__(self, d_model: int, vocab_size: int):
         super().__init__()
-        self.proj = nn.Linear(d_model, vocab_size, bias=True)
-        nn.init.normal_(self.proj.weight, std=0.02)
-        nn.init.zeros_(self.proj.bias)
+        self.proj = CosineLinear(d_model, vocab_size)
 
     def forward(self, enc_seq: torch.Tensor) -> torch.Tensor:
         return self.proj(enc_seq)
@@ -1848,11 +1599,13 @@ class CrossModalInfoNCE(nn.Module):
 
         if _XLA_AVAILABLE and "xla" in str(device).lower():
             import torch_xla.core.xla_model as xm
+
             try:
                 world_size = xm.xrt_world_size()
             except AttributeError:
                 try:
                     import torch_xla.runtime as xr
+
                     world_size = xr.world_size()
                 except Exception:
                     world_size = 4
@@ -1860,23 +1613,18 @@ class CrossModalInfoNCE(nn.Module):
             world_size = dist.get_world_size()
         else:
             world_size = 1
-        global_b = vis_emb.size(0) * world_size
-        
+
         v = F.normalize(vis_emb.float(), p=2, dim=-1)
         s = F.normalize(sent_emb.float(), p=2, dim=-1)
 
-        v_global = v
-        s_global = s
         lbl = torch.arange(v.size(0), device=vis_emb.device)
 
-        # MATH: Symmetric InfoNCE loss with temperature scaling for cross-modal contrastive learning
-        sim1 = torch.matmul(v, s_global.T) / temp
-        sim2 = torch.matmul(s, v_global.T) / temp
+        sim1 = torch.matmul(v, s.T) / temp
+        sim2 = torch.matmul(s, v.T) / temp
 
-        s_sim = torch.matmul(s, s_global.T)
+        s_sim = torch.matmul(s, s.T)
         false_neg_mask = (s_sim > 0.99) & (
-            torch.arange(s_global.size(0), device=s.device).unsqueeze(0)
-            != lbl.unsqueeze(1)
+            torch.arange(s.size(0), device=s.device).unsqueeze(0) != lbl.unsqueeze(1)
         )
         sim1.masked_fill_(false_neg_mask, -1e4)
         sim2.masked_fill_(false_neg_mask, -1e4)
@@ -1914,25 +1662,24 @@ class DenseSentenceSemanticLoss(nn.Module):
         gt_lex_embs: torch.Tensor,
         valid_mask: torch.Tensor,
     ) -> torch.Tensor:
-
         m = valid_mask.unsqueeze(-1).float()
         valid_counts = m.sum(dim=1).clamp(min=1.0)
         has_tokens = (m.sum(dim=(1, 2)) > 0).float()
 
-        if last_hidden.dim() == 3:
-            pred_sent = (last_hidden * m).sum(dim=1) / valid_counts
-        else:
-            pred_sent = last_hidden
-
-        if gt_lex_embs.dim() == 3:
-            gt_sent = (gt_lex_embs * m).sum(dim=1) / valid_counts
-        else:
-            gt_sent = gt_lex_embs
+        pred_sent = (
+            (last_hidden * m).sum(dim=1) / valid_counts
+            if last_hidden.dim() == 3
+            else last_hidden
+        )
+        gt_sent = (
+            (gt_lex_embs * m).sum(dim=1) / valid_counts
+            if gt_lex_embs.dim() == 3
+            else gt_lex_embs
+        )
 
         p = F.normalize(self.proj_pred(pred_sent).float(), p=2, dim=-1, eps=1e-8)
         g = F.normalize(self.proj_gt(gt_sent).float(), p=2, dim=-1, eps=1e-8).detach()
 
-        # MATH: Cosine similarity loss to align predicted sentence embedding with ground truth
         cos_sim = (p * g).sum(dim=-1)
         loss = (1.0 - cos_sim) * has_tokens
         return loss.sum() / has_tokens.sum().clamp(min=1.0)
@@ -1948,40 +1695,30 @@ class SupervisedContrastiveLoss(nn.Module):
     ) -> torch.Tensor:
         if labels is None:
             return torch.tensor(0.0, device=features.device, requires_grad=True)
-        features = F.normalize(features, p=2, dim=-1)
+        features = F.normalize(features.float(), p=2, dim=1, eps=1e-5).to(features.dtype)
         B, device = features.shape[0], features.device
         has_labels = (labels.abs().sum() > 0).float()
-        import torch.distributed as dist
 
-        all_f = features
-        all_l = labels
-        ids = torch.arange(features.size(0), device=device)
-        all_ids = ids
-
-        # MATH: Supervised Contrastive Loss (SupCon): Groups positive examples and pushes away negatives.
-        # MATH: L = -1/|P| * sum_{p in P} log( exp(sim_p) / sum_{all} exp(sim) )
-        pos_mask = torch.eq(labels.view(-1, 1), all_l.view(1, -1)).float()
-        self_m = torch.eq(ids.view(-1, 1), all_ids.view(1, -1)).float()
+        ids = torch.arange(B, device=device)
+        pos_mask = torch.eq(labels.view(-1, 1), labels.view(1, -1)).float()
+        self_m = torch.eq(ids.view(-1, 1), ids.view(1, -1)).float()
         pos_mask *= 1.0 - self_m
 
-        cos_sim = torch.matmul(features, all_f.T)
-        pos_logits = cos_sim / self.temperature
-
-        exp_logits = torch.exp(pos_logits - pos_logits.max(dim=-1, keepdim=True)[0]) * (
+        pos_logits = torch.matmul(features, features.T) / self.temperature
+        exp_logits = torch.exp(pos_logits - pos_logits.max(dim=1, keepdim=True)[0]) * (
             1.0 - self_m
         )
-        denom = torch.clamp(exp_logits.sum(dim=-1, keepdim=True), min=1e-8)
+        denom = torch.clamp(exp_logits.sum(dim=1, keepdim=True).float(), min=1e-4)
 
-        max_logits = pos_logits.max(dim=-1, keepdim=True)[0]
-        log_prob = (pos_logits - max_logits) - torch.log(denom)
-
-        pos_count = pos_mask.sum(dim=-1)
+        log_prob = (pos_logits - pos_logits.max(dim=1, keepdim=True)[0]) - torch.log(
+            denom
+        )
+        pos_count = pos_mask.sum(dim=1)
         valid_rows = (pos_count > 0).float()
 
-        row_loss = -(log_prob * pos_mask).sum(dim=-1) / pos_count.clamp(min=1.0)
+        row_loss = -(log_prob * pos_mask).sum(dim=1) / pos_count.clamp(min=1.0)
         loss = (row_loss * valid_rows).sum() / valid_rows.sum().clamp(min=1.0)
-        loss = torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
-        return loss * has_labels
+        return torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0) * has_labels
 
 
 class GradientReversalFunction(torch.autograd.Function):
@@ -2030,7 +1767,6 @@ class PositionalEncoding1D(nn.Module):
         self.register_buffer("pe", pe.unsqueeze(0))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x shape: (B, T, D)
         return x + self.pe[:, : x.size(1), :]
 
 
@@ -2118,6 +1854,21 @@ class ASLFoundationModel(nn.Module):
 
         self.ctc_head = CTCHead(d_enc, vocab_size)
         self.mlm_head = LandmarkReconstructionHead(d_enc, input_dim)
+
+        # ─── MATH FIX: Encoder Auxiliary Classification Head ───
+        # Mathematically forces the Conformer to anchor the latent space into a discrete conceptual cluster
+        # BEFORE giving the sequence to the decoder. Bypasses decoder hallucination drift.
+        self.aux_gloss_head = CosineLinear(d_enc, vocab_size, init_tau=20.0)
+        
+        # ─── NEW: Sequence Length Prediction Head (Fertility) ───
+        self.length_head = nn.Sequential(
+            nn.Linear(d_enc, 128),
+            RMSNorm(128),
+            nn.GELU(),
+            nn.Linear(128, 1)
+        )
+        # ────────────────────────────────────────────────────────
+
         self.visual_proj = nn.Sequential(
             nn.Linear(d_enc, 256), RMSNorm(256), nn.GELU(), nn.Linear(256, 256)
         )
@@ -2133,20 +1884,21 @@ class ASLFoundationModel(nn.Module):
         self.xmodal_loss_fn = CrossModalInfoNCE(init_temp=0.07)
         self.dense_sem_loss = DenseSentenceSemanticLoss(d_model=d_dec, embed_dim=256)
 
+    def update_tome_r(self, epoch: int, max_epochs: int):
+        progress = epoch / max(1, max_epochs - 1)
+        new_r = int(10 + (80 - 10) * progress)
+        self.tome_r = new_r
+        if hasattr(self, 'tome_early'):
+            self.tome_early.r = new_r
+        if hasattr(self, 'tome_deep'):
+            self.tome_deep.r = new_r
+
     def _encode(
         self,
         x: torch.Tensor,
         mask: Optional[torch.Tensor],
         mlm_mask: Optional[torch.Tensor] = None,
-    ) -> Tuple[
-        torch.Tensor,
-        torch.Tensor,
-        Optional[torch.Tensor],
-        torch.Tensor,
-        torch.Tensor,
-        Optional[torch.Tensor],
-    ]:
-
+    ):
         B, T = x.size(0), x.size(1)
 
         if mlm_mask is not None:
@@ -2182,13 +1934,12 @@ class ASLFoundationModel(nn.Module):
         else:
             kpm = None
 
-        h_pre_tome = None  # NEW: Capture features before merging
+        h_pre_tome = None
 
         for idx, block in enumerate(self.blocks):
             if isinstance(block, TokenMergingBlock):
                 if h_pre_tome is None:
-                    h_pre_tome = h[:, 1:]  # Capture full-res temporal sequence for MLM
-
+                    h_pre_tome = h[:, 1:]
                 cls_t = h[:, :1]
                 seq_t = h[:, 1:]
                 seq_t, cur_mask, routing_info = block(
@@ -2211,18 +1962,10 @@ class ASLFoundationModel(nn.Module):
                 h = block(h, key_padding_mask=kpm)
 
         h = self.enc_final_norm(h)
-        # If no ToMe blocks ran, fallback to the output sequence
         if h_pre_tome is None:
             h_pre_tome = h[:, 1:]
 
-        return (
-            h[:, 0],
-            h[:, 1:],
-            cur_mask,
-            used_mlm_mask,
-            h_pre_tome,
-            mask,
-        )
+        return h[:, 0], h[:, 1:], cur_mask, used_mlm_mask, h_pre_tome, mask
 
     def forward(
         self,
@@ -2234,24 +1977,22 @@ class ASLFoundationModel(nn.Module):
         grl_alpha: float = 1.0,
     ) -> Union[Optional[torch.Tensor], Dict]:
 
-        (
-            h_cls,
-            h_seq,
-            enc_mask,
-            used_mlm_mask,
-            h_pre_tome,
-            orig_enc_mask,
-        ) = self._encode(x, mask, mlm_mask=mlm_mask)
+        h_cls, h_seq, enc_mask, used_mlm_mask, h_pre_tome, orig_enc_mask = self._encode(
+            x, mask, mlm_mask=mlm_mask
+        )
 
         dec_logits, dec_hidden = None, None
         if gloss_seq is not None:
-            dec_in = gloss_seq[:, :-1].contiguous()
+            if self.training and gloss_seq.size(1) > 1:
+                dec_in = gloss_seq[:, :-1].contiguous()
+            else:
+                dec_in = gloss_seq.contiguous()
+
             if self.training:
-                # Target Word Dropout to mitigate exposure bias
-                mask = (torch.rand_like(dec_in, dtype=torch.float) < 0.15) & (
+                mask_tgt = (torch.rand_like(dec_in, dtype=torch.float) < 0.15) & (
                     dec_in != GlossVocabulary.BOS_ID
                 )
-                dec_in = dec_in.masked_fill(mask, GlossVocabulary.UNK_ID)
+                dec_in = dec_in.masked_fill(mask_tgt, GlossVocabulary.UNK_ID)
 
             dec_logits, dec_hidden = self.decoder(
                 dec_in, h_seq, memory_key_padding_mask=enc_mask
@@ -2260,16 +2001,30 @@ class ASLFoundationModel(nn.Module):
         if not return_aux:
             return dec_logits
 
-        # CTC gets the MERGED sequence. No more unmerged duplicated vectors!
+        # ─── MATH FIX: Auxiliary Average Pooling Head Computation ───
+        if enc_mask is not None:
+            mask_expanded = enc_mask.unsqueeze(-1).to(
+                h_seq.dtype
+            )  # enc_mask evaluates to True for Valid
+            valid_lengths = mask_expanded.sum(dim=1).clamp(min=1.0)
+            pooled_enc = (h_seq * mask_expanded).sum(dim=1) / valid_lengths
+        else:
+            pooled_enc = h_seq.mean(dim=1)
+            
+        aux_logits = self.aux_gloss_head(pooled_enc)
+        
+        # ─── NEW: Predict Sequence Length ───
+        pred_len = self.length_head(pooled_enc).squeeze(-1) # Shape: (B,)
+        # ────────────────────────────────────
+
         ctc_log_probs = F.log_softmax(self.ctc_head(h_seq), dim=-1)
 
-        # MLM gets the FULL-RES Pre-ToMe sequence where physical coordinates still make sense
         if self.training and h_pre_tome is not None and mlm_mask is not None:
             mlm_logits = self.mlm_head(h_pre_tome)
         else:
             mlm_logits = None
 
-        vis_emb = F.normalize(self.visual_proj(h_cls), p=2, dim=-1)
+        vis_emb = F.normalize(self.visual_proj(h_cls).float(), p=2, dim=-1, eps=1e-5).to(h_cls.dtype)
         if dec_hidden is not None and gloss_seq is not None:
             gt_tokens = gloss_seq[:, 1:]
             valid_mask = gt_tokens != GlossVocabulary.PAD_ID
@@ -2280,11 +2035,11 @@ class ASLFoundationModel(nn.Module):
                 .expand(-1, 1, dec_hidden.shape[-1])
             )
             last_hidden = dec_hidden.gather(1, last_idx).squeeze(1)
-            sent_emb = F.normalize(self.sentence_proj(last_hidden), p=2, dim=-1)
+            sent_emb = F.normalize(self.sentence_proj(last_hidden).float(), p=2, dim=-1, eps=1e-5).to(last_hidden.dtype)
         else:
             sent_emb = None
 
-        proj_feats = F.normalize(self.contrastive_head(h_cls), p=2, dim=-1)
+        proj_feats = F.normalize(self.contrastive_head(h_cls).float(), p=2, dim=-1, eps=1e-5).to(h_cls.dtype)
 
         if grl_alpha > 0.0:
             rev_cls = GradientReversalFunction.apply(h_cls, grl_alpha)
@@ -2303,6 +2058,8 @@ class ASLFoundationModel(nn.Module):
             "sent_emb": sent_emb,
             "proj_feats": proj_feats,
             "domain_logits": domain_logits,
+            "aux_logits": aux_logits,  # Passed out for grounding loss
+            "pred_len": pred_len,
             "enc_seq": h_seq,
             "enc_mask": enc_mask,
             "orig_enc_mask": orig_enc_mask,
@@ -2330,23 +2087,18 @@ def _compute_ctc_loss_safe(
         enc_len = torch.full((B,), T_enc, dtype=torch.long, device=device)
 
     raw_targets = gloss_seq[:, 1:].contiguous()
-    valid_mask = (
-        (raw_targets >= GlossVocabulary.OFFSET)
-        & (raw_targets < 2484)
-        & has_valid.unsqueeze(1)
-    )
+    valid_mask = (raw_targets != GlossVocabulary.PAD_ID) & has_valid.unsqueeze(1)
     targets = raw_targets
     tgt_lengths = valid_mask.sum(dim=-1).long()
 
     valid_ctc = (enc_len >= tgt_lengths) & (tgt_lengths > 0) & (enc_len > 0)
 
-    tgt_len_for_ctc = tgt_lengths
     try:
         loss_vec = F.ctc_loss(
             ctc_log_probs.float().transpose(0, 1),
             targets,
             enc_len.clamp(min=1, max=T_enc),
-            tgt_len_for_ctc,
+            tgt_lengths,
             blank=GlossVocabulary.PAD_ID,
             reduction="none",
             zero_infinity=True,
@@ -2368,8 +2120,9 @@ def _compute_mlm_loss_safe(
         target = target.view(B, T, 60, -1)
 
     if target.dim() == 4 and target.size(2) == 60 and target.size(3) >= 3:
-        lh_nz = (target[:, :, 0:21, :3] != 0).to(target.dtype)
-        rh_nz = (target[:, :, 21:42, :3] != 0).to(target.dtype)
+        lh_nz, rh_nz = (target[:, :, 0:21, :3] != 0).to(target.dtype), (
+            target[:, :, 21:42, :3] != 0
+        ).to(target.dtype)
         target[:, :, 0:21, :3] = (
             target[:, :, 0:21, :3] - target[:, :, 0:1, :3]
         ) * lh_nz
@@ -2380,10 +2133,60 @@ def _compute_mlm_loss_safe(
     target = target.reshape(B, T, -1)
     mask_f = mlm_mask.unsqueeze(-1).float()
     loss = F.smooth_l1_loss(mlm_logits, target, reduction="none")
-    divisor = mask_f.sum().clamp(min=1.0) * target.size(-1)
-    loss = (loss * mask_f).sum() / divisor
-    return torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
+    return torch.nan_to_num(
+        (loss * mask_f).sum() / (mask_f.sum().clamp(min=1.0) * target.size(-1)), nan=0.0
+    )
 
+
+class ModelEMA:
+    def __init__(self, model: nn.Module, decay_base: float = 0.90, decay_max: float = 0.9999, device: str = "cpu"):
+        self.decay_base = decay_base
+        self.decay_max = decay_max
+        self.device = device
+        self.shadow = {}
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                self.shadow[name] = param.data.clone().detach().to(self.device)
+
+    def update(self, model: nn.Module, progress: float = 1.0):
+        with torch.no_grad():
+            progress = min(1.0, max(0.0, progress))
+            current_decay = self.decay_max - (self.decay_max - self.decay_base) * (1.0 + math.cos(math.pi * progress)) / 2.0
+            
+            for name, param in model.named_parameters():
+                if param.requires_grad and name in self.shadow:
+                    # Push updates to CPU asynchronously to save TPU memory
+                    self.shadow[name].mul_(current_decay).add_(param.data.to(self.device), alpha=1.0 - current_decay)
+
+    def apply_shadow(self, model: nn.Module):
+        self.backup = {}
+        for name, param in model.named_parameters():
+            if param.requires_grad and name in self.shadow:
+                self.backup[name] = param.data.clone().detach().to(self.device)
+                param.data.copy_(self.shadow[name].to(param.device))
+
+    def restore(self, model: nn.Module):
+        for name, param in model.named_parameters():
+            if param.requires_grad and name in self.backup:
+                param.data.copy_(self.backup[name].to(param.device))
+        self.backup.clear()
+
+def _get_optimizer_groups(model: nn.Module, loss_wrapper: nn.Module, weight_decay: float):
+    decay, no_decay = [], []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        if len(param.shape) == 1 or name.endswith(".bias"):
+            no_decay.append(param)
+        else:
+            decay.append(param)
+    for param in loss_wrapper.parameters():
+        if param.requires_grad:
+            no_decay.append(param)
+    return [
+        {"params": decay, "weight_decay": weight_decay},
+        {"params": no_decay, "weight_decay": 0.0},
+    ]
 
 def train_epoch_tpu(
     model: nn.Module,
@@ -2396,11 +2199,19 @@ def train_epoch_tpu(
     device: torch.device,
     epoch: int = 0,
     total_epochs: int = 150,
-    prec_dtype: torch.dtype = torch.bfloat16,
+    prec_dtype: torch.dtype = torch.float16,
     is_master: bool = True,
     accum_steps: int = 4,
+    class_weights: Optional[torch.Tensor] = None,
 ) -> Tuple[float, float]:
     model.train()
+
+    # ─── Dynamic Token Merging Scaling ───
+    if hasattr(model, 'module'):
+        if hasattr(model.module, 'update_tome_r'):
+            model.module.update_tome_r(epoch, total_epochs)
+    elif hasattr(model, 'update_tome_r'):
+        model.update_tome_r(epoch, total_epochs)
 
     if loss_wrapper is not None and len(list(loss_wrapper.parameters())) > 0:
         found = any(
@@ -2410,10 +2221,6 @@ def train_epoch_tpu(
         )
         if not found:
             optimizer.add_param_group({"params": loss_wrapper.parameters()})
-
-    total_loss_val = torch.tensor(0.0, device=device, dtype=torch.float32)
-    correct_tok_val = torch.tensor(0.0, device=device, dtype=torch.float32)
-    total_tok_val = torch.tensor(0.0, device=device, dtype=torch.float32)
 
     tracker = {
         "loss": 0.0,
@@ -2425,6 +2232,7 @@ def train_epoch_tpu(
         "supcon": 0.0,
         "dom": 0.0,
         "mlm": 0.0,
+        "aux": 0.0,
     }
     epoch_start_time = time.time()
 
@@ -2433,48 +2241,56 @@ def train_epoch_tpu(
         import torch_xla.core.xla_model as xm
         import torch_xla.distributed.parallel_loader as pl
     is_master = xm.is_master_ordinal() if is_xla else True
-    device_type = "cuda" if "cuda" in str(device).lower() else "cpu"
-    use_autocast = (
-        not is_xla and "cuda" in str(device).lower() and prec_dtype != torch.float32
-    )
+
+    if is_xla:
+        device_type, use_autocast = "xla", (prec_dtype in (torch.float16, torch.bfloat16))
+    else:
+        device_type, use_autocast = (
+            "cuda" if "cuda" in str(device).lower() else "cpu"
+        ), ("cuda" in str(device).lower() and prec_dtype != torch.float32)
+
     scaler = (
-        torch.amp.GradScaler('cuda')
+        torch.amp.GradScaler("cuda")
         if use_autocast and prec_dtype == torch.float16
         else None
     )
 
     progress = float(max(0, epoch)) / float(max(1, total_epochs - 1))
     grl_alpha = float(2.0 / (1.0 + np.exp(-10.0 * progress)) - 1.0)
-
     label_smoothing = max(0.05, 0.15 - 0.10 * progress)
-    teacher_forcing_ratio = max(0.50, 1.0 - 0.50 * progress)
-    mixup_active = np.random.rand() < min(
-        0.30, max(0.0, 0.30 * float(epoch - 5) / float(max(1, total_epochs - 5)))
-    )
-
     POLY1_EPS = 1.0
 
-    def compute_seq_loss(
-        logits_f: torch.Tensor, gt_ids: torch.Tensor, valid_mask: torch.Tensor
-    ) -> torch.Tensor:
+    def compute_seq_loss(logits_f, gt_ids, valid_mask, class_weights=None, gamma=2.0):
         V = logits_f.shape[-1]
         lf = logits_f.reshape(-1, V).float()
         tf = torch.clamp(gt_ids.reshape(-1), 0, V - 1)
-        vf = valid_mask.reshape(-1)
+        vf = valid_mask.reshape(-1).float()
+
+        if class_weights is not None:
+            vf = vf * class_weights[tf]
+
+        # ─── MATH FIX: THE HALLUCINATION KILLER (EOS GRADIENT FORCING) ───
+        # Ensures the gradient for the stopping condition is never swallowed by Focal Loss
+        eos_mask = (tf == GlossVocabulary.EOS_ID).to(vf.dtype)
+        vf = vf * (1.0 + eos_mask * 9.0)  # 10.0x Multiplier for the EOS Token
+        # ─────────────────────────────────────────────────────────────────
+
         log_p = F.log_softmax(lf, dim=-1)
-        p = torch.exp(log_p)
-        # MATH: Poly1 Loss expands Cross Entropy via Taylor series for better gradient scaling.
-        # MATH: L_poly = CE + eps * (1 - pt), smoothed with uniform distribution.
+        p_target = torch.exp(log_p.gather(1, tf.unsqueeze(1)).squeeze(1)).clamp(
+            min=1e-6, max=1.0
+        )
+        focal_weight = torch.pow(1.0 - p_target, gamma)
+
         ce_unsmoothed = F.nll_loss(
             log_p, tf, ignore_index=GlossVocabulary.PAD_ID, reduction="none"
         )
-        pt = torch.exp(-ce_unsmoothed)
         ce_uniform = -log_p[..., 1:].mean(dim=-1)
         ce_smoothed = (
             1.0 - label_smoothing
         ) * ce_unsmoothed + label_smoothing * ce_uniform
-        poly1 = ce_smoothed + POLY1_EPS * (1.0 - pt)
-        return (poly1 * vf.float()).sum() / vf.float().sum().clamp(min=1.0)
+
+        poly1 = focal_weight * ce_smoothed + POLY1_EPS * (1.0 - p_target)
+        return (poly1 * vf).sum() / vf.sum().clamp(min=1.0)
 
     if is_xla:
         loader = pl.MpDeviceLoader(loader, device)
@@ -2482,13 +2298,15 @@ def train_epoch_tpu(
     total_batches = len(loader)
     min_batches = total_batches
     if is_xla:
-        # Prevent deadlocks by ensuring all workers run the exact same number of batches
-        min_batches = int(xm.mesh_reduce("min_batches", total_batches, lambda x: min(x)))
+        min_batches = int(
+            xm.mesh_reduce("min_batches", total_batches, lambda x: min(x))
+        )
         try:
             ord_val = xm.get_ordinal()
         except AttributeError:
             try:
                 import torch_xla.runtime as xr
+
                 ord_val = xr.global_ordinal()
             except Exception:
                 ord_val = 0
@@ -2497,38 +2315,52 @@ def train_epoch_tpu(
     for step_idx, batch in enumerate(loader, start=1):
         if step_idx > min_batches:
             continue
+
         if isinstance(batch, (tuple, list)):
-            if len(batch) == 5:
-                features, mask, labels, sample_weights, lex_targets = batch
-            else:
-                features, mask, labels, sample_weights = batch
-                lex_targets = None
-            features = features.to(device)
-            mask = mask.to(device)
-            labels = labels.to(device)
-            B = features.size(0)
-            domain_tgts = torch.zeros_like(labels, device=device)
-            has_domain = torch.zeros_like(labels, dtype=torch.bool, device=device)
-            
+            features, mask, labels = (
+                batch[0].to(device),
+                batch[1].to(device),
+                batch[2].to(device),
+            )
+            B, domain_tgts, has_domain = (
+                features.size(0),
+                torch.zeros_like(labels, device=device),
+                torch.zeros_like(labels, dtype=torch.bool, device=device),
+            )
             gloss_seq = torch.zeros((B, 3), dtype=torch.long, device=device)
-            gloss_seq[:, 0] = GlossVocabulary.BOS_ID
-            gloss_seq[:, 1] = labels + GlossVocabulary.OFFSET
-            gloss_seq[:, 2] = GlossVocabulary.EOS_ID
-            gloss_len = torch.full((B,), 3, dtype=torch.long, device=device)
-            has_valid = torch.ones(B, dtype=torch.bool, device=device)
-            mlm_mask = None
+            gloss_seq[:, 0], gloss_seq[:, 1], gloss_seq[:, 2] = (
+                GlossVocabulary.BOS_ID,
+                labels + GlossVocabulary.OFFSET,
+                GlossVocabulary.EOS_ID,
+            )
+            gloss_len, has_valid, mlm_mask = (
+                torch.full((B,), 3, dtype=torch.long, device=device),
+                torch.ones(B, dtype=torch.bool, device=device),
+                None,
+            )
         else:
-            features = batch["feature"].to(device)
-            mask = batch["mask"].to(device)
-            labels = batch.get("label", torch.zeros(features.size(0), dtype=torch.long)).to(device)
-            domain_tgts = batch.get("domain_label", torch.zeros_like(labels)).to(device)
-            has_domain = batch.get("has_domain_label", torch.zeros_like(labels)).to(device)
-            gloss_seq = batch["gloss_seq"].to(device)
-            gloss_len = batch["gloss_len"].to(device)
-            has_valid = batch["has_valid_gloss"].to(device)
-            mlm_mask = batch.get("mlm_mask", None)
+            features, mask, labels = (
+                batch["feature"].to(device),
+                batch["mask"].to(device),
+                batch.get(
+                    "label", torch.zeros(batch["feature"].size(0), dtype=torch.long)
+                ).to(device),
+            )
+            domain_tgts, has_domain = batch.get(
+                "domain_label", torch.zeros_like(labels)
+            ).to(device), batch.get("has_domain_label", torch.zeros_like(labels)).to(
+                device
+            )
+            gloss_seq, gloss_len, has_valid, mlm_mask = (
+                batch["gloss_seq"].to(device),
+                batch["gloss_len"].to(device),
+                batch["has_valid_gloss"].to(device),
+                batch.get("mlm_mask", None),
+            )
             if mlm_mask is not None:
                 mlm_mask = mlm_mask.to(device)
+
+        # curriculum removed to prevent CTC NaN
 
         if (step_idx - 1) % accum_steps == 0:
             optimizer.zero_grad(set_to_none=True)
@@ -2542,61 +2374,91 @@ def train_epoch_tpu(
                 return_aux=True,
                 grl_alpha=grl_alpha,
             )
-
-            dec_logits = out["dec_logits"]
-            dec_hidden = out["dec_hidden"]
-            ctc_log_probs = out["ctc_log_probs"]
-            vis_emb = out["vis_emb"]
-            sent_emb = out["sent_emb"]
-            proj_feats = out["proj_feats"]
-            domain_logits = out["domain_logits"]
-            enc_mask = out["enc_mask"]
-            orig_enc_mask = out.get("orig_enc_mask", enc_mask)
+            (
+                dec_logits,
+                dec_hidden,
+                ctc_log_probs,
+                vis_emb,
+                sent_emb,
+                proj_feats,
+                domain_logits,
+                aux_logits,
+                enc_mask,
+                pred_len,
+            ) = (
+                out["dec_logits"],
+                out["dec_hidden"],
+                out["ctc_log_probs"],
+                out["vis_emb"],
+                out["sent_emb"],
+                out["proj_feats"],
+                out["domain_logits"],
+                out["aux_logits"],
+                out["enc_mask"],
+                out["pred_len"],
+            )
 
             gt_tokens = gloss_seq[:, 1:].contiguous()
             valid_mask = gt_tokens != GlossVocabulary.PAD_ID
-            loss_seq = compute_seq_loss(dec_logits, gt_tokens, valid_mask)
+            
+            # ─── NEW: SEQUENCE LENGTH LOSS (Huber Loss) ───
+            # True length is the sum of valid tokens (excluding padding)
+            target_len = valid_mask.sum(dim=1).float()
+            loss_length = F.smooth_l1_loss(pred_len, target_len, reduction="mean")
+            # ──────────────────────────────────────────────
 
-            loss_ctc = _compute_ctc_loss_safe(
-                ctc_log_probs, gloss_seq, gloss_len, enc_mask, has_valid
+            loss_seq = compute_seq_loss(
+                dec_logits, gt_tokens, valid_mask, class_weights=class_weights
             )
 
+            # ─── MATH FIX: AUXILIARY GROUNDING LOSS ───
             raw_model = model.module if hasattr(model, "module") else model
-            valid_content_mask = gt_tokens >= GlossVocabulary.OFFSET
-            gt_lex_embs = raw_model.decoder.asl_lex_emb(gt_tokens)
-            loss_dense_sem = raw_model.dense_sem_loss(
-                dec_hidden, gt_lex_embs, valid_content_mask
+            aux_target = torch.clamp(
+                labels + GlossVocabulary.OFFSET, 0, raw_model.vocab_size - 1
+            )
+            loss_aux = F.cross_entropy(
+                aux_logits.float(), aux_target, reduction="mean", label_smoothing=0.1
             )
 
-            loss_xmodal = torch.tensor(0.0, device=device, requires_grad=True)
-            if sent_emb is not None:
-                xmodal_fn = raw_model.xmodal_loss_fn
-                loss_xmodal = xmodal_fn(vis_emb, sent_emb)
-
+            loss_ctc = _compute_ctc_loss_safe(ctc_log_probs, gloss_seq, gloss_len, enc_mask, has_valid)
+            loss_dense_sem = raw_model.dense_sem_loss(
+                dec_hidden,
+                raw_model.decoder.asl_lex_emb(gt_tokens),
+                gt_tokens >= GlossVocabulary.OFFSET,
+            )
+            loss_xmodal = (
+                raw_model.xmodal_loss_fn(vis_emb, sent_emb)
+                if sent_emb is not None
+                else torch.tensor(0.0, device=device, requires_grad=True)
+            )
             loss_supcon = supcon_fn(proj_feats.float(), labels)
 
             loss_terms = [loss_seq, loss_ctc, loss_dense_sem, loss_xmodal, loss_supcon]
 
             has_dom_f = has_domain.float()
-            if domain_logits is not None:
-                loss_domain = (
+            loss_domain = (
+                (
                     F.cross_entropy(
                         domain_logits.float(), domain_tgts, reduction="none"
                     )
                     * has_dom_f
-                ).sum() / has_dom_f.sum().clamp(min=1.0)
-            else:
-                loss_domain = torch.tensor(0.0, device=device)
+                ).sum()
+                / has_dom_f.sum().clamp(min=1.0)
+                if domain_logits is not None
+                else torch.tensor(0.0, device=device)
+            )
             loss_terms.append(loss_domain)
 
-            if out["mlm_logits"] is not None and mlm_mask is not None:
-                loss_mlm = _compute_mlm_loss_safe(
-                    out["mlm_logits"], out["orig_x"], mlm_mask
-                )
-            else:
-                loss_mlm = torch.tensor(0.0, device=device, requires_grad=True)
-
+            loss_mlm = (
+                _compute_mlm_loss_safe(out["mlm_logits"], out["orig_x"], mlm_mask)
+                if out["mlm_logits"] is not None and mlm_mask is not None
+                else torch.tensor(0.0, device=device, requires_grad=True)
+            )
             loss_terms.extend([loss_mlm])
+
+            # Append the 8th and 9th losses for Homoscedastic balancing
+            loss_terms.append(loss_aux)
+            loss_terms.append(loss_length) # <--- APPEND LENGTH LOSS
             raw_loss = loss_wrapper(loss_terms)
 
             with torch.no_grad():
@@ -2616,104 +2478,209 @@ def train_epoch_tpu(
                 loss_supcon.detach(),
                 loss_domain.detach(),
                 loss_mlm.detach(),
+                loss_aux.detach(),
+                loss_length.detach(),
             )
 
         if use_autocast:
             with torch.autocast(device_type, dtype=prec_dtype):
-                raw_loss, dec_logits, nc_t, nt_t, l_seq, l_ctc, l_sem, l_sup, l_dom, l_mlm = forward_and_losses()
+                (
+                    raw_loss,
+                    dec_logits,
+                    nc_t,
+                    nt_t,
+                    l_seq,
+                    l_ctc,
+                    l_sem,
+                    l_sup,
+                    l_dom,
+                    l_mlm,
+                    l_aux,
+                    l_len,
+                ) = forward_and_losses()
         else:
-            raw_loss, dec_logits, nc_t, nt_t, l_seq, l_ctc, l_sem, l_sup, l_dom, l_mlm = forward_and_losses()
+            (
+                raw_loss,
+                dec_logits,
+                nc_t,
+                nt_t,
+                l_seq,
+                l_ctc,
+                l_sem,
+                l_sup,
+                l_dom,
+                l_mlm,
+                l_aux,
+                l_len,
+            ) = forward_and_losses()
+
+        if torch.isnan(raw_loss) or torch.isinf(raw_loss):
+            if is_master:
+                print(
+                    f"[!] Warning: NaN/Inf loss encountered at Epoch {epoch} step {step_idx}. Skipping batch backward.",
+                    flush=True,
+                )
+            continue
 
         loss = raw_loss / float(accum_steps)
-
         if scaler is not None:
             scaler.scale(loss).backward()
         else:
             loss.backward()
 
         if (step_idx % accum_steps == 0) or (step_idx == min_batches):
-            step_performed = True
             if is_xla:
+                # ─── SAM (Sharpness-Aware Minimization) for final 25% of epochs ───
+                use_sam = epoch >= total_epochs * 0.75
+                if use_sam:
+                    xm.reduce_gradients(optimizer)
+                    grad_norm = torch.nn.utils.clip_grad_norm_(
+                        list(model.parameters()) + list(loss_wrapper.parameters()), max_norm=1.0
+                    )
+                    rho = 0.05
+                    scale = rho / (grad_norm + 1e-6)
+                    
+                    e_w = {}
+                    with torch.no_grad():
+                        for n, p in model.named_parameters():
+                            if p.grad is not None:
+                                e_w[n] = p.grad * scale
+                                p.data.add_(e_w[n])
+                                
+                    optimizer.zero_grad(set_to_none=True)
+                    if use_autocast:
+                        with torch.autocast(device_type, dtype=prec_dtype):
+                            raw_loss2 = forward_and_losses()[0]
+                    else:
+                        raw_loss2 = forward_and_losses()[0]
+                        
+                    loss2 = raw_loss2 / float(accum_steps)
+                    if scaler is not None:
+                        scaler.scale(loss2).backward()
+                    else:
+                        loss2.backward()
+                        
+                    with torch.no_grad():
+                        for n, p in model.named_parameters():
+                            if p.grad is not None and n in e_w:
+                                p.data.sub_(e_w[n])
+
                 torch.nn.utils.clip_grad_norm_(
                     list(model.parameters()) + list(loss_wrapper.parameters()),
                     max_norm=1.0,
                 )
                 xm.optimizer_step(optimizer)
+                if scheduler is not None:
+                    try:
+                        scheduler.step()
+                    except Exception:
+                        pass
+                optimizer.zero_grad(set_to_none=True)
 
-                if (step_idx % 5 == 0) or (step_idx <= 5) or (step_idx == min_batches):
-                    m_tensors = torch.stack([
-                        raw_loss.detach(),
-                        l_seq.detach(),
-                        l_ctc.detach(),
-                        l_sem.detach(),
-                        l_sup.detach(),
-                        nc_t.detach(),
-                        nt_t.detach()
-                    ]).cpu()
-                    if is_master:
-                        loss_cpu, seq_cpu, ctc_cpu, sem_cpu, sup_cpu, nc_cpu, nt_cpu = [float(v) for v in m_tensors]
-                        tracker["loss"] += loss_cpu
-                        tracker["seq"] += seq_cpu
-                        tracker["ctc"] += ctc_cpu
-                        tracker["sem"] += sem_cpu
-                        tracker["supcon"] += sup_cpu
-                        tracker["corr"] += nc_cpu
-                        tracker["total"] += nt_cpu
+                if is_master and ((step_idx % 25 == 0) or (step_idx == min_batches)):
 
-                        c_loss = loss_cpu
-                        c_acc = (nc_cpu / max(1.0, nt_cpu)) * 100.0
-                        cur_lr = optimizer.param_groups[0]["lr"]
-                        elapsed = max(0.001, time.time() - epoch_start_time)
-                        speed = float(step_idx) / elapsed
-                        msg = (
-                            f"  [Step {step_idx:04d}/{min_batches:04d}] "
-                            f"Loss: {c_loss:.4f} (Seq:{seq_cpu:.4f} CTC:{ctc_cpu:.4f} Sem:{sem_cpu:.4f} Sup:{sup_cpu:.4f}) | "
-                            f"TF-Acc: {c_acc:.2f}% | LR: {cur_lr:.2e} | {speed:.1f} it/s"
-                        )
-                        xm.master_print(msg)
-                        import sys
-                        sys.stdout.flush()
+                    def _async_step_print(
+                        l_val,
+                        s_val,
+                        aux_val,
+                        c_val,
+                        sm_val,
+                        nc_val,
+                        nt_val,
+                        st_idx,
+                        m_batches,
+                        ep,
+                        tot_ep,
+                        lr_val,
+                        t_start,
+                    ):
+                        c_acc = (float(nc_val) / max(1.0, float(nt_val))) * 100.0
+                        speed = float(st_idx) / max(0.001, time.time() - t_start)
+                        msg = f"  [Epoch {ep:03d}/{tot_ep:03d} | Step {st_idx:04d}/{m_batches:04d}] Loss: {float(l_val):.4f} (Seq:{float(s_val):.4f} Aux:{float(aux_val):.4f} Sem:{float(sm_val):.4f}) | TF-Acc: {c_acc:.2f}% | LR: {lr_val:.2e} | {speed:.1f} it/s"
+                        print(msg, flush=True)
                         try:
-                            with open("/tmp/step_losses.txt", "a", encoding="utf-8") as f_log:
+                            with open(
+                                "/tmp/step_losses.txt", "a", encoding="utf-8"
+                            ) as f_log:
                                 f_log.write(msg + "\n")
                         except Exception:
                             pass
+
+                    xm.add_step_closure(
+                        _async_step_print,
+                        args=(
+                            raw_loss.detach(),
+                            l_seq.detach(),
+                            l_aux.detach(),
+                            l_ctc.detach(),
+                            l_sem.detach(),
+                            nc_t.detach(),
+                            nt_t.detach(),
+                            step_idx,
+                            min_batches,
+                            epoch,
+                            total_epochs,
+                            optimizer.param_groups[0]["lr"],
+                            epoch_start_time,
+                        ),
+                    )
             else:
                 if scaler is not None:
                     scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(
-                    list(model.parameters()) + list(loss_wrapper.parameters()),
-                    max_norm=1.0,
-                )
+                
+                # Automatic Gradient Clipping (AGC) - No host sync
+                for p in list(model.parameters()) + list(loss_wrapper.parameters()):
+                    if p.grad is not None:
+                        g = p.grad.detach()
+                        eps = 1e-3
+                        p_norm = p.detach().float().norm(2).clamp_(min=eps)
+                        g_norm = g.float().norm(2).clamp_(min=eps)
+                        max_norm = p_norm * 0.01  # clip_val = 0.01
+                        clipped_g = g * (max_norm / g_norm).clamp_(max=1.0)
+                        g.copy_(clipped_g)
+
                 if scaler is not None:
-                    scale_before = scaler.get_scale()
                     scaler.step(optimizer)
                     scaler.update()
-                    scale_after = scaler.get_scale()
-                    step_performed = scale_before <= scale_after
                 else:
                     optimizer.step()
-                step_performed = True
-                
-                loss_cpu, seq_cpu, ctc_cpu, sem_cpu, sup_cpu, nc_cpu, nt_cpu = [float(v) for v in [raw_loss.detach(), l_seq.detach(), l_ctc.detach(), l_sem.detach(), l_sup.detach(), nc_t.detach(), nt_t.detach()]]
+                if scheduler is not None:
+                    try:
+                        scheduler.step()
+                    except Exception:
+                        pass
+                optimizer.zero_grad(set_to_none=True)
+
+                if is_xla:
+                    xm.mark_step()
+
+                loss_cpu, seq_cpu, sem_cpu, nc_cpu, nt_cpu, aux_cpu = [
+                    float(v)
+                    for v in [
+                        raw_loss.detach(),
+                        l_seq.detach(),
+                        l_sem.detach(),
+                        nc_t.detach(),
+                        nt_t.detach(),
+                        l_aux.detach(),
+                    ]
+                ]
                 tracker["loss"] += loss_cpu
                 tracker["seq"] += seq_cpu
-                tracker["ctc"] += ctc_cpu
                 tracker["sem"] += sem_cpu
-                tracker["supcon"] += sup_cpu
                 tracker["corr"] += nc_cpu
                 tracker["total"] += nt_cpu
+                tracker["aux"] += aux_cpu
 
-            if scheduler is not None and step_performed:
-                scheduler.step()
             raw_m = model.module if hasattr(model, "module") else model
             if ema is not None:
-                ema.update(raw_m)
+                progress = (epoch * min_batches + step_idx) / max(1, total_epochs * min_batches)
+                ema.update(raw_m, progress)
             if hasattr(raw_m, "dense_sem_loss"):
                 raw_m.dense_sem_loss.update_momentum()
 
-            if is_xla:
-                xm.mark_step()
+            if is_xla and step_idx >= min_batches:
+                break
 
     if is_xla:
         xm.mark_step()
@@ -2721,47 +2688,7 @@ def train_epoch_tpu(
 
     avg_loss = tracker["loss"] / float(max(1, min_batches))
     token_acc = (tracker["corr"] / max(1.0, tracker["total"])) * 100.0
-
     return avg_loss, token_acc
-
-
-print("[+] train_all_in_one_tpu.py module compiled successfully.")
-
-
-class Seq2SeqDataLoaderWrapper:
-    def __init__(self, loader, vocab, device):
-        self.loader = loader
-        self.vocab = vocab
-        self.device = device
-        
-    def __len__(self):
-        return len(self.loader)
-        
-    def __iter__(self):
-        for batch_data in self.loader:
-            if len(batch_data) == 5:
-                features, mask, targets, sample_weights, lex_targets = batch_data
-            else:
-                features, mask, targets, sample_weights = batch_data
-            
-            B = features.size(0)
-            gloss_seq = torch.zeros((B, 3), dtype=torch.long, device=self.device)
-            gloss_seq[:, 0] = self.vocab.BOS_ID
-            gloss_seq[:, 1] = targets.to(self.device) + self.vocab.OFFSET
-            gloss_seq[:, 2] = self.vocab.EOS_ID
-            gloss_len = torch.full((B,), 3, dtype=torch.long, device=self.device)
-            
-            yield {
-                "feature": features.to(self.device),
-                "mask": mask.to(self.device),
-                "label": targets.to(self.device),
-                "domain_label": torch.zeros_like(targets, device=self.device),
-                "has_domain_label": torch.zeros_like(targets, dtype=torch.bool, device=self.device),
-                "gloss_seq": gloss_seq,
-                "gloss_len": gloss_len,
-                "has_valid_gloss": torch.ones(B, dtype=torch.bool, device=self.device),
-                "mlm_mask": None
-            }
 
 
 def _tpu_worker_fn(rank, args):
@@ -2769,35 +2696,67 @@ def _tpu_worker_fn(rank, args):
         import torch_xla.core.xla_model as xm
         import torch_xla.distributed.parallel_loader as pl
     try:
-        device = xm.xla_device() if _XLA_AVAILABLE else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = (
+            xm.xla_device()
+            if _XLA_AVAILABLE
+            else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        )
     except Exception as e:
-        import sys, traceback, time
         print(f"FAILED TO INITIALIZE TPU OR GET DEVICE: {e}", flush=True)
-        traceback.print_exc()
-        sys.stdout.flush()
-        sys.stderr.flush()
         time.sleep(2)
-        os._exit(1) # Use os._exit to bypass atexit handler!
+        os._exit(1)
     is_master = (rank == 0) if _XLA_AVAILABLE else True
-    
+
     data_dir = Path(args.data_dir)
-    mapping_file = data_dir / "output_mapping.json"
-    if mapping_file.exists():
-        with open(mapping_file, "r", encoding="utf-8") as f:
-            raw_map = json.load(f)
-            # If values are strings, map the key directly to its 0-based index
-            if all(isinstance(v, str) for v in list(raw_map.values())[:10]):
-                label_to_idx = {str(k): int(i) for i, k in enumerate(raw_map.keys())}
-            else:
-                label_to_idx = raw_map
-    else:
+    label_to_idx = {}
+    for _mf in [
+        data_dir / "output_mapping.json",
+        data_dir / "vocabulary_mapping_global.json",
+        data_dir / "vocabulary_mapping_train.json",
+    ]:
+        if _mf.exists():
+            try:
+                with open(_mf, "r", encoding="utf-8") as f:
+                    raw_map = json.load(f)
+                if isinstance(raw_map, dict) and "label_to_idx" in raw_map:
+                    label_to_idx = raw_map["label_to_idx"]
+                elif isinstance(raw_map, dict):
+                    non_meta_keys = {
+                        k
+                        for k in raw_map
+                        if k
+                        not in (
+                            "task",
+                            "total_classes",
+                            "description",
+                            "name",
+                            "version",
+                            "split",
+                        )
+                    }
+                    if non_meta_keys:
+                        label_to_idx = {
+                            k: v for k, v in raw_map.items() if k in non_meta_keys
+                        }
+                if label_to_idx:
+                    break
+            except Exception as _e:
+                if is_master:
+                    print(
+                        f"[!] Warning: Failed to load mapping from '{_mf}': {_e}",
+                        flush=True,
+                    )
+
+    if not label_to_idx:
+        if is_master:
+            print(
+                "[!] Warning: No vocabulary mapping found. Using default mapping.",
+                flush=True,
+            )
         label_to_idx = {str(i): i for i in range(6152)}
 
     vocab = GlossVocabulary(label_to_idx=label_to_idx)
-    
-    if is_master:
-        print(f"[*] Worker {rank} initialized on device '{device}'. Loading dataset from '{data_dir}'...", flush=True)
-        
+
     train_loader = create_dataloader(
         dataset_dir=data_dir,
         split="train",
@@ -2806,9 +2765,32 @@ def _tpu_worker_fn(rank, args):
         worker_idx=rank if _XLA_AVAILABLE else 0,
         num_workers=args.num_cores if _XLA_AVAILABLE else 1,
         num_dataloader_workers=args.num_dataloader_workers,
-        shuffle=True
+        shuffle=True,
     )
-    
+
+    class_weights_tensor = None
+    try:
+        raw_ds = getattr(train_loader, "dataset", None)
+        c_counts = getattr(raw_ds, "class_counts", None) if raw_ds else None
+        if c_counts:
+            w_vec = torch.ones(len(vocab), dtype=torch.float32, device=device)
+            max_c = max(c_counts.values()) if c_counts else 1
+            for r_idx, cnt in c_counts.items():
+                tok_id = r_idx + GlossVocabulary.OFFSET
+                if tok_id < len(vocab):
+                    w_vec[tok_id] = min(
+                        10.0, max(1.0, (float(max_c) / float(max(1, cnt))) ** 0.35)
+                    )
+            class_weights_tensor = w_vec
+    except Exception:
+        pass
+
+    asl_lex_csv = (
+        Path(args.asl_lex_csv)
+        if hasattr(args, "asl_lex_csv") and args.asl_lex_csv
+        else (data_dir / "signdata.csv")
+    )
+
     model = ASLFoundationModel(
         vocab_size=len(vocab),
         d_enc=args.d_model,
@@ -2818,109 +2800,190 @@ def _tpu_worker_fn(rank, args):
         num_enc_layers=args.num_layers,
         num_dec_layers=args.num_layers,
         dropout=args.dropout,
-        label_to_idx=label_to_idx
+        label_to_idx=label_to_idx,
+        csv_path=asl_lex_csv if asl_lex_csv.exists() else None,
     ).to(device)
-    
-    loss_wrapper = HomoscedasticLossWrapper(num_losses=6).to(device)
-    supcon_fn = SupervisedContrastiveLoss().to(device)
-    
-    optimizer = torch.optim.AdamW(
-        list(model.parameters()) + list(loss_wrapper.parameters()),
-        lr=args.lr,
-        weight_decay=args.weight_decay
-    )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
-    
-    start_epoch = 1
-    if hasattr(args, 'resume') and args.resume and Path(args.resume).exists():
+
+    if getattr(args, "compile", False) and hasattr(torch, "compile"):
         if is_master:
-            print(f"[+] Loading checkpoint from {args.resume}...", flush=True)
+            print("[*] JIT Compiling model with PyTorch Inductor (torch.compile)...", flush=True)
+        try:
+            model = torch.compile(model)
+        except Exception as _e:
+            if is_master:
+                print(f"[!] Warning: torch.compile fallback: {_e}", flush=True)
+
+    loss_wrapper = HomoscedasticLossWrapper(num_losses=9).to(device)
+    supcon_fn = SupervisedContrastiveLoss().to(device)
+
+    optimizer = torch.optim.AdamW(
+        _get_optimizer_groups(model, loss_wrapper, args.weight_decay),
+        lr=args.lr,
+    )
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer,
+        max_lr=args.lr,
+        epochs=args.epochs,
+        steps_per_epoch=max(
+            1, len(train_loader) * (args.num_cores if _XLA_AVAILABLE else 1)
+        ),
+        pct_start=0.1,
+        div_factor=10.0,
+        final_div_factor=100.0,
+    )
+
+    start_epoch = 1
+    if hasattr(args, "resume") and args.resume and Path(args.resume).exists():
         ckpt = torch.load(args.resume, map_location="cpu")
-        model.load_state_dict(ckpt["model_state_dict"])
+        model.load_state_dict(ckpt["model_state_dict"], strict=False)
         if "loss_wrapper_state_dict" in ckpt:
-            loss_wrapper.load_state_dict(ckpt["loss_wrapper_state_dict"])
+            try:
+                loss_wrapper.load_state_dict(
+                    ckpt["loss_wrapper_state_dict"], strict=False
+                )
+            except Exception:
+                pass
         if "optimizer_state_dict" in ckpt:
             optimizer.load_state_dict(ckpt["optimizer_state_dict"])
         start_epoch = ckpt.get("epoch", 0) + 1
-        if is_master:
-            print(f"[+] Resuming training from Epoch {start_epoch}", flush=True)
-    
+
     save_dir = Path(args.save_dir)
     if is_master:
         save_dir.mkdir(parents=True, exist_ok=True)
         print("=" * 70, flush=True)
-        print(f"       STARTING TPU MULTI-TASK FOUNDATION MODEL TRAINING ({args.epochs} EPOCHS)", flush=True)
+        print(
+            f"       STARTING TPU MULTI-TASK FOUNDATION MODEL TRAINING ({args.epochs} EPOCHS)",
+            flush=True,
+        )
         print("=" * 70, flush=True)
+
+    ema = ModelEMA(model) if is_master else None
 
     try:
         for epoch in range(start_epoch, args.epochs + 1):
+            
+            # --- ADD THIS TO RAMP UP NOISE CURRICULUM ---
+            if hasattr(train_loader.dataset, "set_noise_level"):
+                # Ramps noise from 0.0 to 1.0 linearly over the epochs
+                train_loader.dataset.set_noise_level(epoch / max(1, args.epochs))
+            # --------------------------------------------
+            
             train_loss, train_acc = train_epoch_tpu(
                 model=model,
                 loader=train_loader,
                 optimizer=optimizer,
-                scheduler=None,
+                scheduler=scheduler,
                 loss_wrapper=loss_wrapper,
-                ema=None,
+                ema=ema,
                 supcon_fn=supcon_fn,
                 device=device,
                 epoch=epoch,
                 total_epochs=args.epochs,
-                prec_dtype=torch.bfloat16 if args.precision == "bfloat16" else torch.float32,
+                prec_dtype=(
+                    torch.float16
+                    if args.precision == "float16"
+                    else (
+                        torch.bfloat16
+                        if args.precision == "bfloat16"
+                        else torch.float32
+                    )
+                ),
                 is_master=is_master,
-                accum_steps=1
+                accum_steps=args.accum_steps,
+                class_weights=class_weights_tensor,
             )
+            ckpt_path = save_dir / f"asl_model_epoch_{epoch}.pt"
+            raw_m = model.module if hasattr(model, "module") else model
+            if ema is not None:
+                ema.apply_shadow(raw_m)
+                
+            cpu_state = {
+                "epoch": epoch,
+                "model_state_dict": raw_m.state_dict(),
+                "loss_wrapper_state_dict": loss_wrapper.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+            }
+            
+            if ema is not None:
+                ema.restore(raw_m)
+            if _XLA_AVAILABLE:
+                import torch_xla.core.xla_model as xm
+
+                xm.save(cpu_state, str(ckpt_path), master_only=True)
+            else:
+                if is_master:
+                    torch.save(cpu_state, str(ckpt_path))
             if is_master:
-                ckpt_path = save_dir / f"asl_model_epoch_{epoch}.pt"
-                cpu_state = {
-                    "epoch": epoch,
-                    "model_state_dict": {k: v.cpu() for k, v in model.state_dict().items()},
-                    "loss_wrapper_state_dict": {k: v.cpu() for k, v in loss_wrapper.state_dict().items()},
-                    "optimizer_state_dict": optimizer.state_dict(),
-                }
-                torch.save(cpu_state, str(ckpt_path))
                 print(f"[+] Saved checkpoint to {ckpt_path}", flush=True)
-            scheduler.step()
+                try:
+                    all_ckpts = sorted(
+                        list(save_dir.glob("asl_model_epoch_*.pt")),
+                        key=lambda p: int(p.stem.split("_")[-1]),
+                    )
+                    if len(all_ckpts) > 5:
+                        for old_c in all_ckpts[:-5]:
+                            ep_num = int(old_c.stem.split("_")[-1])
+                            if ep_num % 10 != 0 and ep_num != epoch:
+                                old_c.unlink(missing_ok=True)
+                except Exception:
+                    pass
+            if scheduler is not None:
+                try:
+                    scheduler.step()
+                except Exception:
+                    pass
     except Exception as e:
-        import traceback
-        import sys
+        import traceback, sys
+
         print(f"CRITICAL PYTHON EXCEPTION: {e}", flush=True)
         traceback.print_exc()
-        sys.stdout.flush()
-        sys.stderr.flush()
-        # Sleep for a bit to ensure the output is flushed to Kaggle's log before crashing
         time.sleep(2)
         sys.exit(1)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="ASL Foundation Model Multi-Task TPU Training Pipeline")
-    parser.add_argument("--data-dir", type=str, default="/tmp/asl_dataset/results/asl_preprocessed_phase1", help="Path to preprocessed dataset")
-    parser.add_argument("--precision", type=str, default="bfloat16", choices=["bfloat16", "float32"], help="Precision mode")
-    parser.add_argument("--epochs", type=int, default=120, help="Number of training epochs")
-    parser.add_argument("--batch-size", type=int, default=128, help="Batch size per TPU core")
-    parser.add_argument("--max-len", type=int, default=256, help="Sequence length")
-    parser.add_argument("--lr", type=float, default=4e-4, help="Learning rate")
-    parser.add_argument("--weight-decay", type=float, default=1e-2, help="Weight decay")
-    parser.add_argument("--d-model", type=int, default=128, help="Model dimension")
-    parser.add_argument("--nhead", type=int, default=4, help="Attention heads")
-    parser.add_argument("--num-layers", type=int, default=3, help="Transformer layers")
-    parser.add_argument("--num-cores", type=int, default=4, help="TPU cores")
-    parser.add_argument("--dropout", type=float, default=0.1, help="Dropout rate")
-    parser.add_argument("--num-dataloader-workers", type=int, default=0, help="DataLoader workers per TPU core")
-    parser.add_argument("--save-dir", type=str, default="/tmp/checkpoints", help="Save directory")
-    parser.add_argument("--resume", type=str, default="", help="Path to checkpoint to resume from")
+    parser = argparse.ArgumentParser(
+        description="ASL Foundation Model Multi-Task TPU Training Pipeline"
+    )
+    parser.add_argument(
+        "--data-dir",
+        type=str,
+        default="/tmp/asl_dataset/results/asl_preprocessed_phase1",
+    )
+    parser.add_argument(
+        "--precision",
+        type=str,
+        default="bfloat16",
+        choices=["float16", "bfloat16", "float32"],
+    )
+    parser.add_argument("--epochs", type=int, default=120)
+    parser.add_argument("--batch-size", type=int, default=128)
+    parser.add_argument("--max-len", type=int, default=256)
+    parser.add_argument("--lr", type=float, default=4e-4)
+    parser.add_argument("--weight-decay", type=float, default=1e-2)
+    parser.add_argument("--d-model", type=int, default=128)
+    parser.add_argument("--nhead", type=int, default=4)
+    parser.add_argument("--num-layers", type=int, default=3)
+    parser.add_argument("--num-cores", type=int, default=4)
+    parser.add_argument("--dropout", type=float, default=0.1)
+    parser.add_argument("--num-dataloader-workers", type=int, default=8)
+    parser.add_argument("--accum-steps", type=int, default=1)
+    parser.add_argument("--compile", action="store_true", help="Enable PyTorch 2.0 torch.compile JIT acceleration")
+    parser.add_argument("--save-dir", type=str, default="/tmp/checkpoints")
+    parser.add_argument("--resume", type=str, default="")
+    parser.add_argument(
+        "--asl-lex-csv", type=str, default="/home/binhhanh409/signdata.csv"
+    )
     args = parser.parse_args()
 
     if _XLA_AVAILABLE:
         import torch_xla.distributed.xla_multiprocessing as xmp
+
         if "LOCAL_RANK" in os.environ:
-            print(f"[*] PyTorch XLA detected (torchrun). Running on core {os.environ['LOCAL_RANK']}...", flush=True)
             _tpu_worker_fn(int(os.environ["LOCAL_RANK"]), args)
         else:
-            print("[*] PyTorch XLA detected. Spawning multi-core TPU training for ASLFoundationModel...", flush=True)
-            xmp.spawn(_tpu_worker_fn, args=(args,), nprocs=None, start_method='fork')
+            xmp.spawn(_tpu_worker_fn, args=(args,), nprocs=None, start_method="fork")
     else:
-        print("[!] PyTorch XLA not detected. Running training on single device / CPU...", flush=True)
         _tpu_worker_fn(0, args)
 
 
