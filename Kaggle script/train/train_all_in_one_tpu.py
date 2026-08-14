@@ -55,6 +55,14 @@ try:
 except Exception:
     _XLA_AVAILABLE = False
 
+def is_tpu_runtime() -> bool:
+    return (
+        _XLA_AVAILABLE
+        and os.environ.get("PJRT_DEVICE", "").upper() == "TPU"
+    )
+
+IS_TPU = is_tpu_runtime()
+
 train_dir = Path(__file__).resolve().parent
 if str(train_dir) not in sys.path:
     sys.path.insert(0, str(train_dir))
@@ -1674,8 +1682,7 @@ class CrossModalInfoNCE(nn.Module):
             weight_sum = weight_sum * sample_weights
 
         res = _distributed_normalize(loss.sum(), weight_sum.sum())
-        if world_size > 1 and _XLA_AVAILABLE:
-            res = res * world_size
+
         return res
 
 
@@ -2093,8 +2100,9 @@ class ASLFoundationModel(nn.Module):
         h = torch.cat([self.cls_token.expand(B, -1, -1), h], dim=1)
 
         if frame_indices is not None:
-            cls_fi = torch.full(
-                (B, 1), -1.0, dtype=frame_indices.dtype, device=frame_indices.device
+            frame_indices = frame_indices.long() + 1
+            cls_fi = torch.zeros(
+                (B, 1), dtype=frame_indices.dtype, device=frame_indices.device
             )
             frame_indices = torch.cat([cls_fi, frame_indices], dim=1)
 
@@ -2714,9 +2722,8 @@ def train_epoch_tpu(
             pooled_enc = out["pooled_enc"]
 
             gt_tokens = gloss_seq[:, 1:].contiguous()
-            valid_mask = gt_tokens != GlossVocabulary.PAD_ID
-            has_valid_gloss = has_valid.bool()
-            valid_gloss_mask = valid_mask & has_valid_gloss.unsqueeze(-1)
+            token_mask = (gt_tokens != GlossVocabulary.PAD_ID) & has_valid.bool().unsqueeze(-1)
+            valid_gloss_mask = token_mask & (gt_tokens != GlossVocabulary.EOS_ID)
 
             # Gloss length & sequence loss masked strictly by has_valid_gloss
             if True:
@@ -2748,7 +2755,7 @@ def train_epoch_tpu(
                     compute_eos_loss(
                         dec_logits,
                         gt_tokens,
-                        valid_gloss_mask,
+                        token_mask,
                         sample_weights=sample_weight,
                     )
                     if dec_logits is not None
@@ -2785,7 +2792,8 @@ def train_epoch_tpu(
                 loss_chicago_len = torch.tensor(0.0, device=device, requires_grad=True)
 
             if chicago_logits is not None and has_valid_chicago.any():
-                valid_chicago_mask = chicago_valid & has_valid_chicago.unsqueeze(-1)
+                chi_token_mask = chicago_valid & has_valid_chicago.unsqueeze(-1)
+                valid_chicago_mask = chi_token_mask & (chicago_gt != GlossVocabulary.EOS_ID)
                 loss_chicago = compute_seq_loss(
                     chicago_logits,
                     chicago_gt,
@@ -2795,7 +2803,7 @@ def train_epoch_tpu(
                 loss_chicago_eos = compute_eos_loss(
                     chicago_logits,
                     chicago_gt,
-                    valid_chicago_mask,
+                    chi_token_mask,
                     sample_weights=sample_weight,
                 )
             else:
@@ -2828,7 +2836,8 @@ def train_epoch_tpu(
                 loss_english_len = torch.tensor(0.0, device=device, requires_grad=True)
 
             if english_logits is not None and has_valid_english.any():
-                valid_english_mask = english_valid & has_valid_english.unsqueeze(-1)
+                eng_token_mask = english_valid & has_valid_english.unsqueeze(-1)
+                valid_english_mask = eng_token_mask & (english_gt != GlossVocabulary.EOS_ID)
                 loss_english = compute_seq_loss(
                     english_logits,
                     english_gt,
@@ -2838,7 +2847,7 @@ def train_epoch_tpu(
                 loss_english_eos = compute_eos_loss(
                     english_logits,
                     english_gt,
-                    valid_english_mask,
+                    eng_token_mask,
                     sample_weights=sample_weight,
                 )
             else:
@@ -3059,7 +3068,7 @@ def train_epoch_tpu(
                 m_enc,
                 m_tgt,
                 m_min,
-            ) = forward_and_losses()
+)
 
         if not torch.isfinite(raw_loss).all():
             raise RuntimeError(
@@ -3075,23 +3084,16 @@ def train_epoch_tpu(
 
         if (step_idx % accum_steps == 0) or (step_idx == min_batches):
             if is_xla:
-                if world_size > 1:
-                    xm.reduce_gradients(optimizer)
-                # Use XLA-aware gradient clipping to avoid CPU-TPU sync stalls
+                import torch_xla.core.xla_model as xm
                 import torch_xla.utils.utils as xu
+
                 xu.clip_grad_norm_(
                     list(model.parameters()) + list(loss_wrapper.parameters()),
                     max_norm=1.0,
                 )
-                optimizer.step()
-                xm.mark_step()
-                if scheduler is not None:
-                    try:
-                        scheduler.step()
-                    except Exception as e:
-                        raise RuntimeError(
-                            f"LR scheduler failed at epoch {epoch}, step {step_idx}: {e}"
-                        ) from e
+
+                xm.optimizer_step(optimizer)
+                optimizer.zero_grad(set_to_none=True)
 
                 raw_m = model.module if hasattr(model, "module") else model
                 if ema is not None:
@@ -3102,7 +3104,13 @@ def train_epoch_tpu(
                 if hasattr(raw_m, "dense_sem_loss"):
                     raw_m.dense_sem_loss.update_momentum()
 
-                optimizer.zero_grad(set_to_none=True)
+                if scheduler is not None:
+                    try:
+                        scheduler.step()
+                    except Exception as e:
+                        raise RuntimeError(
+                            f"LR scheduler failed at epoch {epoch}, step {step_idx}: {e}"
+                        ) from e
 
                 log_freq = min(25, max(1, min_batches // 10))
                 if is_master and (
@@ -3432,14 +3440,14 @@ def validate_epoch_tpu(
                 )
 
                 sample_weight = batch.get(
-                    "sample_weight", torch.ones(batch["feature"].size(0), device=device)
-                )
+                    "sample_weight", torch.ones(batch["feature"].size(0), dtype=torch.float32, device=device)
+                ).to(device)
+                english_trunc_flag = batch.get(
+                    "english_trunc", torch.zeros(has_valid_english.shape, dtype=torch.bool, device=device)
+                ).to(device)
                 gt_tokens = gloss_seq[:, 1:].contiguous()
-                valid_mask = (
-                    (gt_tokens != GlossVocabulary.PAD_ID)
-                    & (gt_tokens != GlossVocabulary.EOS_ID)
-                    & has_valid_gloss.unsqueeze(-1)
-                )
+                token_mask = (gt_tokens != GlossVocabulary.PAD_ID) & has_valid_gloss.unsqueeze(-1)
+                valid_mask = token_mask & (gt_tokens != GlossVocabulary.EOS_ID)
 
                 loss_seq = (
                     compute_seq_loss(
@@ -3454,7 +3462,7 @@ def validate_epoch_tpu(
                 )
                 loss_eos = (
                     compute_eos_loss(
-                        dec_logits, gt_tokens, valid_mask, sample_weights=sample_weight
+                        dec_logits, gt_tokens, token_mask, sample_weights=sample_weight
                     )
                     if dec_logits is not None
                     else torch.tensor(0.0, device=device)
@@ -3477,11 +3485,8 @@ def validate_epoch_tpu(
                 if chicago_logits is not None and True:
                     chicago_gt = chicago_seq[:, 1:].contiguous()
                     c_preds = chicago_logits.argmax(dim=-1)
-                    c_valid_mask = (
-                        (chicago_gt != GlossVocabulary.PAD_ID)
-                        & (chicago_gt != GlossVocabulary.EOS_ID)
-                        & has_valid_chicago.unsqueeze(-1)
-                    )
+                    chi_token_mask = (chicago_gt != GlossVocabulary.PAD_ID) & has_valid_chicago.unsqueeze(-1)
+                    c_valid_mask = chi_token_mask & (chicago_gt != GlossVocabulary.EOS_ID)
                     c_valid = c_valid_mask.float()
                     loss_chi = compute_seq_loss(
                         chicago_logits,
@@ -3492,7 +3497,7 @@ def validate_epoch_tpu(
                     loss_chi_eos = compute_eos_loss(
                         chicago_logits,
                         chicago_gt,
-                        c_valid_mask,
+                        chi_token_mask,
                         sample_weights=sample_weight,
                     )
                     c_nc_t = ((c_preds == chicago_gt).float() * c_valid).sum()
@@ -3506,11 +3511,8 @@ def validate_epoch_tpu(
                 if english_logits is not None and True:
                     english_gt = english_seq[:, 1:].contiguous()
                     e_preds = english_logits.argmax(dim=-1)
-                    e_valid_mask = (
-                        (english_gt != GlossVocabulary.PAD_ID)
-                        & (english_gt != GlossVocabulary.EOS_ID)
-                        & has_valid_english.unsqueeze(-1)
-                    )
+                    eng_token_mask = (english_gt != GlossVocabulary.PAD_ID) & has_valid_english.unsqueeze(-1)
+                    e_valid_mask = eng_token_mask & (english_gt != GlossVocabulary.EOS_ID)
                     e_valid = e_valid_mask.float()
                     loss_eng = compute_seq_loss(
                         english_logits,
@@ -3521,7 +3523,7 @@ def validate_epoch_tpu(
                     loss_eng_eos = compute_eos_loss(
                         english_logits,
                         english_gt,
-                        e_valid_mask,
+                        eng_token_mask,
                         sample_weights=sample_weight,
                     )
                     e_nc_t = ((e_preds == english_gt).float() * e_valid).sum()
@@ -3679,20 +3681,20 @@ def validate_epoch_tpu(
 
 
 def _tpu_worker_fn(rank, args):
-    if _XLA_AVAILABLE:
+    if IS_TPU:
         import torch_xla.core.xla_model as xm
         import torch_xla.distributed.parallel_loader as pl
     try:
         device = (
             xm.xla_device()
-            if _XLA_AVAILABLE
+            if IS_TPU
             else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         )
     except Exception as e:
         print(f"FAILED TO INITIALIZE TPU OR GET DEVICE: {e}", flush=True)
         time.sleep(2)
         os._exit(1)
-    is_master = (rank == 0) if _XLA_AVAILABLE else True
+    is_master = (rank == 0) if IS_TPU else True
 
     data_dir = Path(args.data_dir)
     vocab_path = data_dir / "vocabulary_mapping_train.json"
@@ -3911,6 +3913,10 @@ def _tpu_worker_fn(rank, args):
         final_div_factor=100.0,
     )
 
+    scaler = None
+    if args.precision == "float16" and "cuda" in str(device).lower():
+        scaler = torch.amp.GradScaler("cuda")
+
     start_epoch = 1
     if hasattr(args, "resume") and args.resume and Path(args.resume).exists():
         ckpt = torch.load(args.resume, map_location="cpu")
@@ -3987,9 +3993,7 @@ def _tpu_worker_fn(rank, args):
             if is_master:
                 print("[+] Restored EMA state from checkpoint", flush=True)
 
-    scaler = None
-    if args.precision == "float16" and "cuda" in str(device).lower():
-        scaler = torch.amp.GradScaler("cuda")
+
 
     try:
         for epoch in range(start_epoch, args.epochs + 1):
@@ -4185,7 +4189,7 @@ def main():
         os.environ.pop("XLA_USE_BF16", None)
         os.environ.pop("XLA_USE_F16", None)
 
-    if _XLA_AVAILABLE:
+    if IS_TPU:
         import torch_xla.distributed.xla_multiprocessing as xmp
 
         if "LOCAL_RANK" in os.environ:

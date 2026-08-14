@@ -1,4 +1,3 @@
-%%writefile dataset.py
 import os
 
 # CRITICAL FIX: Limit Dataloader multithreading to prevent 9600% CPU usage and OOM on Kaggle TPUs
@@ -21,7 +20,6 @@ from typing import Dict, List, Optional, Tuple, Union, Any
 from torch.utils.data import Dataset, DataLoader
 import multiprocessing
 
-_SHARED_PROGRESS = multiprocessing.Value("f", 0.0)
 
 # Labels that indicate unlabeled/placeholder data — skip during indexing
 _SKIP_LABELS = frozenset(
@@ -368,8 +366,10 @@ class ASLShardedDataset(Dataset):
         shuffle_shards: bool = True,
         stage: str = "full_mixture",
         augment: bool = False,
+        shared_progress=None,
     ):
         super().__init__()
+        self.shared_progress = shared_progress
 
         # Auto-discover candidate directories if specified directory doesn't exist
         input_dir = Path(dataset_dir)
@@ -555,11 +555,8 @@ class ASLShardedDataset(Dataset):
                 f"No shard_*.pt or .pt files found in '{self.dataset_dir}'"
             )
 
-        # Load all shards. DistributedSampler will partition the indices dynamically.
         self.shard_files = all_shard_files
-
-        if self.shuffle_shards:
-            random.shuffle(self.shard_files)
+        self.dataset_name = f"dataset_{self.split}_{len(self.shard_files)}_{self.max_len}"
 
         # Load records metadata from allocated shards
         self.dataset_id = id(self)
@@ -809,7 +806,8 @@ class ASLShardedDataset(Dataset):
 
     def set_noise_level(self, level: float) -> None:
         """Dynamically adjusts augmentation noise level and active Curriculum by Difficulty subset."""
-        _SHARED_PROGRESS.value = float(level)
+        if self.shared_progress is not None:
+            self.shared_progress.value = float(level)
         # Note: self.stage and cache adjustments are now handled dynamically inside __getitem__
         # so persistent_workers can pick up the changes.
 
@@ -1025,7 +1023,12 @@ class ASLShardedDataset(Dataset):
             T = feat_arr.shape[0]
 
         if self.augment and self.augmenter is not None and T > 0:
-            self.augmenter.set_noise_level(_SHARED_PROGRESS.value)
+            level = (
+                self.shared_progress.value
+                if self.shared_progress is not None
+                else 0.0
+            )
+            self.augmenter.set_noise_level(level)
             feat_arr, frame_indices = self.augmenter(feat_arr, frame_indices)
             if feat_arr.shape[-1] > self.channels_per_kp:
                 feat_arr = feat_arr[..., : self.channels_per_kp]
@@ -1041,7 +1044,7 @@ class ASLShardedDataset(Dataset):
                 feat_arr = np.concatenate([feat_arr, pad_c], axis=-1)
             T = feat_arr.shape[0]
 
-        padded_frame_indices = np.zeros(self.max_len, dtype=np.int64)
+        padded_frame_indices = np.zeros(self.max_len, dtype=np.float32)
         if T > 0:
             T_cap = min(T, self.max_len)
             features[:T_cap] = feat_arr[:T_cap]
@@ -1187,7 +1190,7 @@ class ASLShardedDataset(Dataset):
             "lex_class_idx": torch.tensor(lex_class_idx, dtype=torch.long),
             "domain_label": torch.tensor(0, dtype=torch.long),
             "has_domain_label": torch.tensor(False, dtype=torch.bool),
-            "frame_indices": torch.tensor(padded_frame_indices, dtype=torch.long),
+            "frame_indices": torch.from_numpy(padded_frame_indices).float(),
             "gloss_seq": torch.tensor(padded_gloss_seq, dtype=torch.long),
             "gloss_len": torch.tensor(gloss_len, dtype=torch.long),
             "has_valid_gloss": torch.tensor(has_valid_gloss, dtype=torch.bool),
@@ -1230,6 +1233,13 @@ def create_dataloader(
     augment: bool = False,
 ) -> DataLoader:
     """Creates a PyTorch DataLoader wrapping ASLShardedDataset with curriculum learning & real-life camera augmentation."""
+    import multiprocessing
+    mp_context = multiprocessing.get_context("spawn") if num_dataloader_workers > 0 else None
+
+    shared_progress = None
+    if num_dataloader_workers > 0:
+        shared_progress = mp_context.Value("d", 0.0)
+
     dataset = ASLShardedDataset(
         dataset_dir=dataset_dir,
         split=split,
@@ -1239,6 +1249,7 @@ def create_dataloader(
         shuffle_shards=shuffle,
         stage=stage,
         augment=augment,
+        shared_progress=shared_progress,
     )
 
     sampler = None
