@@ -1,0 +1,60 @@
+# ==============================================================================
+# KAGGLE TPU VM (v3-8 / v5e-8) SETUP & EXECUTION CELLS (COPY & PASTE INTO NOTEBOOK)
+# ==============================================================================
+
+# CELL 1: Verify TPU VM & PyTorch XLA Environment
+# ------------------------------------------------------------------------------
+import torch
+import torch_xla
+import torch_xla.core.xla_model as xm
+
+print(f"PyTorch Version: {torch.__version__}")
+print(f"PyTorch XLA Version: {torch_xla.__version__}")
+
+# Use modern torch_xla syntax (PyTorch XLA >= 2.5)
+device = torch_xla.device()
+print(f"Default XLA Device: {device}")
+try:
+    hw_type = torch_xla.runtime.device_type()
+except AttributeError:
+    hw_type = xm.xla_device_hw(device)
+print(f"Hardware Type: {hw_type}")
+# Note: On Kaggle TPU VMs with PyTorch XLA 2.8+, you will see a benign C++ log:
+# "Could not set metric server port... Could not find SliceBuilder port 8471".
+# This is completely normal and harmless when running locally (`PJRT` single-node runtime).
+
+
+
+# CELL 2: Install OpenMMLab & Decord (Using GPU Download-and-Patch Flow for TPU)
+# ------------------------------------------------------------------------------
+# 1. Pin `setuptools<72`, `wheel`, and `cython` so `pkg_resources`, `pip`, and `cythonize` exist for setup.py builds.
+!pip install -q "setuptools<72" wheel cython
+# 2. Install decord, mmengine, mmdet, mmpose, and data libs right from PyPI (--no-build-isolation so chumpy finds pip).
+!pip install -q --no-build-isolation decord mmengine "mmdet>=3.0.0" "mmpose>=1.1.0" scipy pandas numpy tqdm torchvision
+# 3. Download mmcv-2.1.0.tar.gz directly via urllib to bypass pip download build isolation.
+!rm -rf /kaggle/working/mmcv_build && mkdir -p /kaggle/working/mmcv_build
+!python -c "import urllib.request, json, os; os.makedirs('/kaggle/working/mmcv_build', exist_ok=True); data = json.loads(urllib.request.urlopen('https://pypi.org/pypi/mmcv/2.1.0/json').read().decode()); url = [u['url'] for u in data['urls'] if u['filename'].endswith('.tar.gz')][0]; urllib.request.urlretrieve(url, '/kaggle/working/mmcv_build/mmcv-2.1.0.tar.gz'); print('Successfully fetched mmcv-2.1.0.tar.gz from PyPI')"
+# 4. Unpack and patch setup.py (`ImpImporter/FileFinder` + `check_torch_version`).
+!tar -xzf /kaggle/working/mmcv_build/mmcv-2.1.0.tar.gz -C /kaggle/working/mmcv_build/
+!python -c "import pathlib, re; p = pathlib.Path('/kaggle/working/mmcv_build/mmcv-2.1.0/setup.py'); txt = p.read_text(encoding='utf-8'); header = 'import sys, pkgutil, zipimport, importlib.machinery\nif not hasattr(pkgutil, \"ImpImporter\"): pkgutil.ImpImporter = zipimport.zipimporter\nif not hasattr(importlib.machinery.FileFinder, \"find_module\"): importlib.machinery.FileFinder.find_module = lambda self, fullname, path=None: (s.loader if (s := self.find_spec(fullname, target=None)) else None)\n'; txt = header + re.sub(r'def check_torch_version\(\):.*?(?=\ndef |\Z)', 'def check_torch_version():\n    return\n\n', txt, flags=re.DOTALL); p.write_text(txt, encoding='utf-8')"
+# 5. Patch `ext_loader.py` so NMS / RoIAlign fallback to PyTorch / TorchVision ops.
+!python -c "import pathlib; p = pathlib.Path('/kaggle/working/mmcv_build/mmcv-2.1.0/mmcv/utils/ext_loader.py'); p.write_text('import importlib, torch\ntry:\n    import torchvision.ops as tv_ops\nexcept Exception:\n    tv_ops = None\ndef load_ext(name, funcs):\n    try:\n        return importlib.import_module(\"mmcv.\" + name)\n    except Exception:\n        class DummyExt:\n            def nms(self, boxes, scores, iou_threshold, offset=0):\n                if boxes.numel() == 0:\n                    return torch.empty((0,), dtype=torch.long, device=boxes.device)\n                return tv_ops.nms(boxes.float(), scores.float(), float(iou_threshold))\n            def soft_nms(self, boxes, scores, dets, iou_threshold, sigma, min_score, method, offset=0):\n                if boxes.numel() == 0:\n                    return torch.empty((0,), dtype=torch.long, device=boxes.device)\n                return tv_ops.nms(boxes.float(), scores.float(), float(iou_threshold))\n            def roi_align_forward(self, input, rois, output, argmax_y, argmax_x, aligned_height, aligned_width, spatial_scale, sampling_ratio, pool_mode, aligned):\n                res = tv_ops.roi_align(input, rois, (aligned_height, aligned_width), spatial_scale=spatial_scale, sampling_ratio=sampling_ratio, aligned=aligned)\n                output.copy_(res)\n            def __getattr__(self, item):\n                if item in (\"nms\", \"soft_nms\"):\n                    return self.nms\n                def dummy_func(*args, **kwargs):\n                    raise RuntimeError(f\"{item} requires compiled mmcv C++ ops.\")\n                return dummy_func\n        return DummyExt()\n', encoding='utf-8')"
+# 6. Install mmcv pure-Python without build isolation in under 10 seconds and clean up build files!
+!cd /kaggle/working/mmcv_build/mmcv-2.1.0 && MMCV_WITH_OPS=0 pip install . --no-build-isolation -q
+!rm -rf /kaggle/working/mmcv_build
+
+
+
+# CELL 3: Write out check_rejection_rate.py diagnostic script
+# ------------------------------------------------------------------------------
+# Paste contents of check_rejection_rate.py or run from repository if cloned.
+
+
+# CELL 4: Write out train_sign_pipeline_tpu.py
+# ------------------------------------------------------------------------------
+# Paste the full train_sign_pipeline_tpu.py script using %%writefile train_sign_pipeline_tpu.py
+
+
+# CELL 5: Launch V3-TPU Frankenstein Engine Across 8 TPU Cores (380GB RAM Optimized)
+# ------------------------------------------------------------------------------
+!python train_sign_pipeline_tpu.py --split train --num-workers 8 --batch-size 128 --batch-flush-size 1000

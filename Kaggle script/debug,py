@@ -1,0 +1,25 @@
+import torch
+import numpy as np
+
+
+def check_shard_zeros():
+    shard_path = r"./temp_extraction/shards/temp_shard_train_w0_0000.pt"
+    print(f"Loading {shard_path}...")
+
+    data = torch.load(shard_path, map_location="cpu", weights_only=False)
+
+    print("\n🔍 Checking the first 5 records:")
+    for i in range(5):
+        feat = data[i]["features"]
+        if hasattr(feat, "numpy"):
+            feat = feat.numpy()
+
+        print(f"\nRecord {i} | Label: '{data[i].get('label', 'N/A')}'")
+        print(f"  Shape: {feat.shape}")
+        print(f"  Raw Max: {feat.max()}")
+        print(f"  Raw Min: {feat.min()}")
+        print(f"  Are all values EXACTLY zero? {np.all(feat == 0.0)}")
+
+
+if __name__ == "__main__":
+    check_shard_zeros()

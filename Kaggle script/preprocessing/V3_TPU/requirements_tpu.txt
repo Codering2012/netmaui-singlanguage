@@ -1,0 +1,12 @@
+# %%writefile requirements_tpu.txt
+# Note: torch and torch_xla are pre-installed on Kaggle TPU VMs (`torch_xla[tpu]`).
+torchvision
+decord
+numpy
+pandas
+scipy
+tqdm
+openmim
+mmengine
+mmcv
+mmpose

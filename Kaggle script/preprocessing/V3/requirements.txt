@@ -1,0 +1,13 @@
+# %%writefile requirements.txt
+torch>=2.0.0
+torchvision
+decord
+numpy
+pandas
+scipy
+tqdm
+openmim
+mmdet>=3.0.0
+mmpose
+mmengine
+mmcv

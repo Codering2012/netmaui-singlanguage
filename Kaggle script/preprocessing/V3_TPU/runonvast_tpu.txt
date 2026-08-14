@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# GOOGLE CLOUD / VAST.AI TPU VM (v3-8 / v5e-8) SETUP & EXECUTION SCRIPT
+# ==============================================================================
+set -e
+
+echo "[*] Updating system packages & installing video decoding dependencies..."
+sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg libsm6 libxext6 libgl1-mesa-glx
+
+echo "[*] Installing Python dependencies without C++ MMCV compilation..."
+export MMCV_WITH_OPS=0
+pip install -q openmim decord scipy pandas numpy tqdm torchvision
+mim install -q mmengine "mmcv>=2.0.0" "mmpose>=1.1.0"
+
+echo "[*] Verifying PyTorch XLA TPU environment..."
+python3 -c "import torch_xla.core.xla_model as xm; print('TPU Device Available:', xm.xla_device())"
+
+echo "[*] Starting V3-TPU Frankenstein Engine across 8 TPU cores..."
+python3 train_sign_pipeline_tpu.py --split all --num-workers 8 --batch-size 64
+
+echo "[*] Pipeline execution finished cleanly."

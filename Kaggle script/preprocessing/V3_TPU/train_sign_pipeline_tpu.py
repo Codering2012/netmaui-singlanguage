@@ -173,6 +173,50 @@ os.environ.pop("TPU_NAME", None)
 os.environ["PJRT_DEVICE"] = "TPU"
 
 
+def _fast_rglob(directory: Path, pattern: str) -> list[Path]:
+    import json
+    import time
+    if not directory.exists():
+        return []
+        
+    hash_str = f"{directory.name}_{pattern}".replace("/", "_").replace("\\", "_").replace("*", "star")
+    cache_path = KAGGLE_TEMP_DIR / f"glob_cache_{hash_str}.json"
+    lock_path = KAGGLE_TEMP_DIR / f"glob_cache_{hash_str}.lock"
+    
+    if cache_path.exists():
+        try:
+            with open(cache_path, "r") as f:
+                return [Path(p) for p in json.load(f)]
+        except Exception:
+            pass
+            
+    try:
+        KAGGLE_TEMP_DIR.mkdir(parents=True, exist_ok=True)
+        lock_path.touch(exist_ok=False)
+    except FileExistsError:
+        while not cache_path.exists():
+            time.sleep(1)
+        try:
+            with open(cache_path, "r") as f:
+                return [Path(p) for p in json.load(f)]
+        except Exception:
+            pass
+            
+    files = list(directory.rglob(pattern))
+    
+    tmp_cache = cache_path.with_suffix(".tmp")
+    with open(tmp_cache, "w") as f:
+        json.dump([str(p) for p in files], f)
+    tmp_cache.rename(cache_path)
+    
+    try:
+        lock_path.unlink()
+    except Exception:
+        pass
+        
+    return files
+
+
 def _gather_candidate_dirs(root: Path, max_depth: int = 4) -> list[Path]:
     candidates = []
     if not root.exists():
@@ -597,9 +641,10 @@ def read_video_batch_gpu(
                     del frames_np
                     return t_out, None
         except Exception:
-            pass
+            return None, None
 
     # --- FALLBACK: torchvision.io.read_video (no cv2, XLA-safe numpy bridge) ---
+    # Only runs if decord is not installed.
     try:
         v_tensor, _, info = tv_io.read_video(path_str, pts_unit="sec")
         if v_tensor is not None and v_tensor.shape[0] > 0:
@@ -912,8 +957,8 @@ class RTMWWholeBodyExtractor:
                     img_t = tio.decode_png(
                         buf, mode=tio.ImageReadMode.RGB
                     )  # [C,H,W] uint8
-                if img_t.shape[1] != target_h or img_t.shape[2] != target_w:
-                    img_t = TF_vis.resize(img_t, [target_h, target_w], antialias=False)
+                # We skip CPU resizing here. All ASL Alphabet images are uniformly 200x200.
+                # Stacking them works without resize. We will resize on the TPU.
                 # .numpy() is zero-copy (shares the same C++ storage),
                 # but breaks XLA graph tracking before we cross thread boundaries.
                 return img_t.numpy()
@@ -961,14 +1006,20 @@ class RTMWWholeBodyExtractor:
                             (
                                 self.batch_size - valid_l,
                                 3,
-                                IMAGE_RESIZE_TARGET[0],
-                                IMAGE_RESIZE_TARGET[1],
+                                sub_cpu.shape[2],
+                                sub_cpu.shape[3],
                             ),
                             dtype=sub_cpu.dtype,
                         )
                         sub_cpu = torch.cat([sub_cpu, pad], dim=0)
 
                     sub_gpu = sub_cpu.to(target_dev)
+                    import torchvision.transforms.functional as TF
+                    if sub_gpu.shape[-2:] != IMAGE_RESIZE_TARGET:
+                        sub_gpu = TF.resize(
+                            sub_gpu, size=IMAGE_RESIZE_TARGET, antialias=False
+                        )
+                    
                     sub_kpts = self._direct_tpu_tensor_inference(
                         sub_gpu, valid_len=valid_l
                     )
@@ -1566,8 +1617,8 @@ class _DatasetProcessor:
                 )
             return
         completed_keys = _get_completed_keys(self.split, "ASL_Alphabet")
-        all_files = sorted(ASL_ALPHABET_DIR.rglob("*.jpg")) + sorted(
-            ASL_ALPHABET_DIR.rglob("*.png")
+        all_files = sorted(_fast_rglob(ASL_ALPHABET_DIR, "*.jpg")) + sorted(
+            _fast_rglob(ASL_ALPHABET_DIR, "*.png")
         )
         if not all_files:
             if self.worker_idx == 0:
@@ -1597,6 +1648,17 @@ class _DatasetProcessor:
             ]
             if test_files:
                 all_files = test_files
+
+        # CRITICAL FIX (Point 3): ASL Alphabet deterministic train/val split
+        import hashlib
+        if self.split in ("train", "val") and "asl_alphabet_train" in target_sub:
+            filtered = []
+            for f in all_files:
+                h = int(hashlib.md5(f.name.encode('utf-8')).hexdigest(), 16)
+                is_val = (h % 10 == 0) # 10% validation
+                if (self.split == "val" and is_val) or (self.split == "train" and not is_val):
+                    filtered.append(f)
+            all_files = filtered
 
         my_files = [
             f
@@ -1671,8 +1733,8 @@ class _DatasetProcessor:
                 )
             return
         completed_keys = _get_completed_keys(self.split, "Synthetic_Numbers")
-        all_files = sorted(SYNTHETIC_DIR.rglob("*.png")) + sorted(
-            SYNTHETIC_DIR.rglob("*.jpg")
+        all_files = sorted(_fast_rglob(SYNTHETIC_DIR, "*.png")) + sorted(
+            _fast_rglob(SYNTHETIC_DIR, "*.jpg")
         )
         if not all_files:
             if self.worker_idx == 0:
@@ -1682,15 +1744,26 @@ class _DatasetProcessor:
             return
 
         # Filter files by target split folder (Train_Nums vs Test_Nums)
-        target_sub = "train" if self.split == "train" else "test"
+        target_sub = "train" if self.split in ("train", "val") else "test"
         split_files = [
             f
             for f in all_files
-            if target_sub in str(f.resolve()).lower()
-            or f"/{self.split}/" in str(f.resolve()).lower()
+            if f"/{target_sub}" in str(f.resolve()).lower()
+            or f"_{target_sub}_" in f.name.lower()
         ]
         if split_files:
             all_files = split_files
+
+        # CRITICAL FIX (Point 4): Synthetic Numbers deterministic train/val split
+        import hashlib
+        if self.split in ("train", "val") and target_sub == "train":
+            filtered = []
+            for f in all_files:
+                h = int(hashlib.md5(f.name.encode('utf-8')).hexdigest(), 16)
+                is_val = (h % 10 == 0) # 10% validation
+                if (self.split == "val" and is_val) or (self.split == "train" and not is_val):
+                    filtered.append(f)
+            all_files = filtered
 
         my_files = [
             f
@@ -2276,9 +2349,9 @@ class _DatasetProcessor:
         self._flush_buffer()
 
     def _load_how2sign_text_map(self, how2sign_root: Path) -> Dict[str, str]:
-        clip_map = {}
-        csv_files = sorted(how2sign_root.rglob("*.csv")) + sorted(
-            how2sign_root.rglob("*.tsv")
+        # 1. Load Text Mappings
+        csv_files = sorted(_fast_rglob(how2sign_root, "*.csv")) + sorted(
+            _fast_rglob(how2sign_root, "*.tsv")
         )
         if IS_KAGGLE and Path("/kaggle/input").exists():
             try:
@@ -2340,12 +2413,12 @@ class _DatasetProcessor:
             return
         how2sign_text_map = self._load_how2sign_text_map(how2sign_root)
         completed_keys = _get_completed_keys(self.split, "How2Sign")
-        all_files = sorted(how2sign_root.rglob("*.npy"))
+        all_files = sorted(_fast_rglob(how2sign_root, "*.npy"))
         if not all_files:
             archive_candidates = (
-                sorted(how2sign_root.rglob("*.tgz"))
-                + sorted(how2sign_root.rglob("*.tar.gz"))
-                + sorted(how2sign_root.rglob("*.tar"))
+                sorted(_fast_rglob(how2sign_root, "*.tgz"))
+                + sorted(_fast_rglob(how2sign_root, "*.tar.gz"))
+                + sorted(_fast_rglob(how2sign_root, "*.tar"))
             )
             if archive_candidates:
                 archive_path = archive_candidates[0]
@@ -2353,7 +2426,7 @@ class _DatasetProcessor:
                 if not extract_done_flag.exists():
                     log_msg(f"[!] Warning: How2Sign archive was not pre-extracted.")
                 how2sign_root = KAGGLE_TEMP_DIR
-                all_files = sorted(how2sign_root.rglob("*.npy"))
+                all_files = sorted(_fast_rglob(how2sign_root, "*.npy"))
 
         if all_files:
             split_files = [
@@ -2501,7 +2574,7 @@ def save_sharded_payload(
         log_msg(f"  -> Saved shard {idx+1}: {shard_path.name} ({len(recs)} records)")
 
     # Added tqdm so you can SEE the merge happening and catch deadlocks instantly
-    for temp_file in tqdm(shard_files, desc=f"Merging '{split}' Shards"):
+    for temp_file in tqdm(shard_files, desc=f"Merging '{split}' Shards", mininterval=2.0):
         try:
             if temp_file.suffix == ".jsonl":
                 with open(temp_file, "r", encoding="utf-8") as f:
@@ -2622,7 +2695,10 @@ def _extract_chicago_csv():
     csv_extract_done = KAGGLE_TEMP_DIR / "chicago_csv_extract_done.txt"
     chicago_csv_path = CHICAGO_FSWILD_DIR / "ChicagoFSWild.csv"
     if not chicago_csv_path.exists() and IS_KAGGLE and Path("/kaggle/input").exists():
-        found_csvs = list(Path("/kaggle/input").rglob("ChicagoFSWild.csv"))
+        found_csvs = []
+        for c_dir in _gather_candidate_dirs(Path("/kaggle/input"), max_depth=4):
+            if (c_dir / "ChicagoFSWild.csv").exists():
+                found_csvs.append(c_dir / "ChicagoFSWild.csv")
         if found_csvs:
             chicago_csv_path = found_csvs[0]
 
@@ -2634,8 +2710,9 @@ def _extract_chicago_csv():
             CHICAGO_FSWILD_DIR.parent / "chicagofswild" / "ChicagoFSWild.tar.gz",
         ]
         if IS_KAGGLE and Path("/kaggle/input").exists():
-            archive_candidates.extend(list(Path("/kaggle/input").rglob("ChicagoFSWild.tgz")))
-            archive_candidates.extend(list(Path("/kaggle/input").rglob("ChicagoFSWild.tar.gz")))
+            for c_dir in _gather_candidate_dirs(Path("/kaggle/input"), max_depth=4):
+                archive_candidates.append(c_dir / "ChicagoFSWild.tgz")
+                archive_candidates.append(c_dir / "ChicagoFSWild.tar.gz")
         archive_path = next((c for c in archive_candidates if c.exists()), None)
         if archive_path is not None:
             log_msg(f"[*] Pre-extracting ChicagoFSWild CSV archive: {archive_path.name}...")
@@ -2671,8 +2748,9 @@ def _extract_chicago_frames():
             CHICAGO_FSWILD_DIR.parent / "chicagofswild" / "ChicagoFSWild-Frames.tar.gz",
         ]
         if IS_KAGGLE and Path("/kaggle/input").exists():
-            archive_candidates.extend(list(Path("/kaggle/input").rglob("ChicagoFSWild-Frames.tgz")))
-            archive_candidates.extend(list(Path("/kaggle/input").rglob("ChicagoFSWild-Frames.tar.gz")))
+            for c_dir in _gather_candidate_dirs(Path("/kaggle/input"), max_depth=4):
+                archive_candidates.append(c_dir / "ChicagoFSWild-Frames.tgz")
+                archive_candidates.append(c_dir / "ChicagoFSWild-Frames.tar.gz")
         archive_path = next((c for c in archive_candidates if c.exists()), None)
         if archive_path is not None:
             log_msg(f"[*] Fast pre-extracting ChicagoFSWild Frames archive: {archive_path.name} to {KAGGLE_TEMP_DIR}...")

@@ -1,0 +1,5 @@
+outputs/
+mediapipe_models/
+artifacts/
+__pycache__/
+*.pyc

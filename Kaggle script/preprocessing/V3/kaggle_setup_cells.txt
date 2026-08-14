@@ -1,0 +1,62 @@
+# ==============================================================================
+# KAGGLE NOTEBOOK PREPROCESSING RUNNER (V3 - Python 3.12 Compatible)
+# ==============================================================================
+# Copy and run each section below into separate Notebook Code Cells inside Kaggle.
+# Ensure Settings -> Accelerator is set to GPU T4 x2 (or P100) and Internet is ON.
+
+# ------------------------------------------------------------------------------
+# CELL 1: Install High-Speed Decord, MMPose & Patched MMCV (PyTorch 2.10+ / Python 3.12 Compatible)
+# ------------------------------------------------------------------------------
+# 1. Install decord, mmengine, and mmpose right from PyPI.
+# 2. Download mmcv-2.1.0.tar.gz directly via urllib to bypass pip download build isolation.
+# 3. Unpack and patch setup.py (`check_torch_version` + `ImpImporter/FileFinder`), then install
+#    via pure-Python `MMCV_WITH_OPS=0` in under 10 seconds!
+!pip install -q --upgrade setuptools
+!pip install -q decord mmengine "mmdet>=3.0.0" "mmpose>=1.1.0"
+!rm -rf /kaggle/working/mmcv_build && mkdir -p /kaggle/working/mmcv_build
+!python -c "import urllib.request, json, os; os.makedirs('/kaggle/working/mmcv_build', exist_ok=True); data = json.loads(urllib.request.urlopen('https://pypi.org/pypi/mmcv/2.1.0/json').read().decode()); url = [u['url'] for u in data['urls'] if u['filename'].endswith('.tar.gz')][0]; urllib.request.urlretrieve(url, '/kaggle/working/mmcv_build/mmcv-2.1.0.tar.gz'); print('Successfully fetched mmcv-2.1.0.tar.gz from PyPI')"
+!tar -xzf /kaggle/working/mmcv_build/mmcv-2.1.0.tar.gz -C /kaggle/working/mmcv_build/
+!python -c "import pathlib, re; p = pathlib.Path('/kaggle/working/mmcv_build/mmcv-2.1.0/setup.py'); txt = p.read_text(encoding='utf-8'); header = 'import sys, pkgutil, zipimport, importlib.machinery\nif not hasattr(pkgutil, \"ImpImporter\"): pkgutil.ImpImporter = zipimport.zipimporter\nif not hasattr(importlib.machinery.FileFinder, \"find_module\"): importlib.machinery.FileFinder.find_module = lambda self, fullname, path=None: (s.loader if (s := self.find_spec(fullname, target=None)) else None)\n'; txt = header + re.sub(r'def check_torch_version\(\):.*?(?=\ndef |\Z)', 'def check_torch_version():\n    return\n\n', txt, flags=re.DOTALL); p.write_text(txt, encoding='utf-8')"
+!python -c "import pathlib; p = pathlib.Path('/kaggle/working/mmcv_build/mmcv-2.1.0/mmcv/utils/ext_loader.py'); p.write_text('import importlib, torch\ntry:\n    import torchvision.ops as tv_ops\nexcept Exception:\n    tv_ops = None\ndef load_ext(name, funcs):\n    try:\n        return importlib.import_module(\"mmcv.\" + name)\n    except Exception:\n        class DummyExt:\n            def nms(self, boxes, scores, iou_threshold, offset=0):\n                if boxes.numel() == 0:\n                    return torch.empty((0,), dtype=torch.long, device=boxes.device)\n                return tv_ops.nms(boxes.float(), scores.float(), float(iou_threshold))\n            def soft_nms(self, boxes, scores, dets, iou_threshold, sigma, min_score, method, offset=0):\n                if boxes.numel() == 0:\n                    return torch.empty((0,), dtype=torch.long, device=boxes.device)\n                return tv_ops.nms(boxes.float(), scores.float(), float(iou_threshold))\n            def roi_align_forward(self, input, rois, output, argmax_y, argmax_x, aligned_height, aligned_width, spatial_scale, sampling_ratio, pool_mode, aligned):\n                res = tv_ops.roi_align(input, rois, (aligned_height, aligned_width), spatial_scale=spatial_scale, sampling_ratio=sampling_ratio, aligned=aligned)\n                output.copy_(res)\n            def __getattr__(self, item):\n                if item in (\"nms\", \"soft_nms\"):\n                    return self.nms\n                def dummy_func(*args, **kwargs):\n                    raise RuntimeError(f\"{item} requires compiled mmcv C++ ops.\")\n                return dummy_func\n        return DummyExt()\n', encoding='utf-8')"
+!cd /kaggle/working/mmcv_build/mmcv-2.1.0 && MMCV_WITH_OPS=0 pip install . --no-build-isolation -q
+
+
+# ------------------------------------------------------------------------------
+# CELL 2: Write requirements.txt to disk (Optional verification)
+# ------------------------------------------------------------------------------
+%%writefile requirements.txt
+torch>=2.0.0
+torchvision
+decord
+numpy
+pandas
+scipy
+tqdm
+openmim
+mmdet>=3.0.0
+mmpose
+mmengine
+mmcv
+
+
+# ------------------------------------------------------------------------------
+# CELL 3: Write train_sign_pipeline.py to /kaggle/working/
+# ------------------------------------------------------------------------------
+# Copy the entire contents of `V3/train_sign_pipeline.py` into this cell.
+# Notice line 1 starts with `# %%writefile train_sign_pipeline.py`.
+# Simply remove the `# ` from line 1 so it reads:
+# %%writefile train_sign_pipeline.py
+# (Run this cell to save train_sign_pipeline.py directly into /kaggle/working/)
+
+
+# ------------------------------------------------------------------------------
+# CELL 4: Execute Multi-GPU Preprocessing Pipeline
+# ------------------------------------------------------------------------------
+# Runs 2 parallel workers across your dual-T4 GPUs on all splits.
+!python train_sign_pipeline.py --split all --workers 4 --num-gpus 2
+
+
+# ------------------------------------------------------------------------------
+# CELL 5: Verify Outputs & Rejection Rate
+# ------------------------------------------------------------------------------
+!python check_rejection_rate.py

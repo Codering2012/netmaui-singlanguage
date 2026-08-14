@@ -12,8 +12,13 @@ Task: Continuous Sign Language Understanding & Gloss Sentence Reconstruction
 
 import os
 
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
 # Removed XLA_USE_BF16 to prevent conflicts with native PyTorch autocast
-os.cpu_count = lambda: 96
 
 import sys
 import time
@@ -34,13 +39,14 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 
 # Set up for Kaggle 2x T4 GPUs
-os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
+
 
 # Force Local PJRT mode to avoid gRPC proxy concurrency limit and fork deadlocks
 os.environ.pop("TPU_PROCESS_ADDRESSES", None)
 os.environ.pop("TPU_NAME", None)
-os.environ["PJRT_DEVICE"] = "TPU"
-os.environ["XLA_USE_BF16"] = "1"
+# WARNING: Setting PJRT_DEVICE=TPU breaks training on Kaggle T4 GPUs.
+# Uncomment the line below ONLY if running on a Kaggle TPU VM.
+# os.environ["PJRT_DEVICE"] = "TPU"
 
 try:
     import importlib.util
@@ -56,6 +62,21 @@ try:
     from dataset import create_dataloader
 except ImportError:
     pass
+
+
+def _distributed_normalize(
+    local_sum: torch.Tensor, local_weight: torch.Tensor
+) -> torch.Tensor:
+    if _XLA_AVAILABLE:
+        import torch_xla.core.xla_model as xm
+
+        if getattr(xm, "xrt_world_size", lambda: 1)() > 1:
+            global_weight = xm.all_reduce(xm.REDUCE_SUM, local_weight.clone())
+            normed = (local_sum * xm.xrt_world_size()) / global_weight
+            return torch.nan_to_num(normed, nan=0.0, posinf=0.0, neginf=0.0)
+
+    normed = local_sum / local_weight
+    return torch.nan_to_num(normed, nan=0.0, posinf=0.0, neginf=0.0)
 
 
 def _safe_torch_device(dev_str: Union[str, torch.device]) -> torch.device:
@@ -80,211 +101,6 @@ def _safe_torch_device(dev_str: Union[str, torch.device]) -> torch.device:
 # ==============================================================================
 
 
-class LandmarkAugmenter:
-    def __init__(
-        self,
-        base_jitter_std: float = 0.025,
-        max_scale_range: Tuple[float, float] = (0.925, 1.075),
-        max_shift_range: float = 0.025,
-        max_rotation_range: float = 7.5,
-        max_kp_drop_prob: float = 0.04,
-        max_frame_drop_prob: float = 0.025,
-        noise_level: float = 0.02,
-    ):
-        self.base_jitter_std = base_jitter_std
-        self.max_scale_range = max_scale_range
-        self.max_shift_range = max_shift_range
-        self.max_rotation_range = max_rotation_range
-        self.max_kp_drop_prob = max_kp_drop_prob
-        self.max_frame_drop_prob = max_frame_drop_prob
-        self.noise_level = max(0.001, min(1.0, noise_level))
-
-    def set_noise_level(self, level: float) -> None:
-        self.noise_level = max(0.001, min(1.0, level))
-
-    def __call__(self, feat_arr: np.ndarray) -> np.ndarray:
-        T, K, C = feat_arr.shape
-        if T == 0:
-            return feat_arr
-
-        aug = feat_arr.copy()
-        pos = aug[:, :, :3]
-
-        jitter_std = self.base_jitter_std * self.noise_level
-        rot_range = self.max_rotation_range * self.noise_level
-        shift_range = self.max_shift_range * self.noise_level
-        kp_drop_prob = self.max_kp_drop_prob * self.noise_level
-        frame_drop_prob = self.max_frame_drop_prob * self.noise_level
-        scale_delta = (self.max_scale_range[1] - 1.0) * self.noise_level
-
-        choke_prob = 0.005 + 0.01 * self.noise_level
-        finger_drop_prob = 0.01 + 0.025 * self.noise_level
-        timestretch_prob = 0.01 + 0.04 * self.noise_level
-        warping_prob = 0.01 + 0.05 * self.noise_level
-        hand_occ_prob = 0.005 + 0.01 * self.noise_level
-
-        if np.random.rand() > 0.5:
-            pos[:, :, 0] = -pos[:, :, 0]
-            pos_lh = pos[:, 18:39, :].copy()
-            pos_rh = pos[:, 39:60, :].copy()
-            pos[:, 18:39, :] = pos_rh
-            pos[:, 39:60, :] = pos_lh
-
-        scale = np.random.uniform(1.0 - scale_delta, 1.0 + scale_delta)
-        pos = pos * scale
-
-        if rot_range > 0 and np.random.rand() < 0.5:
-            pitch_deg = np.random.uniform(-rot_range, rot_range)
-            yaw_deg = np.random.uniform(-rot_range, rot_range)
-            roll_deg = np.random.uniform(-rot_range, rot_range)
-            rad_p, rad_y, rad_r = (
-                np.radians(pitch_deg),
-                np.radians(yaw_deg),
-                np.radians(roll_deg),
-            )
-            rx = np.array(
-                [
-                    [1, 0, 0],
-                    [0, np.cos(rad_p), -np.sin(rad_p)],
-                    [0, np.sin(rad_p), np.cos(rad_p)],
-                ],
-                dtype=np.float32,
-            )
-            ry = np.array(
-                [
-                    [np.cos(rad_y), 0, np.sin(rad_y)],
-                    [0, 1, 0],
-                    [-np.sin(rad_y), 0, np.cos(rad_y)],
-                ],
-                dtype=np.float32,
-            )
-            rz = np.array(
-                [
-                    [np.cos(rad_r), -np.sin(rad_r), 0],
-                    [np.sin(rad_r), np.cos(rad_r), 0],
-                    [0, 0, 1],
-                ],
-                dtype=np.float32,
-            )
-            rot_mat = np.dot(rz, np.dot(ry, rx))
-            center = pos.mean(axis=(0, 1), keepdims=True)
-            pos = pos - center
-            pos = np.dot(pos.reshape(-1, 3), rot_mat.T).reshape(T, K, 3)
-            pos = pos + center
-
-        if shift_range > 0 and np.random.rand() < 0.5:
-            shift_val = np.random.uniform(-shift_range, shift_range, size=(1, 1, 3))
-            pos = pos + shift_val
-
-        if T > 10 and np.random.rand() < timestretch_prob:
-            time_scale = np.random.uniform(0.75, 1.25)
-            new_T = int(round(T * time_scale))
-            if new_T > 4:
-                idx = np.linspace(0, T - 1, num=new_T, dtype=int)
-                pos = pos[idx]
-                T = new_T
-
-        if jitter_std > 0:
-            pos += np.random.normal(0, jitter_std, size=pos.shape).astype(np.float32)
-
-        if T > 20 and np.random.rand() < choke_prob:
-            fz_len = min(int(T * 0.25), np.random.randint(10, 25))
-            if fz_len > 1:
-                fz_idx = np.random.randint(2, max(3, T - fz_len))
-                base_f = pos[fz_idx].copy()
-                t_steps = np.linspace(0, 2 * np.pi, num=fz_len, dtype=np.float32)
-                dx = 0.015 * np.sin(t_steps) + np.random.normal(
-                    0, 0.002, fz_len
-                ).astype(np.float32)
-                dy = 0.010 * np.cos(t_steps * 1.5) + np.random.normal(
-                    0, 0.002, fz_len
-                ).astype(np.float32)
-                dz = 0.010 * np.sin(t_steps * 0.7) + np.random.normal(
-                    0, 0.002, fz_len
-                ).astype(np.float32)
-                for si in range(fz_len):
-                    ff = base_f.copy()
-                    ff[:, 0] += dx[si]
-                    ff[:, 1] += dy[si]
-                    ff[:, 2] += dz[si]
-                    scale_factor = 1.0 + 0.02 * np.sin(t_steps[si] * 3.0)
-                    center_hands = ff[18:60, :].mean(axis=0, keepdims=True)
-                    ff[18:60, :] = (
-                        ff[18:60, :] - center_hands
-                    ) * scale_factor + center_hands
-                    pos[fz_idx + si] = ff
-
-        if T > 25 and np.random.rand() < warping_prob:
-            t_warped = np.power(np.linspace(0, 1, T), np.random.uniform(0.5, 1.5))
-            w_idx = np.clip((t_warped * (T - 1)).astype(int), 0, T - 1)
-            pos = pos[w_idx]
-
-        disp_prob = 0.01 + 0.04 * self.noise_level
-        if T > 15 and np.random.rand() < disp_prob:
-            d_idx = np.random.randint(3, max(4, T - 10))
-            d_len = np.random.randint(3, 8)
-            h_idx = range(18, 39) if np.random.rand() > 0.5 else range(39, 60)
-            off = np.random.normal(0, 1, 3).astype(np.float32)
-            off = off / max(1e-6, np.linalg.norm(off)) * np.random.uniform(0.01, 0.15)
-            arc = np.linspace(0, np.pi, num=d_len, dtype=np.float32)
-            for si in range(d_len):
-                if d_idx + si < T:
-                    pos[d_idx + si, h_idx, :3] += np.sin(arc[si]) * off
-
-        vel = np.zeros_like(pos)
-        if T > 2:
-            vel[1:-1] = (pos[2:] - pos[:-2]) / 2.0
-            vel[0] = pos[1] - pos[0]
-            vel[-1] = pos[-1] - pos[-2]
-        elif T == 2:
-            vel[:] = pos[1] - pos[0]
-
-        acc = np.zeros_like(pos)
-        if T > 2:
-            acc[1:-1] = pos[2:] - 2 * pos[1:-1] + pos[:-2]
-            acc[0] = 2 * pos[0] - 5 * pos[1] + 4 * pos[2] - pos[3] if T > 3 else 0
-            acc[-1] = 2 * pos[-1] - 5 * pos[-2] + 4 * pos[-3] - pos[-4] if T > 3 else 0
-
-        drop_mask = np.ones((T, K, 1), dtype=np.float32)
-        if kp_drop_prob > 0:
-            drop_mask *= (np.random.rand(T, K, 1) > kp_drop_prob).astype(np.float32)
-
-        if np.random.rand() < finger_drop_prob:
-            lh_f = [
-                list(range(18, 23)),
-                list(range(23, 27)),
-                list(range(27, 31)),
-                list(range(31, 35)),
-                list(range(35, 39)),
-            ]
-            rh_f = [
-                list(range(39, 44)),
-                list(range(44, 48)),
-                list(range(48, 52)),
-                list(range(52, 56)),
-                list(range(56, 60)),
-            ]
-            for f_idx in random.sample(lh_f + rh_f, k=random.randint(1, 2)):
-                drop_mask[:, f_idx, :] = 0.0
-
-        if np.random.rand() < hand_occ_prob and T > 10:
-            occ_s = np.random.randint(0, max(1, T - 8))
-            occ_l = np.random.randint(4, max(5, T // 2))
-            h_idx = range(18, 39) if np.random.rand() > 0.5 else range(39, 60)
-            drop_mask[occ_s : occ_s + occ_l, h_idx, :] = 0.0
-
-        pos = pos * drop_mask
-        vel = vel * drop_mask
-        acc = acc * drop_mask
-
-        if frame_drop_prob > 0 and T > 8:
-            keep_mask = np.random.rand(T) > frame_drop_prob
-            if np.sum(keep_mask) >= 4:
-                pos, vel, acc = pos[keep_mask], vel[keep_mask], acc[keep_mask]
-
-        return np.concatenate([pos, vel, acc], axis=-1)
-
-
 # ==============================================================================
 # 2. GLOSS VOCABULARY — Sequence Vocabulary with Special Tokens
 # ==============================================================================
@@ -301,16 +117,17 @@ class GlossVocabulary:
         clean_l2i = {}
         if isinstance(label_to_idx, dict):
             for k, v in label_to_idx.items():
+                k_str = str(k).strip().lower()
                 if isinstance(v, int):
-                    clean_l2i[str(k)] = v
+                    clean_l2i[k_str] = v
                 elif isinstance(v, dict):
                     idx_val = v.get("id", v.get("idx", v.get("label_idx", 0)))
-                    clean_l2i[str(k)] = int(idx_val)
+                    clean_l2i[k_str] = int(idx_val)
                 elif isinstance(v, str) and str(k).isdigit():
-                    clean_l2i[str(v)] = int(k)
+                    clean_l2i[str(v).strip().lower()] = int(k)
                 else:
                     try:
-                        clean_l2i[str(k)] = int(v)
+                        clean_l2i[k_str] = int(v)
                     except (ValueError, TypeError):
                         pass
 
@@ -324,9 +141,7 @@ class GlossVocabulary:
         return self.vocab_size
 
     def gloss_to_token(self, gloss: str) -> int:
-        raw = self.label_to_idx.get(
-            gloss.upper(), self.label_to_idx.get(gloss.lower(), None)
-        )
+        raw = self.label_to_idx.get(gloss.strip().lower(), None)
         if raw is None:
             return self.UNK_ID
         return raw + self.OFFSET
@@ -356,8 +171,8 @@ class RMSNorm(nn.Module):
         self.weight = nn.Parameter(torch.ones(d_model))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        var = x.pow(2).mean(-1, keepdim=True)
-        return x * torch.rsqrt(var.float() + self.eps).to(x.dtype) * self.weight
+        var = x.float().pow(2).mean(-1, keepdim=True)
+        return x * torch.rsqrt(var + self.eps).to(x.dtype) * self.weight.to(x.dtype)
 
 
 class SwiGLUFFN(nn.Module):
@@ -406,13 +221,122 @@ class RichASLLexEmbeddingTable(nn.Module):
             nn.Linear(d_model, d_model),
         )
 
-        attr_idx_matrix = torch.zeros(vocab_size, 5, dtype=torch.long)
-        attr_scalars = torch.zeros(vocab_size, 3, dtype=torch.float32)
+        # Allow latent cluster learning instead of zero-collapse
+        attr_idx_matrix = torch.zeros((vocab_size, 5), dtype=torch.long)
+        attr_scalars = torch.zeros((vocab_size, 3), dtype=torch.float32)
+
+        if (
+            csv_path is not None
+            and label_to_idx is not None
+            and Path(csv_path).exists()
+        ):
+            try:
+                import csv
+
+                with open(csv_path, "r", encoding="utf-8", errors="ignore") as f:
+                    reader = csv.DictReader(f)
+
+                    # Maps for categorical features
+                    lexclass_map = {"": 0}
+                    signtype_map = {"": 0}
+                    handshape_map = {"": 0}
+                    location_map = {"": 0}
+                    category_map = {"": 0}
+
+                    for row in reader:
+                        raw_word = (
+                            (row.get("LemmaID") or row.get("EntryID") or "")
+                            .strip()
+                            .lower()
+                        )
+                        word_clean = raw_word.replace("_", "").replace("-", "")
+                        import re
+
+                        word_clean = re.sub(r"\d+$", "", word_clean)
+
+                        # Check original or cleaned word
+                        if raw_word in label_to_idx:
+                            idx = label_to_idx[raw_word]
+                        elif word_clean in label_to_idx:
+                            idx = label_to_idx[word_clean]
+                        else:
+                            continue
+
+                        # CRITICAL FIX (Point 5): Token IDs have an OFFSET of 4 (PAD, BOS, EOS, UNK)
+                        idx += 4
+
+                        # 1. Lexical Class
+                        lc = row.get("LexicalClass", "").strip()
+                        if lc not in lexclass_map:
+                            lexclass_map[lc] = len(lexclass_map)
+                        assert (
+                            lexclass_map[lc] < 20
+                        ), f"LexicalClass '{lc}' exceeds max 20 categories (got index {lexclass_map[lc]})"
+                        attr_idx_matrix[idx, 0] = lexclass_map[lc]
+
+                        # 2. Sign Type
+                        st = row.get("SignType", "").strip()
+                        if st not in signtype_map:
+                            signtype_map[st] = len(signtype_map)
+                        assert (
+                            signtype_map[st] < 16
+                        ), f"SignType '{st}' exceeds max 16 categories (got index {signtype_map[st]})"
+                        attr_idx_matrix[idx, 1] = signtype_map[st]
+
+                        # 3. Handshape
+                        hs = row.get("SelectedHandshape", "").strip()
+                        if hs not in handshape_map:
+                            handshape_map[hs] = len(handshape_map)
+                        assert (
+                            handshape_map[hs] < 48
+                        ), f"Handshape '{hs}' exceeds max 48 categories (got index {handshape_map[hs]})"
+                        attr_idx_matrix[idx, 2] = handshape_map[hs]
+
+                        # 4. Location
+                        loc = row.get("MajorLocation", "").strip()
+                        if loc not in location_map:
+                            location_map[loc] = len(location_map)
+                        assert (
+                            location_map[loc] < 24
+                        ), f"Location '{loc}' exceeds max 24 categories (got index {location_map[loc]})"
+                        attr_idx_matrix[idx, 3] = location_map[loc]
+
+                        # 5. Semantic Category
+                        cat = row.get("SemanticCategory", "").strip()
+                        if cat not in category_map:
+                            category_map[cat] = len(category_map)
+                        assert (
+                            category_map[cat] < 36
+                        ), f"SemanticCategory '{cat}' exceeds max 36 categories (got index {category_map[cat]})"
+                        attr_idx_matrix[idx, 4] = category_map[cat]
+
+                        # Scalars: Flexion, Transparency, Iconicity
+                        try:
+                            attr_scalars[idx, 0] = float(row.get("Flexion", 0.0) or 0.0)
+                        except:
+                            pass
+                        try:
+                            attr_scalars[idx, 1] = float(
+                                row.get("Transparency", 0.0) or 0.0
+                            )
+                        except:
+                            pass
+                        try:
+                            attr_scalars[idx, 2] = float(
+                                row.get("Iconicity", 0.0) or 0.0
+                            )
+                        except:
+                            pass
+            except Exception as e:
+                print(f"[!] Warning: Failed to parse ASL-LEX CSV: {e}", flush=True)
+
         self.register_buffer("attr_idx_matrix", attr_idx_matrix)
         self.register_buffer("attr_scalars", attr_scalars)
 
     def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
-        ids = token_ids.clamp(0, self.vocab_size - 1)
+        if (token_ids < 0).any() or (token_ids >= self.vocab_size).any():
+            raise ValueError("Invalid token IDs passed to ASL-LEX embedding.")
+        ids = token_ids
         attr_ids = self.attr_idx_matrix[ids]
         scalars = F.embedding(ids, self.attr_scalars)
 
@@ -438,7 +362,9 @@ class TokenMergingBlock(nn.Module):
     def __init__(self, r: int = 80, d_model: int = 320):
         super().__init__()
         self.r, self.d_model = r, d_model
-        self.register_buffer("_jl_proj", torch.randn(d_model, 16) / math.sqrt(16))
+        self._jl_proj = nn.Parameter(
+            torch.randn(d_model, 16) / math.sqrt(16), requires_grad=False
+        )
 
     def forward(
         self,
@@ -448,9 +374,12 @@ class TokenMergingBlock(nn.Module):
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], dict]:
         B, T, D = h.shape
-        min_half, min_required_tokens = T // 2, 60
-        r_clamp = min(self.r, max(0, min_half - (min_required_tokens // 2)))
+        min_half = T // 2
+        r_clamp = min(self.r, min_half)
+        if T - r_clamp < 65:
+            r_clamp = max(0, T - 65)
 
+        fi = kwargs.get("frame_indices", None)
         if r_clamp <= 0:
             return (
                 h,
@@ -459,6 +388,7 @@ class TokenMergingBlock(nn.Module):
                     "T_orig": T,
                     "sorted_routing": torch.arange(T, device=h.device),
                     "mlm_out": kwargs.get("mlm_mask", None),
+                    "frame_indices": fi,
                 },
             )
 
@@ -470,6 +400,8 @@ class TokenMergingBlock(nn.Module):
                 .expand(D, 1, 3),
                 groups=D,
             ).transpose(1, 2)
+            if mask is not None:
+                h_smooth = h_smooth.masked_fill(~mask.unsqueeze(-1), 0.0)
         else:
             h_smooth = h
 
@@ -488,22 +420,29 @@ class TokenMergingBlock(nn.Module):
         ka = F.normalize(a_proj.float(), p=2, dim=-1, eps=1e-5).to(a_proj.dtype)
         kb = F.normalize(b_proj.float(), p=2, dim=-1, eps=1e-5).to(b_proj.dtype)
         sim_matrix = torch.matmul(ka, kb.transpose(-1, -2))
-        if mask is not None:
-            ma, mb = mask[:, 0::2][:, :min_half], mask[:, 1::2][:, :min_half]
-            sim_matrix = sim_matrix.masked_fill(
-                (~ma).unsqueeze(-1) & (~mb).unsqueeze(-2), -1e4
-            ).masked_fill(ma.unsqueeze(-1) ^ mb.unsqueeze(-2), -1e4)
-
         mlm_mask = kwargs.get("mlm_mask", None)
         if mlm_mask is not None:
+            mlm_a, mlm_b = (
+                mlm_mask[:, 0::2][:, :min_half],
+                mlm_mask[:, 1::2][:, :min_half],
+            )
             sim_matrix = sim_matrix.masked_fill(
-                mlm_mask[:, 0::2][:, :min_half].unsqueeze(-1)
-                ^ mlm_mask[:, 1::2][:, :min_half].unsqueeze(-2),
+                mlm_a.unsqueeze(-1) ^ mlm_b.unsqueeze(-2),
                 -1e4,
             )
 
+        if mask is not None:
+            ma, mb = mask[:, 0::2][:, :min_half], mask[:, 1::2][:, :min_half]
+            invalid_a = ~ma.unsqueeze(-1)
+            invalid_b = ~mb.unsqueeze(-2)
+            cross_invalid = (invalid_a & mb.unsqueeze(-2)) | (
+                ma.unsqueeze(-1) & invalid_b
+            )
+            sim_matrix = sim_matrix.masked_fill(cross_invalid, -1e4)
+            pad_pad = invalid_a & invalid_b
+            sim_matrix = sim_matrix.masked_fill(pad_pad, 1e4)
+
         scores, dst_idx = sim_matrix.max(dim=-1)
-        r_clamp = min(r_clamp, min_half)
         _, merge_idx = scores.topk(r_clamp, dim=-1, largest=True, sorted=False)
 
         matched_b_indices_local = dst_idx.gather(1, merge_idx)
@@ -612,10 +551,39 @@ class TokenMergingBlock(nn.Module):
             )
             mlm_out = mlm_unordered.gather(1, sorted_routing)
 
+        fi_out = None
+        if fi is not None:
+            fi_a, fi_b = fi[:, 0::2][:, :min_half], fi[:, 1::2][:, :min_half]
+            fi_unordered = torch.cat(
+                (
+                    [
+                        fi_a.gather(1, kept_idx_a),
+                        fi_b.clone().scatter_(
+                            1, matched_b_indices_local, fi_a.gather(1, merge_idx)
+                        ),
+                        fi[:, -1:],
+                    ]
+                    if fi.shape[1] % 2 != 0
+                    else [
+                        fi_a.gather(1, kept_idx_a),
+                        fi_b.clone().scatter_(
+                            1, matched_b_indices_local, fi_a.gather(1, merge_idx)
+                        ),
+                    ]
+                ),
+                dim=1,
+            )
+            fi_out = fi_unordered.gather(1, sorted_routing)
+
         return (
             h_out,
             mask_out,
-            {"T_orig": T, "sorted_routing": sorted_routing, "mlm_out": mlm_out},
+            {
+                "T_orig": T,
+                "sorted_routing": sorted_routing,
+                "mlm_out": mlm_out,
+                "frame_indices": fi_out,
+            },
         )
 
 
@@ -716,7 +684,7 @@ class GroupedQueryEncoderAttention(nn.Module):
                     + self.max_relative_position
                 ).long()
             )
-            .view(1, T, T, self.kv_heads, self.groups)
+            .view(coords.shape[0], T, T, self.kv_heads, self.groups)
             .permute(0, 3, 4, 1, 2)
             .to(dtype=x.dtype)
             .expand(B, -1, -1, -1, -1)
@@ -730,13 +698,13 @@ class GroupedQueryEncoderAttention(nn.Module):
         q = q.reshape(B * self.kv_heads, self.groups, T, self.head_dim)
         k = k.repeat_interleave(self.groups, dim=2).reshape(
             B * self.kv_heads, self.groups, T, self.head_dim
-        )[:, :, ::2, :]
+        )
         v = v.repeat_interleave(self.groups, dim=2).reshape(
             B * self.kv_heads, self.groups, T, self.head_dim
-        )[:, :, ::2, :]
-        
-        attn_mask = attn_mask.reshape(B * self.kv_heads, self.groups, T, T)[:, :, :, ::2]
-        
+        )
+
+        attn_mask = attn_mask.reshape(B * self.kv_heads, self.groups, T, T)
+
         return self.out_proj(
             F.scaled_dot_product_attention(
                 q,
@@ -921,7 +889,7 @@ class BiMamba2SSMBlock(nn.Module):
         dt_act = F.softplus(dt).clamp(max=20.0)
         log_decay = -(dt_act * A.view(1, 1, H_sz)).clamp(min=1e-4, max=20.0)
         if key_padding_mask is not None:
-            log_decay = log_decay.masked_fill(key_padding_mask.unsqueeze(-1), 0.0)
+            log_decay = log_decay.masked_fill(key_padding_mask.unsqueeze(-1), -1e4)
 
         Q = min(chunk_size, T_sz)
         pad_len = (Q - (T_sz % Q)) % Q
@@ -1080,6 +1048,7 @@ class MobileConformerBlock(nn.Module):
         drop_path: float = 0.0,
         num_enc_layers: int = 8,
         init_values: float = 1e-4,
+        max_len: int = 320,
     ):
         super().__init__()
         self.ffn1_norm = RMSNorm(d_model)
@@ -1089,7 +1058,7 @@ class MobileConformerBlock(nn.Module):
 
         self.mha_norm = RMSNorm(d_model)
         self.mha = GroupedQueryEncoderAttention(
-            d_model=d_model, nhead=nhead, kv_heads=2
+            d_model=d_model, nhead=nhead, kv_heads=2, max_len=max_len
         )
         self.drop_path_mha = DropPath(drop_path)
         self.gamma_mha = nn.Parameter(init_values * torch.ones(d_model))
@@ -1105,7 +1074,10 @@ class MobileConformerBlock(nn.Module):
         self.gamma_ffn2 = nn.Parameter(init_values * torch.ones(d_model))
 
     def forward(
-        self, x: torch.Tensor, key_padding_mask: Optional[torch.Tensor] = None
+        self,
+        x: torch.Tensor,
+        key_padding_mask: Optional[torch.Tensor] = None,
+        frame_indices: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if key_padding_mask is not None:
             x = x.masked_fill(key_padding_mask.unsqueeze(-1), 0.0)
@@ -1116,7 +1088,11 @@ class MobileConformerBlock(nn.Module):
             x = x.masked_fill(key_padding_mask.unsqueeze(-1), 0.0)
         x = x + self.drop_path_mha(
             self.gamma_mha
-            * self.mha(self.mha_norm(x), key_padding_mask=key_padding_mask)
+            * self.mha(
+                self.mha_norm(x),
+                key_padding_mask=key_padding_mask,
+                frame_indices=frame_indices,
+            )
         )
         if key_padding_mask is not None:
             x = x.masked_fill(key_padding_mask.unsqueeze(-1), 0.0)
@@ -1340,7 +1316,7 @@ class DecoderCrossAttention(nn.Module):
         v_exp = v.repeat_interleave(self.groups, dim=1)
 
         attn_mask = (
-            memory_key_padding_mask.view(B, 1, 1, k.size(2)).bool()
+            (memory_key_padding_mask).view(B, 1, 1, k.size(2)).bool()
             if memory_key_padding_mask is not None
             else None
         )
@@ -1427,6 +1403,7 @@ class ASLTransformerDecoder(nn.Module):
         max_seq_len: int = 256,
         csv_path: Optional[Union[str, Path]] = None,
         label_to_idx: Optional[Dict[str, int]] = None,
+        use_asl_lex: bool = True,
     ):
         super().__init__()
         self.d_model, self.vocab_size, self.max_seq_len, self.input_token_dropout = (
@@ -1439,12 +1416,16 @@ class ASLTransformerDecoder(nn.Module):
         self.token_emb = nn.Embedding(
             vocab_size, d_model, padding_idx=GlossVocabulary.PAD_ID
         )
-        self.asl_lex_emb = RichASLLexEmbeddingTable(
-            vocab_size=vocab_size,
-            d_model=d_model,
-            csv_path=csv_path,
-            label_to_idx=label_to_idx,
-        )
+        self.use_asl_lex = use_asl_lex
+        if self.use_asl_lex:
+            self.asl_lex_emb = RichASLLexEmbeddingTable(
+                vocab_size=vocab_size,
+                d_model=d_model,
+                csv_path=csv_path,
+                label_to_idx=label_to_idx,
+            )
+        else:
+            self.asl_lex_emb = None
         self.emb_drop, self.emb_scale = nn.Dropout(dropout * 0.5), math.sqrt(d_model)
 
         self.layers = nn.ModuleList(
@@ -1484,15 +1465,19 @@ class ASLTransformerDecoder(nn.Module):
         else:
             dropped_tgt_ids = tgt_ids
 
-        dropped_tgt_ids = torch.clamp(dropped_tgt_ids, 0, self.vocab_size - 1)
-        lex_embs = self.asl_lex_emb(dropped_tgt_ids)
-        valid_lex_mask = (
-            (tgt_ids != GlossVocabulary.PAD_ID).unsqueeze(-1).to(lex_embs.dtype)
-        )
-        h = self.emb_drop(
-            self.token_emb(dropped_tgt_ids) * self.emb_scale
-            + lex_embs * self.emb_scale * valid_lex_mask
-        )
+        if (dropped_tgt_ids < 0).any() or (dropped_tgt_ids >= self.vocab_size).any():
+            raise ValueError("Invalid target IDs passed to decoder.")
+        if getattr(self, "use_asl_lex", True) and self.asl_lex_emb is not None:
+            lex_embs = self.asl_lex_emb(dropped_tgt_ids)
+            valid_lex_mask = (
+                (tgt_ids != GlossVocabulary.PAD_ID).unsqueeze(-1).to(lex_embs.dtype)
+            )
+            h = self.emb_drop(
+                self.token_emb(dropped_tgt_ids) * self.emb_scale
+                + lex_embs * self.emb_scale * valid_lex_mask
+            )
+        else:
+            h = self.emb_drop(self.token_emb(dropped_tgt_ids) * self.emb_scale)
 
         new_key_values = [] if use_cache else None
         for idx, layer in enumerate(self.layers):
@@ -1525,41 +1510,63 @@ class HomoscedasticLossWrapper(nn.Module):
     Bypasses gradient propagation for zero-valued or uncalculated losses to prevent divergence.
     """
 
-    # ─── MATH FIX: BUMPED TO 8 LOSSES TO PREVENT SILENT TRUNCATION ───
-    def __init__(self, num_losses: int = 9): # <--- BUMP TO 9
+    def __init__(self, loss_config: Optional[Dict[str, float]] = None):
         super().__init__()
-        self.num_losses = num_losses
+        if loss_config is None:
+            loss_config = {
+                "seq": 8.0,
+                "eos": 2.0,
+                "chicago": 8.0,
+                "chicago_eos": 2.0,
+                "chicago_len": 1.0,
+                "english": 8.0,
+                "english_eos": 2.0,
+                "english_len": 1.0,
+                "ctc": 10.0,
+                "dense_sem": 1.0,
+                "xmodal": 4.0,
+                "supcon": 2.0,
+                "clr": 0.1,  # Fix 3: 'mlm' renamed to 'clr' to match model output key
+                "domain": 1.0,  # Fix 4: 'domain' added so it is not silently dropped
+                "aux": 2.0,
+                "length": 1.0,
+            }
 
-        # Seq ~8.0, CTC ~10.0, DenseSem ~1.0, InfoNCE ~4.0, SupCon ~2.0, Domain ~1.0, MLM ~0.1, Aux ~2.0, Length ~1.0
-        init_vals = [
-            math.log(8.0),  
-            math.log(10.0), 
-            math.log(1.0),  
-            math.log(4.0),  
-            math.log(2.0),  
-            math.log(1.0),  
-            math.log(0.1),  
-            math.log(2.0),  
-            math.log(1.0),  # <--- NEW: Length Regression Loss
-        ]
-        while len(init_vals) < num_losses:
-            init_vals.append(0.0)
-
-        self.log_vars = nn.Parameter(
-            torch.tensor(init_vals[:num_losses], dtype=torch.float32)
+        self.log_vars = nn.ParameterDict(
+            {
+                name: nn.Parameter(torch.tensor(-math.log(v), dtype=torch.float32))
+                for name, v in loss_config.items()
+            }
         )
 
-    def forward(self, losses: List[torch.Tensor], accum_steps: int = 1) -> torch.Tensor:
-        # MATH: Homoscedastic uncertainty weighting: sum_i (0.5 * exp(-s_i) * L_i + 0.5 * s_i)
-        total_loss = torch.tensor(0.0, device=losses[0].device, dtype=losses[0].dtype)
-        for i, loss in enumerate(losses):
-            if i < self.num_losses:
-                s = self.log_vars[i].clamp(min=-4.0, max=2.0).to(loss.device)
+    def forward(self, losses: Dict[str, torch.Tensor]) -> torch.Tensor:
+        total_loss = 0.0
+        for name, loss in losses.items():
+            # Fix 5: Prevent objective-key drift
+            if name not in self.log_vars:
+                raise ValueError(
+                    f"Unregistered loss key '{name}' produced by model! Please add it to HomoscedasticLossWrapper config."
+                )
+
+            if name in self.log_vars:
+                # Fix 6: Use exact Kendall & Gal formulation to preserve numeric initialization
+                s = self.log_vars[name].to(loss.device)
+                s = s.clamp(-5.0, 5.0)  # Bound to prevent objective-key drift exploding
                 prec = torch.exp(-s)
-                valid_mask = (loss.detach().abs() > 1e-6).to(loss.dtype)
-                s_penalty = 0.5 * s * valid_mask
-                loss_safe = torch.nan_to_num(loss, nan=0.0)
-                total_loss = total_loss + 0.5 * prec * loss_safe * valid_mask + s_penalty
+                valid_mask = (loss.detach().abs() > 0.0).to(loss.dtype)
+
+                # Sync valid mask so parameter penalty is symmetrically applied across replicas
+                if _XLA_AVAILABLE:
+                    import torch_xla.core.xla_model as xm
+
+                    if getattr(xm, "xrt_world_size", lambda: 1)() > 1:
+                        valid_mask = xm.all_reduce(xm.REDUCE_MAX, valid_mask.clone())
+
+                # Only apply precision weighting and uncertainty penalty if the loss is active
+                # This prevents log(sigma) from diverging to negative infinity for inactive tasks
+                task_loss = valid_mask * (0.5 * prec * loss + 0.5 * s)
+                total_loss += task_loss
+
         return total_loss
 
 
@@ -1573,9 +1580,12 @@ class CosineLinear(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # L2 normalize features and weights
         x_norm = F.normalize(x.float(), p=2, dim=-1, eps=1e-5).to(x.dtype)
-        w_norm = F.normalize(self.weight.float(), p=2, dim=-1, eps=1e-5).to(self.weight.dtype)
+        w_norm = F.normalize(self.weight.float(), p=2, dim=-1, eps=1e-5).to(
+            self.weight.dtype
+        )
         # Cosine similarity scaled by learnable temperature tau
-        return F.linear(x_norm, w_norm) * self.tau
+        safe_tau = F.softplus(self.tau) + 1.0
+        return F.linear(x_norm, w_norm) * safe_tau
 
 
 class CTCHead(nn.Module):
@@ -1584,16 +1594,25 @@ class CTCHead(nn.Module):
         self.proj = CosineLinear(d_model, vocab_size)
 
     def forward(self, enc_seq: torch.Tensor) -> torch.Tensor:
-        return self.proj(enc_seq)
+        if torch.isnan(enc_seq).any():
+            print("enc_seq has NaNs!")
+        return F.log_softmax(self.proj(enc_seq), dim=-1)
 
 
 class CrossModalInfoNCE(nn.Module):
-    def __init__(self, init_temp: float = 0.07):
+    def __init__(self, init_temp: float = 0.07, **kwargs):
         super().__init__()
-        self.log_temp = nn.Parameter(torch.log(torch.tensor(init_temp)))
+        target_sp = init_temp - 0.05
+        # softplus(x) = log(1 + e^x) -> x = log(e^target_sp - 1)
+        self.log_temp = nn.Parameter(torch.tensor(math.log(math.exp(target_sp) - 1.0)))
 
-    def forward(self, vis_emb: torch.Tensor, sent_emb: torch.Tensor) -> torch.Tensor:
-        temp = torch.clamp(F.softplus(self.log_temp), min=0.05)
+    def forward(
+        self,
+        vis_emb: torch.Tensor,
+        sent_emb: torch.Tensor,
+        valid_mask: Optional[torch.Tensor] = None,
+        sample_weights: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         device = vis_emb.device
         import torch.distributed as dist
 
@@ -1614,21 +1633,50 @@ class CrossModalInfoNCE(nn.Module):
         else:
             world_size = 1
 
-        v = F.normalize(vis_emb.float(), p=2, dim=-1)
-        s = F.normalize(sent_emb.float(), p=2, dim=-1)
+        v = F.normalize(vis_emb.float(), p=2, dim=-1, eps=1e-8).to(vis_emb.dtype)
+        s = F.normalize(sent_emb.float(), p=2, dim=-1, eps=1e-8).to(sent_emb.dtype)
 
-        lbl = torch.arange(v.size(0), device=vis_emb.device)
+        if world_size > 1 and _XLA_AVAILABLE:
+            import torch_xla.core.functions as xf
 
-        sim1 = torch.matmul(v, s.T) / temp
-        sim2 = torch.matmul(s, v.T) / temp
+            v = xf.all_gather(v, dim=0)
+            s = xf.all_gather(s, dim=0)
+            if valid_mask is not None:
+                valid_mask = xm.all_gather(valid_mask, dim=0)
+            if sample_weights is not None:
+                sample_weights = xm.all_gather(sample_weights, dim=0)
 
-        s_sim = torch.matmul(s, s.T)
-        false_neg_mask = (s_sim > 0.99) & (
-            torch.arange(s.size(0), device=s.device).unsqueeze(0) != lbl.unsqueeze(1)
-        )
-        sim1.masked_fill_(false_neg_mask, -1e4)
-        sim2.masked_fill_(false_neg_mask, -1e4)
-        return (F.cross_entropy(sim1, lbl) + F.cross_entropy(sim2, lbl)) * 0.5
+        if v.size(0) == 0:
+            return torch.tensor(0.0, device=device, requires_grad=True)
+
+        temp = F.softplus(self.log_temp) + 0.05
+        logits = torch.matmul(v, s.transpose(-1, -2)) / temp
+
+        if valid_mask is not None:
+            invalid_mask = ~valid_mask
+            logits = logits.masked_fill(invalid_mask.unsqueeze(0), -1e9)
+            logits = logits.masked_fill(invalid_mask.unsqueeze(1), -1e9)
+
+        labels = torch.arange(v.shape[0], device=v.device)
+        loss_v = F.cross_entropy(logits, labels, reduction="none")
+        loss_s = F.cross_entropy(logits.transpose(-1, -2), labels, reduction="none")
+
+        loss = (loss_v + loss_s) * 0.5
+        if sample_weights is not None:
+            loss = loss * sample_weights
+
+        weight_sum = torch.ones_like(loss)
+        if valid_mask is not None:
+            loss = loss * valid_mask.float()
+            weight_sum = valid_mask.float()
+
+        if sample_weights is not None:
+            weight_sum = weight_sum * sample_weights
+
+        res = _distributed_normalize(loss.sum(), weight_sum.sum())
+        if world_size > 1 and _XLA_AVAILABLE:
+            res = res * world_size
+        return res
 
 
 class DenseSentenceSemanticLoss(nn.Module):
@@ -1661,28 +1709,31 @@ class DenseSentenceSemanticLoss(nn.Module):
         last_hidden: torch.Tensor,
         gt_lex_embs: torch.Tensor,
         valid_mask: torch.Tensor,
+        sample_weights: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         m = valid_mask.unsqueeze(-1).float()
         valid_counts = m.sum(dim=1).clamp(min=1.0)
         has_tokens = (m.sum(dim=(1, 2)) > 0).float()
 
-        pred_sent = (
-            (last_hidden * m).sum(dim=1) / valid_counts
-            if last_hidden.dim() == 3
-            else last_hidden
-        )
-        gt_sent = (
-            (gt_lex_embs * m).sum(dim=1) / valid_counts
-            if gt_lex_embs.dim() == 3
-            else gt_lex_embs
-        )
+        if last_hidden.ndim == 2:
+            pred_sent = last_hidden
+        else:
+            pred_sent = (last_hidden * m).sum(dim=1) / valid_counts
+
+        gt_sent = (gt_lex_embs * m).sum(dim=1) / valid_counts
 
         p = F.normalize(self.proj_pred(pred_sent).float(), p=2, dim=-1, eps=1e-8)
         g = F.normalize(self.proj_gt(gt_sent).float(), p=2, dim=-1, eps=1e-8).detach()
 
         cos_sim = (p * g).sum(dim=-1)
         loss = (1.0 - cos_sim) * has_tokens
-        return loss.sum() / has_tokens.sum().clamp(min=1.0)
+
+        weight_sum = has_tokens
+        if sample_weights is not None:
+            loss = loss * sample_weights
+            weight_sum = weight_sum * sample_weights
+
+        return _distributed_normalize(loss.sum(), weight_sum.sum())
 
 
 class SupervisedContrastiveLoss(nn.Module):
@@ -1691,16 +1742,55 @@ class SupervisedContrastiveLoss(nn.Module):
         self.temperature = temperature
 
     def forward(
-        self, features: torch.Tensor, labels: torch.Tensor, enqueue: bool = True
+        self,
+        features: torch.Tensor,
+        labels: torch.Tensor,
+        sample_weights: torch.Tensor = None,
+        enqueue: bool = True,
     ) -> torch.Tensor:
         if labels is None:
             return torch.tensor(0.0, device=features.device, requires_grad=True)
-        features = F.normalize(features.float(), p=2, dim=1, eps=1e-5).to(features.dtype)
-        B, device = features.shape[0], features.device
-        has_labels = (labels.abs().sum() > 0).float()
+        features = F.normalize(features.float(), p=2, dim=1, eps=1e-5).to(
+            features.dtype
+        )
+        device = features.device
+
+        import torch.distributed as dist
+
+        if _XLA_AVAILABLE and "xla" in str(device).lower():
+            import torch_xla.core.xla_model as xm
+
+            try:
+                world_size = xm.xrt_world_size()
+            except AttributeError:
+                try:
+                    import torch_xla.runtime as xr
+
+                    world_size = xr.world_size()
+                except Exception:
+                    world_size = 4
+        elif dist.is_initialized():
+            world_size = dist.get_world_size()
+        else:
+            world_size = 1
+
+        if world_size > 1 and _XLA_AVAILABLE:
+            import torch_xla.core.functions as xf
+
+            features = xf.all_gather(features, dim=0)
+            labels = xf.all_gather(labels, dim=0)
+            if sample_weights is not None:
+                sample_weights = xf.all_gather(sample_weights, dim=0)
+
+        B = features.shape[0]
+        has_labels = (labels >= 0).any()
+        if not has_labels:
+            return torch.tensor(0.0, device=device, requires_grad=True)
 
         ids = torch.arange(B, device=device)
         pos_mask = torch.eq(labels.view(-1, 1), labels.view(1, -1)).float()
+        valid_labels = (labels.view(-1, 1) != -1).float()
+        pos_mask = pos_mask * valid_labels
         self_m = torch.eq(ids.view(-1, 1), ids.view(1, -1)).float()
         pos_mask *= 1.0 - self_m
 
@@ -1717,8 +1807,17 @@ class SupervisedContrastiveLoss(nn.Module):
         valid_rows = (pos_count > 0).float()
 
         row_loss = -(log_prob * pos_mask).sum(dim=1) / pos_count.clamp(min=1.0)
-        loss = (row_loss * valid_rows).sum() / valid_rows.sum().clamp(min=1.0)
-        return torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0) * has_labels
+        if sample_weights is not None:
+            loss = (row_loss * valid_rows * sample_weights).sum() / (
+                valid_rows * sample_weights
+            ).sum().clamp(min=1.0)
+        else:
+            loss = (row_loss * valid_rows).sum() / valid_rows.sum().clamp(min=1.0)
+        if not torch.isfinite(loss):
+            raise RuntimeError("SupCon loss resulted in NaN/Inf values.")
+        if world_size > 1 and _XLA_AVAILABLE:
+            loss = loss * world_size
+        return loss
 
 
 class GradientReversalFunction(torch.autograd.Function):
@@ -1755,7 +1854,7 @@ class LandmarkReconstructionHead(nn.Module):
 
 
 class PositionalEncoding1D(nn.Module):
-    def __init__(self, d_model: int, max_len: int = 2000):
+    def __init__(self, d_model: int, max_len: int = 10000):
         super().__init__()
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
@@ -1766,7 +1865,13 @@ class PositionalEncoding1D(nn.Module):
         pe[:, 1::2] = torch.cos(position * div_term)
         self.register_buffer("pe", pe.unsqueeze(0))
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, frame_indices: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        if frame_indices is not None:
+            idx = torch.clamp(frame_indices, max=self.pe.size(1) - 1)
+            batch_pe = self.pe.squeeze(0)[idx]
+            return x + batch_pe
         return x + self.pe[:, : x.size(1), :]
 
 
@@ -1774,6 +1879,7 @@ class ASLFoundationModel(nn.Module):
     def __init__(
         self,
         vocab_size: int = 2484,
+        english_vocab_size: int = 20005,
         num_keypoints: int = 60,
         channels_per_kp: int = 9,
         d_enc: int = 512,
@@ -1788,7 +1894,7 @@ class ASLFoundationModel(nn.Module):
         dropout: float = 0.1,
         drop_path_rate: float = 0.25,
         max_enc_len: int = 320,
-        max_dec_len: int = 196,
+        max_dec_len: int = 512,
         num_domains: int = 4,
         csv_path: Optional[Union[str, Path]] = None,
         label_to_idx: Optional[Dict[str, int]] = None,
@@ -1802,6 +1908,8 @@ class ASLFoundationModel(nn.Module):
         self.max_dec_len = max_dec_len
         self.use_mamba = use_mamba
         self.tome_r = tome_r
+        self.num_keypoints = num_keypoints
+        self.channels_per_kp = channels_per_kp
         input_dim = num_keypoints * channels_per_kp
 
         self.cls_token = nn.Parameter(torch.randn(1, 1, d_enc) * 0.02)
@@ -1830,11 +1938,10 @@ class ASLFoundationModel(nn.Module):
                         nhead=nhead_enc,
                         dim_feedforward=ffn_enc,
                         drop_path=dpr[i],
+                        max_len=max_enc_len,
                     )
                 )
 
-        self.tome_early = TokenMergingBlock(r=tome_r, d_model=d_enc)
-        self.tome_deep = TokenMergingBlock(r=tome_r, d_model=d_enc)
         self.enc_final_norm = RMSNorm(d_enc)
 
         self.decoder = ASLTransformerDecoder(
@@ -1850,22 +1957,53 @@ class ASLFoundationModel(nn.Module):
             label_to_idx=label_to_idx,
         )
 
+        self.chicago_decoder = ASLTransformerDecoder(
+            vocab_size=42,  # Chicago chars
+            d_model=d_dec,
+            nhead=nhead_dec,
+            kv_heads=kv_heads_dec,
+            num_layers=max(2, num_dec_layers // 2),
+            ffn_dim=ffn_dec,
+            dropout=dropout,
+            max_seq_len=64,
+            csv_path=None,
+            label_to_idx=None,
+            use_asl_lex=False,
+        )
+        self.english_decoder = ASLTransformerDecoder(
+            vocab_size=max(4, english_vocab_size),  # English vocab
+            d_model=d_dec,
+            nhead=nhead_dec,
+            kv_heads=kv_heads_dec,
+            num_layers=num_dec_layers,
+            ffn_dim=ffn_dec,
+            dropout=dropout,
+            max_seq_len=128,
+            csv_path=None,
+            label_to_idx=None,
+            use_asl_lex=False,
+        )
+        self.chicago_length_head = nn.Sequential(
+            nn.Linear(d_enc, 128), RMSNorm(128), nn.GELU(), nn.Linear(128, 1)
+        )
+        self.english_length_head = nn.Sequential(
+            nn.Linear(d_enc, 128), RMSNorm(128), nn.GELU(), nn.Linear(128, 1)
+        )
+
         self.pos_enc = PositionalEncoding1D(d_enc)
 
         self.ctc_head = CTCHead(d_enc, vocab_size)
-        self.mlm_head = LandmarkReconstructionHead(d_enc, input_dim)
+        self.mlm_head = nn.Linear(d_enc, 540)
+        self.domain_head = nn.Linear(d_enc, 2)
 
         # ─── MATH FIX: Encoder Auxiliary Classification Head ───
         # Mathematically forces the Conformer to anchor the latent space into a discrete conceptual cluster
         # BEFORE giving the sequence to the decoder. Bypasses decoder hallucination drift.
         self.aux_gloss_head = CosineLinear(d_enc, vocab_size, init_tau=20.0)
-        
+
         # ─── NEW: Sequence Length Prediction Head (Fertility) ───
         self.length_head = nn.Sequential(
-            nn.Linear(d_enc, 128),
-            RMSNorm(128),
-            nn.GELU(),
-            nn.Linear(128, 1)
+            nn.Linear(d_enc, 128), RMSNorm(128), nn.GELU(), nn.Linear(128, 1)
         )
         # ────────────────────────────────────────────────────────
 
@@ -1878,26 +2016,44 @@ class ASLFoundationModel(nn.Module):
         self.contrastive_head = nn.Sequential(
             nn.Linear(d_enc, 256), RMSNorm(256), nn.GELU(), nn.Linear(256, 256)
         )
-        self.domain_head = nn.Sequential(
-            nn.Linear(d_enc, 192), RMSNorm(192), nn.GELU(), nn.Linear(192, num_domains)
-        )
         self.xmodal_loss_fn = CrossModalInfoNCE(init_temp=0.07)
         self.dense_sem_loss = DenseSentenceSemanticLoss(d_model=d_dec, embed_dim=256)
 
+        nn.init.normal_(self.decoder.token_emb.weight, std=0.02)
+        with torch.no_grad():
+            self.decoder.token_emb.weight[GlossVocabulary.PAD_ID].fill_(0)
+
     def update_tome_r(self, epoch: int, max_epochs: int):
+        # [TPU XLA HOTFIX] ToMe changes the tensor sequence length (e.g., N -> N-r),
+        # which forces XLA to compile a brand new static graph in device memory.
+        # Instead of increasing `r` every single epoch (which causes 70+ recompilations
+        # and guaranteed HBM OOM), we "bucket" `r` into 4 distinct stages.
+        # This gives us the dynamic ToMe effect but only compiles 4 graphs total!
         progress = epoch / max(1, max_epochs - 1)
-        new_r = int(10 + (80 - 10) * progress)
+
+        if progress < 0.25:
+            new_r = 10
+        elif progress < 0.50:
+            new_r = 30
+        elif progress < 0.75:
+            new_r = 50
+        else:
+            new_r = 70
+
+        if getattr(self, "tome_r", -1) == new_r:
+            return  # No change, avoid unnecessary assignment
+
         self.tome_r = new_r
-        if hasattr(self, 'tome_early'):
-            self.tome_early.r = new_r
-        if hasattr(self, 'tome_deep'):
-            self.tome_deep.r = new_r
+        for block in self.blocks:
+            if isinstance(block, TokenMergingBlock):
+                block.r = new_r
 
     def _encode(
         self,
         x: torch.Tensor,
         mask: Optional[torch.Tensor],
         mlm_mask: Optional[torch.Tensor] = None,
+        frame_indices: Optional[torch.Tensor] = None,
     ):
         B, T = x.size(0), x.size(1)
 
@@ -1911,19 +2067,36 @@ class ASLFoundationModel(nn.Module):
 
         if x_in.dim() == 4 and x_in.size(2) == 60 and x_in.size(3) >= 3:
             xk = x_in.clone()
-            lh_nz = (xk[:, :, 0:21, :3] != 0).to(xk.dtype)
-            rh_nz = (xk[:, :, 21:42, :3] != 0).to(xk.dtype)
-            xk[:, :, 0:21, :3] = (xk[:, :, 0:21, :3] - xk[:, :, 0:1, :3]) * lh_nz
-            xk[:, :, 21:42, :3] = (xk[:, :, 21:42, :3] - xk[:, :, 21:22, :3]) * rh_nz
-            x_flat = xk.reshape(B, T, -1)
+
+            lh_nz = (xk[:, :, 0:21, :2] != 0).to(xk.dtype)
+            rh_nz = (xk[:, :, 21:42, :2] != 0).to(xk.dtype)
+
+            # Avoid in-place modifications for XLA compatibility
+            lh_norm = (xk[:, :, 0:21, :2] - xk[:, :, 0:1, :2]) * lh_nz
+            rh_norm = (xk[:, :, 21:42, :2] - xk[:, :, 21:22, :2]) * rh_nz
+
+            xk_list = [lh_norm, rh_norm, xk[:, :, 42:, :2]]
+            xk_coords = torch.cat(xk_list, dim=2)
+
+            # Retain non-coordinate channels unmodified
+            xk = torch.cat([xk_coords, xk[:, :, :, 2:]], dim=3)
+
+            # Use unmodified x_in for x_flat to retain global spatial context!
+            x_flat = x_in.reshape(B, T, -1)
             v_tokens = self.visual_encoder(xk, mask=mask)
         else:
             x_flat = x_in.reshape(B, T, -1) if x_in.dim() == 4 else x_in
             v_tokens = self.visual_encoder(x_in, mask=mask)
 
         h = self.input_stem(torch.cat([x_flat, v_tokens], dim=-1))
-        h = self.pos_enc(h)
+        h = self.pos_enc(h, frame_indices=frame_indices)
         h = torch.cat([self.cls_token.expand(B, -1, -1), h], dim=1)
+
+        if frame_indices is not None:
+            cls_fi = torch.full(
+                (B, 1), -1.0, dtype=frame_indices.dtype, device=frame_indices.device
+            )
+            frame_indices = torch.cat([cls_fi, frame_indices], dim=1)
 
         cur_mask = mask
         if cur_mask is not None:
@@ -1935,6 +2108,7 @@ class ASLFoundationModel(nn.Module):
             kpm = None
 
         h_pre_tome = None
+        mlm_mask_pre_tome = used_mlm_mask
 
         for idx, block in enumerate(self.blocks):
             if isinstance(block, TokenMergingBlock):
@@ -1942,11 +2116,19 @@ class ASLFoundationModel(nn.Module):
                     h_pre_tome = h[:, 1:]
                 cls_t = h[:, :1]
                 seq_t = h[:, 1:]
+                fi_t = frame_indices[:, 1:] if frame_indices is not None else None
                 seq_t, cur_mask, routing_info = block(
-                    seq_t, cur_mask, mlm_mask=used_mlm_mask
+                    seq_t, cur_mask, mlm_mask=used_mlm_mask, frame_indices=fi_t
                 )
                 if "mlm_out" in routing_info and routing_info["mlm_out"] is not None:
                     used_mlm_mask = routing_info["mlm_out"]
+                if (
+                    "frame_indices" in routing_info
+                    and routing_info["frame_indices"] is not None
+                ):
+                    frame_indices = torch.cat(
+                        [frame_indices[:, :1], routing_info["frame_indices"]], dim=1
+                    )
                 h = torch.cat([cls_t, seq_t], dim=1)
                 if cur_mask is not None:
                     kpm = torch.cat(
@@ -1959,44 +2141,56 @@ class ASLFoundationModel(nn.Module):
                 else:
                     kpm = None
             else:
-                h = block(h, key_padding_mask=kpm)
+                h = block(h, key_padding_mask=kpm, frame_indices=frame_indices)
+
+            if torch.isnan(h).any():
+                print(f"NaN introduced at block {idx}!")
+                break
 
         h = self.enc_final_norm(h)
+        if torch.isnan(h).any():
+            print("NaN introduced at enc_final_norm!")
+
         if h_pre_tome is None:
             h_pre_tome = h[:, 1:]
 
-        return h[:, 0], h[:, 1:], cur_mask, used_mlm_mask, h_pre_tome, mask
+        return h[:, 0], h[:, 1:], cur_mask, mlm_mask_pre_tome, h_pre_tome, mask
 
     def forward(
         self,
         x: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
         gloss_seq: Optional[torch.Tensor] = None,
+        chicago_seq: Optional[torch.Tensor] = None,
+        english_seq: Optional[torch.Tensor] = None,
         mlm_mask: Optional[torch.Tensor] = None,
+        frame_indices: Optional[torch.Tensor] = None,
         return_aux: bool = False,
         grl_alpha: float = 1.0,
     ) -> Union[Optional[torch.Tensor], Dict]:
 
         h_cls, h_seq, enc_mask, used_mlm_mask, h_pre_tome, orig_enc_mask = self._encode(
-            x, mask, mlm_mask=mlm_mask
+            x, mask, mlm_mask=mlm_mask, frame_indices=frame_indices
         )
 
         dec_logits, dec_hidden = None, None
+        chicago_logits, english_logits = None, None
+
+        def decode_seq(decoder_module, seq_tensor):
+            if seq_tensor is not None:
+                if seq_tensor.size(1) > 1:
+                    dec_in = seq_tensor[:, :-1].contiguous()
+                else:
+                    dec_in = seq_tensor.contiguous()
+                return decoder_module(dec_in, h_seq, memory_key_padding_mask=enc_mask)
+            return None, None
+
         if gloss_seq is not None:
-            if self.training and gloss_seq.size(1) > 1:
-                dec_in = gloss_seq[:, :-1].contiguous()
-            else:
-                dec_in = gloss_seq.contiguous()
-
-            if self.training:
-                mask_tgt = (torch.rand_like(dec_in, dtype=torch.float) < 0.15) & (
-                    dec_in != GlossVocabulary.BOS_ID
-                )
-                dec_in = dec_in.masked_fill(mask_tgt, GlossVocabulary.UNK_ID)
-
-            dec_logits, dec_hidden = self.decoder(
-                dec_in, h_seq, memory_key_padding_mask=enc_mask
-            )
+            dec_logits, dec_hidden = decode_seq(self.decoder, gloss_seq)
+        if chicago_seq is not None:
+            chicago_logits, _ = decode_seq(self.chicago_decoder, chicago_seq)
+        if english_seq is not None:
+            english_logits, _ = decode_seq(self.english_decoder, english_seq)
 
         if not return_aux:
             return dec_logits
@@ -2010,11 +2204,13 @@ class ASLFoundationModel(nn.Module):
             pooled_enc = (h_seq * mask_expanded).sum(dim=1) / valid_lengths
         else:
             pooled_enc = h_seq.mean(dim=1)
-            
+
         aux_logits = self.aux_gloss_head(pooled_enc)
-        
+
         # ─── NEW: Predict Sequence Length ───
-        pred_len = self.length_head(pooled_enc).squeeze(-1) # Shape: (B,)
+        pred_len = self.length_head(pooled_enc).squeeze(-1)  # Shape: (B,)
+        chicago_pred_len = self.chicago_length_head(pooled_enc).squeeze(-1)
+        english_pred_len = self.english_length_head(pooled_enc).squeeze(-1)
         # ────────────────────────────────────
 
         ctc_log_probs = F.log_softmax(self.ctc_head(h_seq), dim=-1)
@@ -2024,31 +2220,41 @@ class ASLFoundationModel(nn.Module):
         else:
             mlm_logits = None
 
-        vis_emb = F.normalize(self.visual_proj(h_cls).float(), p=2, dim=-1, eps=1e-5).to(h_cls.dtype)
+        vis_emb = F.normalize(
+            self.visual_proj(h_cls).float(), p=2, dim=-1, eps=1e-5
+        ).to(h_cls.dtype)
         if dec_hidden is not None and gloss_seq is not None:
             gt_tokens = gloss_seq[:, 1:]
-            valid_mask = gt_tokens != GlossVocabulary.PAD_ID
-            last_idx = (
-                (valid_mask.sum(dim=1) - 1)
-                .clamp(min=0, max=dec_hidden.size(1) - 1)
-                .view(-1, 1, 1)
-                .expand(-1, 1, dec_hidden.shape[-1])
+            valid_mask = (gt_tokens != GlossVocabulary.PAD_ID) & (
+                gt_tokens != GlossVocabulary.EOS_ID
             )
-            last_hidden = dec_hidden.gather(1, last_idx).squeeze(1)
-            sent_emb = F.normalize(self.sentence_proj(last_hidden).float(), p=2, dim=-1, eps=1e-5).to(last_hidden.dtype)
+
+            # Generate text embedding WITHOUT passing through the cross-attention decoder
+            lex_features = self.decoder.asl_lex_emb(gt_tokens)
+            valid_counts = valid_mask.sum(dim=1, keepdim=True).clamp(min=1.0)
+
+            text_pooled = (
+                lex_features * valid_mask.unsqueeze(-1).to(lex_features.dtype)
+            ).sum(dim=1) / valid_counts
+            sent_emb = F.normalize(
+                self.sentence_proj(text_pooled).float(), p=2, dim=-1, eps=1e-5
+            ).to(h_cls.dtype)
         else:
             sent_emb = None
 
-        proj_feats = F.normalize(self.contrastive_head(h_cls).float(), p=2, dim=-1, eps=1e-5).to(h_cls.dtype)
+        proj_feats = F.normalize(
+            self.contrastive_head(h_cls).float(), p=2, dim=-1, eps=1e-5
+        ).to(h_cls.dtype)
 
-        if grl_alpha > 0.0:
-            rev_cls = GradientReversalFunction.apply(h_cls, grl_alpha)
-            domain_logits = self.domain_head(rev_cls)
-        else:
-            domain_logits = None
+        domain_logits = None
+        if grl_alpha is not None and grl_alpha > 0:
+            h_grl = GradientReversalFunction.apply(h_cls, grl_alpha)
+            domain_logits = self.domain_head(h_grl)
 
         return {
             "dec_logits": dec_logits,
+            "chicago_logits": chicago_logits,
+            "english_logits": english_logits,
             "dec_hidden": dec_hidden,
             "ctc_log_probs": ctc_log_probs,
             "mlm_logits": mlm_logits,
@@ -2058,9 +2264,12 @@ class ASLFoundationModel(nn.Module):
             "sent_emb": sent_emb,
             "proj_feats": proj_feats,
             "domain_logits": domain_logits,
-            "aux_logits": aux_logits,  # Passed out for grounding loss
+            "aux_logits": aux_logits,
             "pred_len": pred_len,
+            "chicago_pred_len": chicago_pred_len,
+            "english_pred_len": english_pred_len,
             "enc_seq": h_seq,
+            "pooled_enc": pooled_enc,
             "enc_mask": enc_mask,
             "orig_enc_mask": orig_enc_mask,
         }
@@ -2077,6 +2286,7 @@ def _compute_ctc_loss_safe(
     gloss_len: torch.Tensor,
     enc_mask: Optional[torch.Tensor],
     has_valid: torch.Tensor,
+    sample_weights: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     device = ctc_log_probs.device
     B, T_enc = ctc_log_probs.size(0), ctc_log_probs.size(1)
@@ -2086,29 +2296,74 @@ def _compute_ctc_loss_safe(
     else:
         enc_len = torch.full((B,), T_enc, dtype=torch.long, device=device)
 
-    raw_targets = gloss_seq[:, 1:].contiguous()
-    valid_mask = (raw_targets != GlossVocabulary.PAD_ID) & has_valid.unsqueeze(1)
-    targets = raw_targets
+    raw_targets = gloss_seq[:, 1:-1].contiguous()
+
+    # CRITICAL FIX (Point 7): Exclude EOS from valid_mask so CTC doesn't try to predict it.
+    valid_mask = (
+        (raw_targets != GlossVocabulary.PAD_ID)
+        & (raw_targets != GlossVocabulary.EOS_ID)
+        & has_valid.unsqueeze(1)
+    )
+    targets = raw_targets.clone()
     tgt_lengths = valid_mask.sum(dim=-1).long()
 
-    valid_ctc = (enc_len >= tgt_lengths) & (tgt_lengths > 0) & (enc_len > 0)
+    # P1: CTC dummy target insertion. We replace PAD_ID with UNK_ID for padding-only sequences
+    # to avoid C++ core dumps from 0-length targets. Since valid_mask is 0 for these sequences,
+    # their CTC loss contribution is completely masked out and won't affect gradients.
+    zero_len_mask = tgt_lengths == 0
+    targets[zero_len_mask, 0] = GlossVocabulary.UNK_ID
 
-    try:
-        loss_vec = F.ctc_loss(
-            ctc_log_probs.float().transpose(0, 1),
-            targets,
-            enc_len.clamp(min=1, max=T_enc),
-            tgt_lengths,
-            blank=GlossVocabulary.PAD_ID,
-            reduction="none",
-            zero_infinity=True,
+    # Vectorized check for consecutive identical tokens (to prevent XLA CPU sync bottleneck)
+    same_as_prev = (targets[:, 1:] == targets[:, :-1]) & valid_mask[:, 1:]
+    min_ctc_len = tgt_lengths + same_as_prev.sum(dim=-1).long()
+
+    valid_ctc = (enc_len >= min_ctc_len) & (tgt_lengths > 0) & (enc_len > 0)
+
+    # Force valid mathematical bounds via tensors to prevent C++ Core Dumps
+    tgt_lengths = tgt_lengths.clamp(min=1)
+    enc_len = enc_len.clamp(min=1, max=T_enc)
+
+    loss_vec = F.ctc_loss(
+        ctc_log_probs.float().transpose(0, 1),
+        targets,
+        enc_len,
+        tgt_lengths,
+        blank=GlossVocabulary.PAD_ID,
+        reduction="none",
+        zero_infinity=True,
+    )
+    if not torch.isfinite(loss_vec).all():
+        print(
+            f"CTC NaN Debug: ctc_log_probs has nans? {torch.isnan(ctc_log_probs).any().item()}"
         )
-        loss_vec = torch.nan_to_num(loss_vec)
-        valid_f = valid_ctc.float()
-        loss_ctc = (loss_vec * valid_f).sum() / valid_f.sum().clamp(min=1.0)
-        return loss_ctc.clamp(max=15.0)
-    except Exception:
-        return torch.tensor(0.0, device=device)
+        print(f"enc_len={enc_len}, tgt_lengths={tgt_lengths}")
+        print(
+            "Warning: CTC loss resulted in NaN/Inf values. Using nan_to_num to recover."
+        )
+    loss_vec = torch.nan_to_num(loss_vec)
+    loss_vec = loss_vec / tgt_lengths.float().clamp(min=1.0)
+    valid_f = valid_ctc.float()
+    if sample_weights is not None:
+        valid_f = valid_f * sample_weights
+    loss_ctc = _distributed_normalize((loss_vec * valid_f).sum(), valid_f.sum())
+
+    with torch.no_grad():
+        ctc_eligible = (tgt_lengths > 0).float().sum()
+        ctc_used = valid_ctc.float().sum()
+        ctc_dropped = ctc_eligible - ctc_used
+        mean_enc_len = enc_len.float().mean()
+        mean_tgt_len = tgt_lengths.float().mean()
+        mean_min_ctc_len = min_ctc_len.float().mean()
+
+    return (
+        loss_ctc,
+        ctc_eligible,
+        ctc_used,
+        ctc_dropped,
+        mean_enc_len,
+        mean_tgt_len,
+        mean_min_ctc_len,
+    )
 
 
 def _compute_mlm_loss_safe(
@@ -2116,54 +2371,58 @@ def _compute_mlm_loss_safe(
 ) -> torch.Tensor:
     B, T = orig_x.size(0), orig_x.size(1)
     target = orig_x.clone()
-    if target.dim() == 3 and target.size(-1) % 60 == 0:
-        target = target.view(B, T, 60, -1)
-
-    if target.dim() == 4 and target.size(2) == 60 and target.size(3) >= 3:
-        lh_nz, rh_nz = (target[:, :, 0:21, :3] != 0).to(target.dtype), (
-            target[:, :, 21:42, :3] != 0
-        ).to(target.dtype)
-        target[:, :, 0:21, :3] = (
-            target[:, :, 0:21, :3] - target[:, :, 0:1, :3]
-        ) * lh_nz
-        target[:, :, 21:42, :3] = (
-            target[:, :, 21:42, :3] - target[:, :, 21:22, :3]
-        ) * rh_nz
-
     target = target.reshape(B, T, -1)
     mask_f = mlm_mask.unsqueeze(-1).float()
     loss = F.smooth_l1_loss(mlm_logits, target, reduction="none")
+    if not torch.isfinite(loss).all():
+        raise RuntimeError("MLM loss resulted in NaN/Inf values before nan_to_num.")
+    local_loss_sum = (loss * mask_f).sum()
+    local_weight = mask_f.sum() * target.size(-1)
     return torch.nan_to_num(
-        (loss * mask_f).sum() / (mask_f.sum().clamp(min=1.0) * target.size(-1)), nan=0.0
+        _distributed_normalize(local_loss_sum, local_weight), nan=0.0
     )
 
 
 class ModelEMA:
-    def __init__(self, model: nn.Module, decay_base: float = 0.90, decay_max: float = 0.9999, device: str = "cpu"):
+    def __init__(
+        self, model: nn.Module, decay_base: float = 0.90, decay_max: float = 0.9999
+    ):
         self.decay_base = decay_base
         self.decay_max = decay_max
-        self.device = device
         self.shadow = {}
         for name, param in model.named_parameters():
             if param.requires_grad:
-                self.shadow[name] = param.data.clone().detach().to(self.device)
+                self.shadow[name] = param.data.clone().detach()
 
     def update(self, model: nn.Module, progress: float = 1.0):
         with torch.no_grad():
-            progress = min(1.0, max(0.0, progress))
-            current_decay = self.decay_max - (self.decay_max - self.decay_base) * (1.0 + math.cos(math.pi * progress)) / 2.0
-            
+            # Fix XLA memory leak: Perform math as PyTorch tensors to prevent graph recompilation per step
+            device = next(model.parameters()).device
+            progress_t = torch.tensor(
+                min(1.0, max(0.0, progress)), device=device, dtype=torch.float32
+            )
+
+            decay_t = (
+                self.decay_max
+                - (self.decay_max - self.decay_base)
+                * (1.0 + torch.cos(math.pi * progress_t))
+                / 2.0
+            )
+
             for name, param in model.named_parameters():
                 if param.requires_grad and name in self.shadow:
-                    # Push updates to CPU asynchronously to save TPU memory
-                    self.shadow[name].mul_(current_decay).add_(param.data.to(self.device), alpha=1.0 - current_decay)
+                    # Pure TPU-to-TPU tensor math. Zero CPU bottlenecks.
+                    decay_param_t = decay_t.to(param.dtype)
+                    self.shadow[name].mul_(decay_param_t).add_(
+                        param.data, alpha=1.0 - decay_param_t
+                    )
 
     def apply_shadow(self, model: nn.Module):
         self.backup = {}
         for name, param in model.named_parameters():
             if param.requires_grad and name in self.shadow:
-                self.backup[name] = param.data.clone().detach().to(self.device)
-                param.data.copy_(self.shadow[name].to(param.device))
+                self.backup[name] = param.data.clone().detach()
+                param.data.copy_(self.shadow[name])
 
     def restore(self, model: nn.Module):
         for name, param in model.named_parameters():
@@ -2171,7 +2430,10 @@ class ModelEMA:
                 param.data.copy_(self.backup[name].to(param.device))
         self.backup.clear()
 
-def _get_optimizer_groups(model: nn.Module, loss_wrapper: nn.Module, weight_decay: float):
+
+def _get_optimizer_groups(
+    model: nn.Module, loss_wrapper: nn.Module, weight_decay: float
+):
     decay, no_decay = [], []
     for name, param in model.named_parameters():
         if not param.requires_grad:
@@ -2188,6 +2450,7 @@ def _get_optimizer_groups(model: nn.Module, loss_wrapper: nn.Module, weight_deca
         {"params": no_decay, "weight_decay": 0.0},
     ]
 
+
 def train_epoch_tpu(
     model: nn.Module,
     loader: DataLoader,
@@ -2197,6 +2460,7 @@ def train_epoch_tpu(
     ema: Optional[Any],
     supcon_fn: SupervisedContrastiveLoss,
     device: torch.device,
+    scaler: getattr(torch.amp, "GradScaler", type(None)) = None,
     epoch: int = 0,
     total_epochs: int = 150,
     prec_dtype: torch.dtype = torch.float16,
@@ -2207,10 +2471,10 @@ def train_epoch_tpu(
     model.train()
 
     # ─── Dynamic Token Merging Scaling ───
-    if hasattr(model, 'module'):
-        if hasattr(model.module, 'update_tome_r'):
+    if hasattr(model, "module"):
+        if hasattr(model.module, "update_tome_r"):
             model.module.update_tome_r(epoch, total_epochs)
-    elif hasattr(model, 'update_tome_r'):
+    elif hasattr(model, "update_tome_r"):
         model.update_tome_r(epoch, total_epochs)
 
     if loss_wrapper is not None and len(list(loss_wrapper.parameters())) > 0:
@@ -2233,6 +2497,15 @@ def train_epoch_tpu(
         "dom": 0.0,
         "mlm": 0.0,
         "aux": 0.0,
+        "gloss_trunc": 0.0,
+        "chicago_trunc": 0.0,
+        "english_trunc": 0.0,
+        "ctc_eligible": 0.0,
+        "ctc_used": 0.0,
+        "ctc_dropped": 0.0,
+        "sum_enc_len": 0.0,
+        "sum_tgt_len": 0.0,
+        "sum_min_ctc": 0.0,
     }
     epoch_start_time = time.time()
 
@@ -2243,37 +2516,42 @@ def train_epoch_tpu(
     is_master = xm.is_master_ordinal() if is_xla else True
 
     if is_xla:
-        device_type, use_autocast = "xla", (prec_dtype in (torch.float16, torch.bfloat16))
+        device_type, use_autocast = "xla", False
     else:
         device_type, use_autocast = (
             "cuda" if "cuda" in str(device).lower() else "cpu"
         ), ("cuda" in str(device).lower() and prec_dtype != torch.float32)
 
-    scaler = (
-        torch.amp.GradScaler("cuda")
-        if use_autocast and prec_dtype == torch.float16
-        else None
-    )
+    # scaler passed in
 
     progress = float(max(0, epoch)) / float(max(1, total_epochs - 1))
     grl_alpha = float(2.0 / (1.0 + np.exp(-10.0 * progress)) - 1.0)
     label_smoothing = max(0.05, 0.15 - 0.10 * progress)
     POLY1_EPS = 1.0
 
-    def compute_seq_loss(logits_f, gt_ids, valid_mask, class_weights=None, gamma=2.0):
+    def compute_seq_loss(
+        logits_f, gt_ids, valid_mask, sample_weights=None, class_weights=None, gamma=2.0
+    ):
         V = logits_f.shape[-1]
         lf = logits_f.reshape(-1, V).float()
-        tf = torch.clamp(gt_ids.reshape(-1), 0, V - 1)
+        tf = gt_ids.reshape(-1)
+        bad = (tf < 0) | (tf >= V)
+        if bad.any():
+            raise RuntimeError(
+                f"Training Sequence ID out of bounds. Found values outside [0, {V-1}]."
+            )
         vf = valid_mask.reshape(-1).float()
+
+        # Exclude EOS from seq loss to separate concerns
+        eos_mask = tf == GlossVocabulary.EOS_ID
+        vf = vf * (~eos_mask).float()
 
         if class_weights is not None:
             vf = vf * class_weights[tf]
 
-        # ─── MATH FIX: THE HALLUCINATION KILLER (EOS GRADIENT FORCING) ───
-        # Ensures the gradient for the stopping condition is never swallowed by Focal Loss
-        eos_mask = (tf == GlossVocabulary.EOS_ID).to(vf.dtype)
-        vf = vf * (1.0 + eos_mask * 9.0)  # 10.0x Multiplier for the EOS Token
-        # ─────────────────────────────────────────────────────────────────
+        if sample_weights is not None:
+            sw = sample_weights.unsqueeze(1).expand_as(gt_ids).reshape(-1)
+            vf = vf * sw
 
         log_p = F.log_softmax(lf, dim=-1)
         p_target = torch.exp(log_p.gather(1, tf.unsqueeze(1)).squeeze(1)).clamp(
@@ -2290,7 +2568,40 @@ def train_epoch_tpu(
         ) * ce_unsmoothed + label_smoothing * ce_uniform
 
         poly1 = focal_weight * ce_smoothed + POLY1_EPS * (1.0 - p_target)
-        return (poly1 * vf).sum() / vf.sum().clamp(min=1.0)
+        return _distributed_normalize((poly1 * vf).sum(), vf.sum())
+
+    def compute_eos_loss(logits_f, gt_ids, valid_mask, sample_weights=None, gamma=2.0):
+        V = logits_f.shape[-1]
+        lf = logits_f.reshape(-1, V).float()
+        tf = gt_ids.reshape(-1)
+        bad = (tf < 0) | (tf >= V)
+        if bad.any():
+            raise RuntimeError(
+                f"Training Sequence ID out of bounds. Found values outside [0, {V-1}]."
+            )
+        vf = valid_mask.reshape(-1).float()
+
+        # Only compute for EOS
+        eos_mask = (tf == GlossVocabulary.EOS_ID).float()
+        vf = vf * eos_mask
+
+        if sample_weights is not None:
+            sw = sample_weights.unsqueeze(1).expand_as(gt_ids).reshape(-1)
+            vf = vf * sw
+
+        log_p = F.log_softmax(lf, dim=-1)
+        p_target = torch.exp(log_p.gather(1, tf.unsqueeze(1)).squeeze(1)).clamp(
+            min=1e-6, max=1.0
+        )
+        focal_weight = torch.pow(1.0 - p_target, gamma)
+
+        ce_unsmoothed = F.nll_loss(
+            log_p, tf, ignore_index=GlossVocabulary.PAD_ID, reduction="none"
+        )
+
+        # We don't apply label smoothing to EOS to force hard termination
+        poly1 = focal_weight * ce_unsmoothed + POLY1_EPS * (1.0 - p_target)
+        return _distributed_normalize((poly1 * vf).sum(), vf.sum())
 
     if is_xla:
         loader = pl.MpDeviceLoader(loader, device)
@@ -2316,66 +2627,63 @@ def train_epoch_tpu(
         if step_idx > min_batches:
             continue
 
-        if isinstance(batch, (tuple, list)):
-            features, mask, labels = (
-                batch[0].to(device),
-                batch[1].to(device),
-                batch[2].to(device),
-            )
-            B, domain_tgts, has_domain = (
-                features.size(0),
-                torch.zeros_like(labels, device=device),
-                torch.zeros_like(labels, dtype=torch.bool, device=device),
-            )
-            gloss_seq = torch.zeros((B, 3), dtype=torch.long, device=device)
-            gloss_seq[:, 0], gloss_seq[:, 1], gloss_seq[:, 2] = (
-                GlossVocabulary.BOS_ID,
-                labels + GlossVocabulary.OFFSET,
-                GlossVocabulary.EOS_ID,
-            )
-            gloss_len, has_valid, mlm_mask = (
-                torch.full((B,), 3, dtype=torch.long, device=device),
-                torch.ones(B, dtype=torch.bool, device=device),
-                None,
-            )
-        else:
-            features, mask, labels = (
-                batch["feature"].to(device),
-                batch["mask"].to(device),
-                batch.get(
-                    "label", torch.zeros(batch["feature"].size(0), dtype=torch.long)
-                ).to(device),
-            )
-            domain_tgts, has_domain = batch.get(
-                "domain_label", torch.zeros_like(labels)
-            ).to(device), batch.get("has_domain_label", torch.zeros_like(labels)).to(
-                device
-            )
-            gloss_seq, gloss_len, has_valid, mlm_mask = (
-                batch["gloss_seq"].to(device),
-                batch["gloss_len"].to(device),
-                batch["has_valid_gloss"].to(device),
-                batch.get("mlm_mask", None),
-            )
-            if mlm_mask is not None:
-                mlm_mask = mlm_mask.to(device)
+        features, mask, labels, frame_indices = (
+            batch["feature"].to(device),
+            batch["mask"].to(device),
+            batch.get(
+                "label", torch.zeros(batch["feature"].size(0), dtype=torch.long)
+            ).to(device),
+            batch["frame_indices"].to(device) if "frame_indices" in batch else None,
+        )
+        sample_weight = batch.get(
+            "sample_weight", torch.ones_like(labels, dtype=torch.float32)
+        ).to(device)
+        domain_tgts, has_domain = batch.get(
+            "domain_label", torch.zeros_like(labels)
+        ).to(device), batch.get("has_domain_label", torch.zeros_like(labels)).to(device)
+        gloss_seq, gloss_len, has_valid, mlm_mask = (
+            batch["gloss_seq"].to(device),
+            batch["gloss_len"].to(device),
+            batch["has_valid_gloss"].to(device),
+            batch.get("mlm_mask", None),
+        )
+        chicago_seq, chicago_len, has_valid_chicago = (
+            batch["chicago_seq"].to(device),
+            batch["chicago_len"].to(device),
+            batch["has_valid_chicago"].to(device),
+        )
+        english_seq, english_len, has_valid_english = (
+            batch["english_seq"].to(device),
+            batch["english_len"].to(device),
+            batch["has_valid_english"].to(device),
+        )
+        if mlm_mask is not None:
+            mlm_mask = mlm_mask.to(device)
 
         # curriculum removed to prevent CTC NaN
 
         if (step_idx - 1) % accum_steps == 0:
             optimizer.zero_grad(set_to_none=True)
 
+        if mlm_mask is None:
+            mlm_mask = (torch.rand(features.shape[:2], device=device) < 0.15) & mask
+
         def forward_and_losses():
             out = model(
                 features,
                 mask=mask,
                 gloss_seq=gloss_seq,
+                chicago_seq=chicago_seq,
+                english_seq=english_seq,
                 mlm_mask=mlm_mask,
+                frame_indices=frame_indices,
                 return_aux=True,
                 grl_alpha=grl_alpha,
             )
             (
                 dec_logits,
+                chicago_logits,
+                english_logits,
                 dec_hidden,
                 ctc_log_probs,
                 vis_emb,
@@ -2385,8 +2693,12 @@ def train_epoch_tpu(
                 aux_logits,
                 enc_mask,
                 pred_len,
+                chicago_pred_len,
+                english_pred_len,
             ) = (
                 out["dec_logits"],
+                out["chicago_logits"],
+                out["english_logits"],
                 out["dec_hidden"],
                 out["ctc_log_probs"],
                 out["vis_emb"],
@@ -2396,90 +2708,309 @@ def train_epoch_tpu(
                 out["aux_logits"],
                 out["enc_mask"],
                 out["pred_len"],
+                out["chicago_pred_len"],
+                out["english_pred_len"],
             )
+            pooled_enc = out["pooled_enc"]
 
             gt_tokens = gloss_seq[:, 1:].contiguous()
             valid_mask = gt_tokens != GlossVocabulary.PAD_ID
-            
-            # ─── NEW: SEQUENCE LENGTH LOSS (Huber Loss) ───
-            # True length is the sum of valid tokens (excluding padding)
-            target_len = valid_mask.sum(dim=1).float()
-            loss_length = F.smooth_l1_loss(pred_len, target_len, reduction="mean")
-            # ──────────────────────────────────────────────
+            has_valid_gloss = has_valid.bool()
+            valid_gloss_mask = valid_mask & has_valid_gloss.unsqueeze(-1)
 
-            loss_seq = compute_seq_loss(
-                dec_logits, gt_tokens, valid_mask, class_weights=class_weights
-            )
+            # Gloss length & sequence loss masked strictly by has_valid_gloss
+            if True:
+                # Target length should match CTC length, excluding PAD and EOS
+                valid_seq_mask = (gloss_seq[:, 1:] != GlossVocabulary.PAD_ID) & (
+                    gloss_seq[:, 1:] != GlossVocabulary.EOS_ID
+                )
+                target_len = (
+                    (valid_seq_mask * has_valid_gloss.unsqueeze(-1)).sum(dim=1).float()
+                )
+                loss_length = F.smooth_l1_loss(pred_len, target_len, reduction="none")
+                loss_length = _distributed_normalize(
+                    (loss_length * sample_weight * has_valid_gloss.float()).sum(),
+                    (has_valid_gloss.float() * sample_weight).sum(),
+                )
 
-            # ─── MATH FIX: AUXILIARY GROUNDING LOSS ───
-            raw_model = model.module if hasattr(model, "module") else model
-            aux_target = torch.clamp(
-                labels + GlossVocabulary.OFFSET, 0, raw_model.vocab_size - 1
-            )
-            loss_aux = F.cross_entropy(
-                aux_logits.float(), aux_target, reduction="mean", label_smoothing=0.1
-            )
-
-            loss_ctc = _compute_ctc_loss_safe(ctc_log_probs, gloss_seq, gloss_len, enc_mask, has_valid)
-            loss_dense_sem = raw_model.dense_sem_loss(
-                dec_hidden,
-                raw_model.decoder.asl_lex_emb(gt_tokens),
-                gt_tokens >= GlossVocabulary.OFFSET,
-            )
-            loss_xmodal = (
-                raw_model.xmodal_loss_fn(vis_emb, sent_emb)
-                if sent_emb is not None
-                else torch.tensor(0.0, device=device, requires_grad=True)
-            )
-            loss_supcon = supcon_fn(proj_feats.float(), labels)
-
-            loss_terms = [loss_seq, loss_ctc, loss_dense_sem, loss_xmodal, loss_supcon]
-
-            has_dom_f = has_domain.float()
-            loss_domain = (
-                (
-                    F.cross_entropy(
-                        domain_logits.float(), domain_tgts, reduction="none"
+                loss_seq = (
+                    compute_seq_loss(
+                        dec_logits,
+                        gt_tokens,
+                        valid_gloss_mask,
+                        sample_weights=sample_weight,
+                        class_weights=class_weights,
                     )
-                    * has_dom_f
-                ).sum()
-                / has_dom_f.sum().clamp(min=1.0)
-                if domain_logits is not None
-                else torch.tensor(0.0, device=device)
-            )
-            loss_terms.append(loss_domain)
+                    if dec_logits is not None
+                    else torch.tensor(0.0, device=device, requires_grad=True)
+                )
+                loss_eos = (
+                    compute_eos_loss(
+                        dec_logits,
+                        gt_tokens,
+                        valid_gloss_mask,
+                        sample_weights=sample_weight,
+                    )
+                    if dec_logits is not None
+                    else torch.tensor(0.0, device=device, requires_grad=True)
+                )
+            else:
+                loss_length = torch.tensor(0.0, device=device, requires_grad=True)
+                loss_seq = torch.tensor(0.0, device=device, requires_grad=True)
+                loss_eos = torch.tensor(0.0, device=device, requires_grad=True)
 
-            loss_mlm = (
+            # --- CHICAGO LOSS (Sample-wise Masking) ---
+            chicago_gt = (
+                chicago_seq[:, 1:].contiguous() if chicago_seq is not None else None
+            )
+            chicago_valid = (
+                (chicago_gt != GlossVocabulary.PAD_ID)
+                if chicago_gt is not None
+                else None
+            )
+
+            if chicago_pred_len is not None and has_valid_chicago.any():
+                c_valid_f = has_valid_chicago.float()
+                c_target_len = (
+                    (chicago_valid * has_valid_chicago.unsqueeze(-1)).sum(dim=1).float()
+                )
+                loss_chicago_len = F.smooth_l1_loss(
+                    chicago_pred_len, c_target_len, reduction="none"
+                )
+                loss_chicago_len = _distributed_normalize(
+                    (loss_chicago_len * sample_weight * c_valid_f).sum(),
+                    (c_valid_f * sample_weight).sum(),
+                )
+            else:
+                loss_chicago_len = torch.tensor(0.0, device=device, requires_grad=True)
+
+            if chicago_logits is not None and has_valid_chicago.any():
+                valid_chicago_mask = chicago_valid & has_valid_chicago.unsqueeze(-1)
+                loss_chicago = compute_seq_loss(
+                    chicago_logits,
+                    chicago_gt,
+                    valid_chicago_mask,
+                    sample_weights=sample_weight,
+                )
+                loss_chicago_eos = compute_eos_loss(
+                    chicago_logits,
+                    chicago_gt,
+                    valid_chicago_mask,
+                    sample_weights=sample_weight,
+                )
+            else:
+                loss_chicago = torch.tensor(0.0, device=device, requires_grad=True)
+                loss_chicago_eos = torch.tensor(0.0, device=device, requires_grad=True)
+
+            # --- ENGLISH LOSS (Sample-wise Masking) ---
+            english_gt = (
+                english_seq[:, 1:].contiguous() if english_seq is not None else None
+            )
+            english_valid = (
+                (english_gt != GlossVocabulary.PAD_ID)
+                if english_gt is not None
+                else None
+            )
+
+            if english_pred_len is not None and has_valid_english.any():
+                e_valid_f = has_valid_english.float()
+                e_target_len = (
+                    (english_valid * has_valid_english.unsqueeze(-1)).sum(dim=1).float()
+                )
+                loss_english_len = F.smooth_l1_loss(
+                    english_pred_len, e_target_len, reduction="none"
+                )
+                loss_english_len = _distributed_normalize(
+                    (loss_english_len * sample_weight * e_valid_f).sum(),
+                    (e_valid_f * sample_weight).sum(),
+                )
+            else:
+                loss_english_len = torch.tensor(0.0, device=device, requires_grad=True)
+
+            if english_logits is not None and has_valid_english.any():
+                valid_english_mask = english_valid & has_valid_english.unsqueeze(-1)
+                loss_english = compute_seq_loss(
+                    english_logits,
+                    english_gt,
+                    valid_english_mask,
+                    sample_weights=sample_weight,
+                )
+                loss_english_eos = compute_eos_loss(
+                    english_logits,
+                    english_gt,
+                    valid_english_mask,
+                    sample_weights=sample_weight,
+                )
+            else:
+                loss_english = torch.tensor(0.0, device=device, requires_grad=True)
+                loss_english_eos = torch.tensor(0.0, device=device, requires_grad=True)
+
+            # --- AUXILIARY GROUNDING & GLOSS AUX LOSSES ---
+            raw_model = model.module if hasattr(model, "module") else model
+            is_isolated = batch.get(
+                "is_isolated", torch.ones_like(labels, dtype=torch.bool)
+            ).to(device)
+            isolated_f = is_isolated.float()
+
+            aux_target = labels + GlossVocabulary.OFFSET
+            bad_aux = (aux_target < 0) | (aux_target >= raw_model.vocab_size)
+            if bad_aux.any():
+                raise RuntimeError(
+                    f"Auxiliary Target ID out of bounds. Vocab Size: {raw_model.vocab_size}"
+                )
+            loss_aux = F.cross_entropy(
+                aux_logits.float(), aux_target, reduction="none", label_smoothing=0.1
+            )
+            loss_aux = _distributed_normalize(
+                (loss_aux * sample_weight * isolated_f).sum(),
+                (isolated_f * sample_weight).sum(),
+            )
+
+            if True:
+                loss_ctc, c_elig, c_used, c_drop, m_enc, m_tgt, m_min = (
+                    _compute_ctc_loss_safe(
+                        ctc_log_probs,
+                        gloss_seq,
+                        gloss_len,
+                        enc_mask,
+                        has_valid_gloss,
+                        sample_weights=sample_weight,
+                    )
+                )
+
+                pooled_enc = out["pooled_enc"]
+                gt_tokens = (
+                    gloss_seq[:, 1:].contiguous() if gloss_seq is not None else None
+                )
+                valid_gloss_mask = (
+                    (gt_tokens != GlossVocabulary.PAD_ID)
+                    if gt_tokens is not None
+                    else None
+                )
+
+                loss_dense_sem = raw_model.dense_sem_loss(
+                    pooled_enc,
+                    raw_model.decoder.asl_lex_emb(gt_tokens),
+                    valid_gloss_mask & (gt_tokens != GlossVocabulary.EOS_ID),
+                    sample_weights=sample_weight,
+                )
+
+                vis_emb = out.get("vis_emb", None)
+                sent_emb = out.get("sent_emb", None)
+                if sent_emb is not None and vis_emb is not None:
+                    loss_xmodal = raw_model.xmodal_loss_fn(
+                        vis_emb, sent_emb, has_valid_gloss, sample_weights=sample_weight
+                    )
+                else:
+                    loss_xmodal = torch.tensor(0.0, device=device, requires_grad=True)
+            else:
+                loss_ctc = torch.tensor(0.0, device=device, requires_grad=True)
+                c_elig = torch.tensor(0.0, device=device)
+                c_used = torch.tensor(0.0, device=device)
+                c_drop = torch.tensor(0.0, device=device)
+                m_enc = torch.tensor(0.0, device=device)
+                m_tgt = torch.tensor(0.0, device=device)
+                m_min = torch.tensor(0.0, device=device)
+                loss_dense_sem = torch.tensor(0.0, device=device, requires_grad=True)
+                loss_xmodal = torch.tensor(0.0, device=device, requires_grad=True)
+
+            if True:
+                isolated_labels = torch.where(is_isolated, labels, -1)
+                loss_supcon = supcon_fn(
+                    proj_feats.float(), isolated_labels, sample_weight
+                )
+            else:
+                loss_supcon = torch.tensor(0.0, device=device, requires_grad=True)
+
+            # Domain adaptation is completely inactive in the current architecture.
+            # has_dom_f = has_domain.float()
+            loss_domain = torch.tensor(0.0, device=device, requires_grad=True)
+
+            loss_clr = (
                 _compute_mlm_loss_safe(out["mlm_logits"], out["orig_x"], mlm_mask)
                 if out["mlm_logits"] is not None and mlm_mask is not None
                 else torch.tensor(0.0, device=device, requires_grad=True)
             )
-            loss_terms.extend([loss_mlm])
 
-            # Append the 8th and 9th losses for Homoscedastic balancing
-            loss_terms.append(loss_aux)
-            loss_terms.append(loss_length) # <--- APPEND LENGTH LOSS
+            loss_terms = {
+                "seq": loss_seq,
+                "eos": loss_eos,
+                "chicago": loss_chicago,
+                "chicago_eos": loss_chicago_eos,
+                "chicago_len": loss_chicago_len,
+                "english": loss_english,
+                "english_eos": loss_english_eos,
+                "english_len": loss_english_len,
+                "ctc": loss_ctc,
+                "dense_sem": loss_dense_sem,
+                "xmodal": loss_xmodal,
+                "supcon": loss_supcon,
+                "domain": loss_domain,
+                "clr": loss_clr,
+                "aux": loss_aux,
+                "length": loss_length,
+            }
             raw_loss = loss_wrapper(loss_terms)
 
             with torch.no_grad():
-                preds = dec_logits.argmax(dim=-1)
-                valid_f = valid_mask.float()
-                nc_t = ((preds == gt_tokens).float() * valid_f).sum()
-                nt_t = valid_f.sum()
+                # Gloss Metrics
+                preds = (
+                    dec_logits.argmax(dim=-1) if dec_logits is not None else gt_tokens
+                )
+                vg_eval = valid_gloss_mask & (gt_tokens != GlossVocabulary.EOS_ID)
+                vg_f = vg_eval.float()
+                nc_t = ((preds == gt_tokens).float() * vg_f).sum()
+                nt_t = vg_f.sum()
+
+                # Chicago Metrics
+                chicago_nc_t = torch.tensor(0.0, device=device)
+                chicago_nt_t = torch.tensor(0.0, device=device)
+                if chicago_logits is not None and has_valid_chicago.any():
+                    c_preds = chicago_logits.argmax(dim=-1)
+                    vc_eval = (
+                        chicago_valid
+                        & has_valid_chicago.unsqueeze(-1)
+                        & (chicago_gt != GlossVocabulary.EOS_ID)
+                    )
+                    vc_f = vc_eval.float()
+                    chicago_nc_t = ((c_preds == chicago_gt).float() * vc_f).sum()
+                    chicago_nt_t = vc_f.sum()
+
+                # English Metrics
+                english_nc_t = torch.tensor(0.0, device=device)
+                english_nt_t = torch.tensor(0.0, device=device)
+                if english_logits is not None and has_valid_english.any():
+                    e_preds = english_logits.argmax(dim=-1)
+                    ve_eval = (
+                        english_valid
+                        & has_valid_english.unsqueeze(-1)
+                        & (english_gt != GlossVocabulary.EOS_ID)
+                    )
+                    ve_f = ve_eval.float()
+                    english_nc_t = ((e_preds == english_gt).float() * ve_f).sum()
+                    english_nt_t = ve_f.sum()
 
             return (
                 raw_loss,
                 dec_logits,
                 nc_t,
                 nt_t,
+                chicago_nc_t,
+                chicago_nt_t,
+                english_nc_t,
+                english_nt_t,
                 loss_seq.detach(),
+                loss_aux.detach(),
                 loss_ctc.detach(),
                 loss_dense_sem.detach(),
-                loss_supcon.detach(),
-                loss_domain.detach(),
-                loss_mlm.detach(),
-                loss_aux.detach(),
-                loss_length.detach(),
+                loss_chicago.detach(),
+                loss_english.detach(),
+                c_elig.detach(),
+                c_used.detach(),
+                c_drop.detach(),
+                m_enc.detach(),
+                m_tgt.detach(),
+                m_min.detach(),
             )
 
         if use_autocast:
@@ -2489,14 +3020,22 @@ def train_epoch_tpu(
                     dec_logits,
                     nc_t,
                     nt_t,
+                    c_nc_t,
+                    c_nt_t,
+                    e_nc_t,
+                    e_nt_t,
                     l_seq,
+                    l_aux,
                     l_ctc,
                     l_sem,
-                    l_sup,
-                    l_dom,
-                    l_mlm,
-                    l_aux,
-                    l_len,
+                    l_chi,
+                    l_eng,
+                    c_elig,
+                    c_used,
+                    c_drop,
+                    m_enc,
+                    m_tgt,
+                    m_min,
                 ) = forward_and_losses()
         else:
             (
@@ -2504,25 +3043,31 @@ def train_epoch_tpu(
                 dec_logits,
                 nc_t,
                 nt_t,
+                c_nc_t,
+                c_nt_t,
+                e_nc_t,
+                e_nt_t,
                 l_seq,
+                l_aux,
                 l_ctc,
                 l_sem,
-                l_sup,
-                l_dom,
-                l_mlm,
-                l_aux,
-                l_len,
+                l_chi,
+                l_eng,
+                c_elig,
+                c_used,
+                c_drop,
+                m_enc,
+                m_tgt,
+                m_min,
             ) = forward_and_losses()
 
-        if torch.isnan(raw_loss) or torch.isinf(raw_loss):
-            if is_master:
-                print(
-                    f"[!] Warning: NaN/Inf loss encountered at Epoch {epoch} step {step_idx}. Skipping batch backward.",
-                    flush=True,
-                )
-            continue
+        if not torch.isfinite(raw_loss).all():
+            raise RuntimeError(
+                f"NaN/Inf loss encountered at Epoch {epoch} step {step_idx}."
+            )
 
         loss = raw_loss / float(accum_steps)
+
         if scaler is not None:
             scaler.scale(loss).backward()
         else:
@@ -2530,54 +3075,39 @@ def train_epoch_tpu(
 
         if (step_idx % accum_steps == 0) or (step_idx == min_batches):
             if is_xla:
-                # ─── SAM (Sharpness-Aware Minimization) for final 25% of epochs ───
-                use_sam = epoch >= total_epochs * 0.75
-                if use_sam:
+                if world_size > 1:
                     xm.reduce_gradients(optimizer)
-                    grad_norm = torch.nn.utils.clip_grad_norm_(
-                        list(model.parameters()) + list(loss_wrapper.parameters()), max_norm=1.0
-                    )
-                    rho = 0.05
-                    scale = rho / (grad_norm + 1e-6)
-                    
-                    e_w = {}
-                    with torch.no_grad():
-                        for n, p in model.named_parameters():
-                            if p.grad is not None:
-                                e_w[n] = p.grad * scale
-                                p.data.add_(e_w[n])
-                                
-                    optimizer.zero_grad(set_to_none=True)
-                    if use_autocast:
-                        with torch.autocast(device_type, dtype=prec_dtype):
-                            raw_loss2 = forward_and_losses()[0]
-                    else:
-                        raw_loss2 = forward_and_losses()[0]
-                        
-                    loss2 = raw_loss2 / float(accum_steps)
-                    if scaler is not None:
-                        scaler.scale(loss2).backward()
-                    else:
-                        loss2.backward()
-                        
-                    with torch.no_grad():
-                        for n, p in model.named_parameters():
-                            if p.grad is not None and n in e_w:
-                                p.data.sub_(e_w[n])
-
-                torch.nn.utils.clip_grad_norm_(
+                # Use XLA-aware gradient clipping to avoid CPU-TPU sync stalls
+                import torch_xla.utils.utils as xu
+                xu.clip_grad_norm_(
                     list(model.parameters()) + list(loss_wrapper.parameters()),
                     max_norm=1.0,
                 )
-                xm.optimizer_step(optimizer)
+                optimizer.step()
+                xm.mark_step()
                 if scheduler is not None:
                     try:
                         scheduler.step()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        raise RuntimeError(
+                            f"LR scheduler failed at epoch {epoch}, step {step_idx}: {e}"
+                        ) from e
+
+                raw_m = model.module if hasattr(model, "module") else model
+                if ema is not None:
+                    progress_ema = (epoch * min_batches + step_idx) / max(
+                        1, total_epochs * min_batches
+                    )
+                    ema.update(raw_m, progress_ema)
+                if hasattr(raw_m, "dense_sem_loss"):
+                    raw_m.dense_sem_loss.update_momentum()
+
                 optimizer.zero_grad(set_to_none=True)
 
-                if is_master and ((step_idx % 25 == 0) or (step_idx == min_batches)):
+                log_freq = min(25, max(1, min_batches // 10))
+                if is_master and (
+                    (step_idx % log_freq == 0) or (step_idx == min_batches)
+                ):
 
                     def _async_step_print(
                         l_val,
@@ -2585,8 +3115,14 @@ def train_epoch_tpu(
                         aux_val,
                         c_val,
                         sm_val,
+                        chi_val,
+                        eng_val,
                         nc_val,
                         nt_val,
+                        cnc_val,
+                        cnt_val,
+                        enc_val,
+                        ent_val,
                         st_idx,
                         m_batches,
                         ep,
@@ -2594,17 +3130,16 @@ def train_epoch_tpu(
                         lr_val,
                         t_start,
                     ):
-                        c_acc = (float(nc_val) / max(1.0, float(nt_val))) * 100.0
+                        g_acc = (float(nc_val) / max(1.0, float(nt_val))) * 100.0
+                        c_acc = (float(cnc_val) / max(1.0, float(cnt_val))) * 100.0
+                        e_acc = (float(enc_val) / max(1.0, float(ent_val))) * 100.0
                         speed = float(st_idx) / max(0.001, time.time() - t_start)
-                        msg = f"  [Epoch {ep:03d}/{tot_ep:03d} | Step {st_idx:04d}/{m_batches:04d}] Loss: {float(l_val):.4f} (Seq:{float(s_val):.4f} Aux:{float(aux_val):.4f} Sem:{float(sm_val):.4f}) | TF-Acc: {c_acc:.2f}% | LR: {lr_val:.2e} | {speed:.1f} it/s"
+                        msg = (
+                            f"  [Epoch {ep:03d}/{tot_ep:03d} | Step {st_idx:04d}/{m_batches:04d}] "
+                            f"Loss: {float(l_val):.4f} (Gloss:{float(s_val):.4f} Chi:{float(chi_val):.4f} Eng:{float(eng_val):.4f}) | "
+                            f"Acc (Gloss:{g_acc:.1f}% Chi:{c_acc:.1f}% Eng:{e_acc:.1f}%) | LR: {lr_val:.2e} | {speed:.1f} it/s"
+                        )
                         print(msg, flush=True)
-                        try:
-                            with open(
-                                "/tmp/step_losses.txt", "a", encoding="utf-8"
-                            ) as f_log:
-                                f_log.write(msg + "\n")
-                        except Exception:
-                            pass
 
                     xm.add_step_closure(
                         _async_step_print,
@@ -2614,8 +3149,14 @@ def train_epoch_tpu(
                             l_aux.detach(),
                             l_ctc.detach(),
                             l_sem.detach(),
+                            l_chi.detach(),
+                            l_eng.detach(),
                             nc_t.detach(),
                             nt_t.detach(),
+                            c_nc_t.detach(),
+                            c_nt_t.detach(),
+                            e_nc_t.detach(),
+                            e_nt_t.detach(),
                             step_idx,
                             min_batches,
                             epoch,
@@ -2627,17 +3168,13 @@ def train_epoch_tpu(
             else:
                 if scaler is not None:
                     scaler.unscale_(optimizer)
-                
-                # Automatic Gradient Clipping (AGC) - No host sync
-                for p in list(model.parameters()) + list(loss_wrapper.parameters()):
-                    if p.grad is not None:
-                        g = p.grad.detach()
-                        eps = 1e-3
-                        p_norm = p.detach().float().norm(2).clamp_(min=eps)
-                        g_norm = g.float().norm(2).clamp_(min=eps)
-                        max_norm = p_norm * 0.01  # clip_val = 0.01
-                        clipped_g = g * (max_norm / g_norm).clamp_(max=1.0)
-                        g.copy_(clipped_g)
+
+                # Standard global gradient clipping for cross-device equivalence
+                # On non-XLA devices, standard PyTorch clip is safe
+                torch.nn.utils.clip_grad_norm_(
+                    list(model.parameters()) + list(loss_wrapper.parameters()),
+                    max_norm=1.0,
+                )
 
                 if scaler is not None:
                     scaler.step(optimizer)
@@ -2647,48 +3184,498 @@ def train_epoch_tpu(
                 if scheduler is not None:
                     try:
                         scheduler.step()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        raise RuntimeError(
+                            f"LR scheduler failed at epoch {epoch}, step {step_idx}: {e}"
+                        ) from e
                 optimizer.zero_grad(set_to_none=True)
 
-                if is_xla:
-                    xm.mark_step()
+        if is_xla:
+            xm.mark_step()
 
-                loss_cpu, seq_cpu, sem_cpu, nc_cpu, nt_cpu, aux_cpu = [
-                    float(v)
-                    for v in [
-                        raw_loss.detach(),
-                        l_seq.detach(),
-                        l_sem.detach(),
-                        nc_t.detach(),
-                        nt_t.detach(),
-                        l_aux.detach(),
-                    ]
-                ]
-                tracker["loss"] += loss_cpu
-                tracker["seq"] += seq_cpu
-                tracker["sem"] += sem_cpu
-                tracker["corr"] += nc_cpu
-                tracker["total"] += nt_cpu
-                tracker["aux"] += aux_cpu
+        loss_cpu, seq_cpu, sem_cpu, nc_cpu, nt_cpu, aux_cpu = [
+            float(v)
+            for v in [
+                raw_loss.detach(),
+                l_seq.detach(),
+                l_sem.detach(),
+                nc_t.detach(),
+                nt_t.detach(),
+                l_aux.detach(),
+            ]
+        ]
+        tracker["loss"] += loss_cpu
+        tracker["seq"] += seq_cpu
+        tracker["sem"] += sem_cpu
+        tracker["corr"] += nc_cpu
+        tracker["total"] += nt_cpu
+        tracker["aux"] += aux_cpu
+        tracker["gloss_trunc"] += (
+            batch.get("gloss_trunc", torch.tensor([False])).float().sum().item()
+        )
+        tracker["chicago_trunc"] += (
+            batch.get("chicago_trunc", torch.tensor([False])).float().sum().item()
+        )
+        tracker["english_trunc"] += (
+            batch.get("english_trunc", torch.tensor([False])).float().sum().item()
+        )
+        tracker["ctc_eligible"] += float(c_elig)
+        tracker["ctc_used"] += float(c_used)
+        tracker["ctc_dropped"] += float(c_drop)
+        tracker["sum_enc_len"] += float(m_enc)
+        tracker["sum_tgt_len"] += float(m_tgt)
+        tracker["sum_min_ctc"] += float(m_min)
 
-            raw_m = model.module if hasattr(model, "module") else model
-            if ema is not None:
-                progress = (epoch * min_batches + step_idx) / max(1, total_epochs * min_batches)
-                ema.update(raw_m, progress)
-            if hasattr(raw_m, "dense_sem_loss"):
-                raw_m.dense_sem_loss.update_momentum()
-
-            if is_xla and step_idx >= min_batches:
-                break
+        if is_xla and step_idx >= min_batches:
+            break
 
     if is_xla:
         xm.mark_step()
         xm.rendezvous("end_of_epoch")
+        g_tr = xm.mesh_reduce("g_tr", tracker["gloss_trunc"], sum)
+        c_tr = xm.mesh_reduce("c_tr", tracker["chicago_trunc"], sum)
+        e_tr = xm.mesh_reduce("e_tr", tracker["english_trunc"], sum)
 
-    avg_loss = tracker["loss"] / float(max(1, min_batches))
+        for k in [
+            "ctc_eligible",
+            "ctc_used",
+            "ctc_dropped",
+            "sum_enc_len",
+            "sum_tgt_len",
+            "sum_min_ctc",
+        ]:
+            t_val = xm.all_reduce(
+                xm.REDUCE_SUM, torch.tensor(tracker[k], device=device)
+            )
+            tracker[k] = t_val.item()
+
+        t_loss = torch.tensor(tracker["loss"], device=device)
+        t_corr = torch.tensor(tracker["corr"], device=device)
+        t_tot = torch.tensor(tracker["total"], device=device)
+        t_step = torch.tensor(min_batches, device=device)
+
+        t_loss = xm.all_reduce(xm.REDUCE_SUM, t_loss)
+        t_corr = xm.all_reduce(xm.REDUCE_SUM, t_corr)
+        t_tot = xm.all_reduce(xm.REDUCE_SUM, t_tot)
+        t_step = xm.all_reduce(xm.REDUCE_SUM, t_step)
+
+        tracker["loss"] = t_loss.item()
+        tracker["corr"] = t_corr.item()
+        tracker["total"] = t_tot.item()
+        global_batches = int(t_step.item()) * world_size
+    else:
+        g_tr = tracker["gloss_trunc"]
+        c_tr = tracker["chicago_trunc"]
+        e_tr = tracker["english_trunc"]
+        global_batches = min_batches
+
+    if is_master:
+        print(
+            f"[Epoch {epoch} Truncation] Gloss: {int(g_tr)} | Chicago: {int(c_tr)} | English: {int(e_tr)}",
+            flush=True,
+        )
+
+        drop_rate = (tracker["ctc_dropped"] / max(1.0, tracker["ctc_eligible"])) * 100.0
+        print(
+            f"[Epoch {epoch} CTC] Eligible: {int(tracker['ctc_eligible'])} | Used: {int(tracker['ctc_used'])} | Dropped: {int(tracker['ctc_dropped'])} ({drop_rate:.2f}%)"
+        )
+        print(
+            f"[Epoch {epoch} CTC Lengths] Mean Enc: {tracker['sum_enc_len']/max(1, global_batches):.1f} | Mean Tgt: {tracker['sum_tgt_len']/max(1, global_batches):.1f} | Min CTC: {tracker['sum_min_ctc']/max(1, global_batches):.1f}"
+        )
+
+    avg_loss = tracker["loss"] / float(max(1, global_batches))
     token_acc = (tracker["corr"] / max(1.0, tracker["total"])) * 100.0
-    return avg_loss, token_acc
+    return {
+        "loss": avg_loss,
+        "gloss_acc": token_acc,
+    }
+
+
+def validate_epoch_tpu(
+    model: nn.Module,
+    loader: DataLoader,
+    loss_wrapper: HomoscedasticLossWrapper,
+    device: torch.device,
+    epoch: int = 0,
+    total_epochs: int = 150,
+    prec_dtype: torch.dtype = torch.float16,
+    is_master: bool = True,
+    class_weights: Optional[torch.Tensor] = None,
+    label_smoothing: float = 0.1,
+) -> Tuple[float, float]:
+    model.eval()
+
+    tracker = {
+        "loss": 0.0,
+        "chi_loss": 0.0,
+        "eng_loss": 0.0,
+        "corr": 0.0,
+        "total": 0.0,
+        "chi_corr": 0.0,
+        "chi_total": 0.0,
+        "eng_corr": 0.0,
+        "eng_total": 0.0,
+        "eng_trunc_count": 0.0,
+        "eng_trunc_total": 0.0,
+    }
+
+    is_xla = _XLA_AVAILABLE and "xla" in str(device).lower()
+    if is_xla:
+        import torch_xla.core.xla_model as xm
+        import torch_xla.distributed.parallel_loader as pl
+    is_master = xm.is_master_ordinal() if is_xla else True
+
+    if is_xla:
+        device_type, use_autocast = "xla", False
+    else:
+        device_type, use_autocast = (
+            "cuda" if "cuda" in str(device).lower() else "cpu"
+        ), ("cuda" in str(device).lower() and prec_dtype != torch.float32)
+
+    def compute_seq_loss(
+        logits_f, gt_ids, valid_mask, class_weights=None, sample_weights=None
+    ):
+        V = logits_f.shape[-1]
+        lf = logits_f.reshape(-1, V).float()
+        tf = gt_ids.reshape(-1)
+
+        vf = valid_mask.reshape(-1).float()
+        eos_mask = tf == GlossVocabulary.EOS_ID
+        vf = vf * (~eos_mask).float()
+
+        if class_weights is not None:
+            vf = vf * class_weights[tf]
+
+        ce_unsmoothed = F.cross_entropy(lf, tf, reduction="none")
+        ce_uniform = -F.log_softmax(lf, dim=-1).mean(dim=-1)
+        ce_smoothed = (
+            1.0 - label_smoothing
+        ) * ce_unsmoothed + label_smoothing * ce_uniform
+        loss = ce_smoothed * vf
+        if sample_weights is not None:
+            sw = sample_weights.view(-1)
+            loss = loss * sw
+            vf = vf * sw
+
+        return _distributed_normalize(loss.sum(), vf.sum())
+
+    def compute_eos_loss(logits_f, gt_ids, valid_mask, sample_weights=None):
+        V = logits_f.shape[-1]
+        lf = logits_f.reshape(-1, V).float()
+        tf = gt_ids.reshape(-1)
+        vf = valid_mask.reshape(-1).float()
+        eos_mask = tf == GlossVocabulary.EOS_ID
+        vf = vf * eos_mask.float()
+
+        ce_unsmoothed = F.cross_entropy(lf, tf, reduction="none")
+        ce_uniform = -F.log_softmax(lf, dim=-1).mean(dim=-1)
+        ce_smoothed = (
+            1.0 - label_smoothing
+        ) * ce_unsmoothed + label_smoothing * ce_uniform
+        loss = ce_smoothed * vf
+        if sample_weights is not None:
+            sw = sample_weights.view(-1)
+            loss = loss * sw
+            vf = vf * sw
+
+        return _distributed_normalize(loss.sum(), vf.sum())
+
+    total_val_batches = len(loader)
+    min_val_batches = total_val_batches
+    if is_xla:
+        min_val_batches = int(
+            xm.mesh_reduce("min_val_batches", total_val_batches, lambda x: min(x))
+        )
+
+    with torch.no_grad():
+        para_loader = (
+            pl.ParallelLoader(loader, [device]).per_device_loader(device)
+            if is_xla
+            else loader
+        )
+
+        for step_idx, batch in enumerate(para_loader, 1):
+            if step_idx > min_val_batches:
+                break
+            features = batch["feature"].to(device, non_blocking=True)
+            mask = batch["mask"].to(device, non_blocking=True)
+            frame_indices = (
+                batch["frame_indices"].to(device, non_blocking=True)
+                if "frame_indices" in batch
+                else None
+            )
+            gloss_seq = batch["gloss_seq"].to(device, non_blocking=True)
+            has_valid_gloss = batch["has_valid_gloss"].to(device, non_blocking=True)
+            chicago_seq = batch["chicago_seq"].to(device, non_blocking=True)
+            has_valid_chicago = batch["has_valid_chicago"].to(device, non_blocking=True)
+            english_seq = batch["english_seq"].to(device, non_blocking=True)
+            has_valid_english = batch["has_valid_english"].to(device, non_blocking=True)
+
+            def forward_and_losses():
+                out = model(
+                    features,
+                    mask=mask,
+                    gloss_seq=gloss_seq,
+                    chicago_seq=chicago_seq,
+                    english_seq=english_seq,
+                    mlm_mask=None,
+                    frame_indices=frame_indices,
+                    return_aux=True,
+                    grl_alpha=0.0,
+                )
+                dec_logits = out.get("dec_logits") if isinstance(out, dict) else out
+                chicago_logits = (
+                    out.get("chicago_logits") if isinstance(out, dict) else None
+                )
+                english_logits = (
+                    out.get("english_logits") if isinstance(out, dict) else None
+                )
+
+                sample_weight = batch.get(
+                    "sample_weight", torch.ones(batch["feature"].size(0), device=device)
+                )
+                gt_tokens = gloss_seq[:, 1:].contiguous()
+                valid_mask = (
+                    (gt_tokens != GlossVocabulary.PAD_ID)
+                    & (gt_tokens != GlossVocabulary.EOS_ID)
+                    & has_valid_gloss.unsqueeze(-1)
+                )
+
+                loss_seq = (
+                    compute_seq_loss(
+                        dec_logits,
+                        gt_tokens,
+                        valid_mask,
+                        class_weights=class_weights,
+                        sample_weights=sample_weight,
+                    )
+                    if dec_logits is not None
+                    else torch.tensor(0.0, device=device)
+                )
+                loss_eos = (
+                    compute_eos_loss(
+                        dec_logits, gt_tokens, valid_mask, sample_weights=sample_weight
+                    )
+                    if dec_logits is not None
+                    else torch.tensor(0.0, device=device)
+                )
+
+                nc_t, nt_t = torch.tensor(0.0, device=device), torch.tensor(
+                    0.0, device=device
+                )
+                if dec_logits is not None and True:
+                    preds = dec_logits.argmax(dim=-1)
+                    valid_f = valid_mask.float()
+                    nc_t = ((preds == gt_tokens).float() * valid_f).sum()
+                    nt_t = valid_f.sum()
+
+                c_nc_t, c_nt_t = torch.tensor(0.0, device=device), torch.tensor(
+                    0.0, device=device
+                )
+                loss_chi = torch.tensor(0.0, device=device)
+                loss_chi_eos = torch.tensor(0.0, device=device)
+                if chicago_logits is not None and True:
+                    chicago_gt = chicago_seq[:, 1:].contiguous()
+                    c_preds = chicago_logits.argmax(dim=-1)
+                    c_valid_mask = (
+                        (chicago_gt != GlossVocabulary.PAD_ID)
+                        & (chicago_gt != GlossVocabulary.EOS_ID)
+                        & has_valid_chicago.unsqueeze(-1)
+                    )
+                    c_valid = c_valid_mask.float()
+                    loss_chi = compute_seq_loss(
+                        chicago_logits,
+                        chicago_gt,
+                        c_valid_mask,
+                        sample_weights=sample_weight,
+                    )
+                    loss_chi_eos = compute_eos_loss(
+                        chicago_logits,
+                        chicago_gt,
+                        c_valid_mask,
+                        sample_weights=sample_weight,
+                    )
+                    c_nc_t = ((c_preds == chicago_gt).float() * c_valid).sum()
+                    c_nt_t = c_valid.sum()
+
+                e_nc_t, e_nt_t = torch.tensor(0.0, device=device), torch.tensor(
+                    0.0, device=device
+                )
+                loss_eng = torch.tensor(0.0, device=device)
+                loss_eng_eos = torch.tensor(0.0, device=device)
+                if english_logits is not None and True:
+                    english_gt = english_seq[:, 1:].contiguous()
+                    e_preds = english_logits.argmax(dim=-1)
+                    e_valid_mask = (
+                        (english_gt != GlossVocabulary.PAD_ID)
+                        & (english_gt != GlossVocabulary.EOS_ID)
+                        & has_valid_english.unsqueeze(-1)
+                    )
+                    e_valid = e_valid_mask.float()
+                    loss_eng = compute_seq_loss(
+                        english_logits,
+                        english_gt,
+                        e_valid_mask,
+                        sample_weights=sample_weight,
+                    )
+                    loss_eng_eos = compute_eos_loss(
+                        english_logits,
+                        english_gt,
+                        e_valid_mask,
+                        sample_weights=sample_weight,
+                    )
+                    e_nc_t = ((e_preds == english_gt).float() * e_valid).sum()
+                    e_nt_t = e_valid.sum()
+
+                e_trunc_c, e_trunc_t = torch.tensor(0.0, device=device), torch.tensor(
+                    0.0, device=device
+                )
+                if True:
+                    eng_trunc_flag = batch.get(
+                        "english_trunc", torch.zeros_like(has_valid_english)
+                    )
+                    e_trunc_c = eng_trunc_flag[has_valid_english].float().sum()
+                    e_trunc_t = has_valid_english.float().sum()
+
+                loss_terms = {
+                    "seq": loss_seq,
+                    "eos": loss_eos,
+                    "chicago": loss_chi,
+                    "chicago_eos": loss_chi_eos,
+                    "english": loss_eng,
+                    "english_eos": loss_eng_eos,
+                    "ctc": torch.tensor(0.0, device=device),
+                    "dense_sem": torch.tensor(0.0, device=device),
+                    "xmodal": torch.tensor(0.0, device=device),
+                    "supcon": torch.tensor(0.0, device=device),
+                    "domain": torch.tensor(0.0, device=device),
+                    "clr": torch.tensor(0.0, device=device),
+                    "aux": torch.tensor(0.0, device=device),
+                    "chicago_len": torch.tensor(0.0, device=device),
+                    "english_len": torch.tensor(0.0, device=device),
+                    "length": torch.tensor(0.0, device=device),
+                }
+                raw_loss = loss_wrapper(loss_terms)
+
+                return (
+                    raw_loss,
+                    loss_chi,
+                    loss_eng,
+                    nc_t,
+                    nt_t,
+                    c_nc_t,
+                    c_nt_t,
+                    e_nc_t,
+                    e_nt_t,
+                    e_trunc_c,
+                    e_trunc_t,
+                )
+
+            if use_autocast:
+                with torch.autocast(device_type, dtype=prec_dtype):
+                    (
+                        raw_loss,
+                        l_chi,
+                        l_eng,
+                        nc_t,
+                        nt_t,
+                        c_nc_t,
+                        c_nt_t,
+                        e_nc_t,
+                        e_nt_t,
+                        e_trunc_c,
+                        e_trunc_t,
+                    ) = forward_and_losses()
+            else:
+                (
+                    raw_loss,
+                    l_chi,
+                    l_eng,
+                    nc_t,
+                    nt_t,
+                    c_nc_t,
+                    c_nt_t,
+                    e_nc_t,
+                    e_nt_t,
+                    e_trunc_c,
+                    e_trunc_t,
+                ) = forward_and_losses()
+
+            tracker["loss"] += raw_loss.detach()
+            tracker["chi_loss"] += l_chi.detach()
+            tracker["eng_loss"] += l_eng.detach()
+            tracker["corr"] += nc_t.detach()
+            tracker["total"] += nt_t.detach()
+            tracker["chi_corr"] += c_nc_t.detach()
+            tracker["chi_total"] += c_nt_t.detach()
+            tracker["eng_corr"] += e_nc_t.detach()
+            tracker["eng_total"] += e_nt_t.detach()
+            tracker["eng_trunc_count"] += e_trunc_c.detach()
+            tracker["eng_trunc_total"] += e_trunc_t.detach()
+
+    if is_xla:
+        xm.rendezvous("validate_metrics")
+        t_loss = torch.tensor(tracker["loss"], device=device)
+        t_chi_loss = torch.tensor(tracker["chi_loss"], device=device)
+        t_eng_loss = torch.tensor(tracker["eng_loss"], device=device)
+        t_corr = torch.tensor(tracker["corr"], device=device)
+        t_tot = torch.tensor(tracker["total"], device=device)
+        tc_corr = torch.tensor(tracker["chi_corr"], device=device)
+        tc_tot = torch.tensor(tracker["chi_total"], device=device)
+        te_corr = torch.tensor(tracker["eng_corr"], device=device)
+        te_tot = torch.tensor(tracker["eng_total"], device=device)
+        te_trunc_c = torch.tensor(tracker["eng_trunc_count"], device=device)
+        te_trunc_t = torch.tensor(tracker["eng_trunc_total"], device=device)
+        t_step = torch.tensor(step_idx, device=device)
+
+        t_loss = xm.all_reduce(xm.REDUCE_SUM, t_loss)
+        t_chi_loss = xm.all_reduce(xm.REDUCE_SUM, t_chi_loss)
+        t_eng_loss = xm.all_reduce(xm.REDUCE_SUM, t_eng_loss)
+        t_corr = xm.all_reduce(xm.REDUCE_SUM, t_corr)
+        t_tot = xm.all_reduce(xm.REDUCE_SUM, t_tot)
+        tc_corr = xm.all_reduce(xm.REDUCE_SUM, tc_corr)
+        tc_tot = xm.all_reduce(xm.REDUCE_SUM, tc_tot)
+        te_corr = xm.all_reduce(xm.REDUCE_SUM, te_corr)
+        te_tot = xm.all_reduce(xm.REDUCE_SUM, te_tot)
+        te_trunc_c = xm.all_reduce(xm.REDUCE_SUM, te_trunc_c)
+        te_trunc_t = xm.all_reduce(xm.REDUCE_SUM, te_trunc_t)
+        t_step = xm.all_reduce(xm.REDUCE_SUM, t_step)
+
+        tracker["loss"] = t_loss.item()
+        tracker["chi_loss"] = t_chi_loss.item()
+        tracker["eng_loss"] = t_eng_loss.item()
+        tracker["corr"] = t_corr.item()
+        tracker["total"] = t_tot.item()
+        tracker["chi_corr"] = tc_corr.item()
+        tracker["chi_total"] = tc_tot.item()
+        tracker["eng_corr"] = te_corr.item()
+        tracker["eng_total"] = te_tot.item()
+        tracker["eng_trunc_count"] = te_trunc_c.item()
+        tracker["eng_trunc_total"] = te_trunc_t.item()
+        step_idx = int(t_step.item())
+
+    avg_loss = tracker["loss"] / float(max(1, step_idx))
+    avg_chi_loss = tracker["chi_loss"] / float(max(1, step_idx))
+    avg_eng_loss = tracker["eng_loss"] / float(max(1, step_idx))
+    gloss_acc = (tracker["corr"] / max(1.0, tracker["total"])) * 100.0
+    chicago_acc = (tracker["chi_corr"] / max(1.0, tracker["chi_total"])) * 100.0
+    english_acc = (tracker["eng_corr"] / max(1.0, tracker["eng_total"])) * 100.0
+    english_trunc_rate = (
+        tracker["eng_trunc_count"] / max(1.0, tracker["eng_trunc_total"])
+    ) * 100.0
+
+    if is_master:
+        print(
+            f"[Validation Epoch {epoch}] GlossLoss: {avg_loss:.4f} | ChicagoLoss: {avg_chi_loss:.4f} | EnglishLoss: {avg_eng_loss:.4f} | GlossAcc: {gloss_acc:.2f}% | ChiAcc: {chicago_acc:.2f}% | EngAcc: {english_acc:.2f}% | EngTrunc: {english_trunc_rate:.2f}%",
+            flush=True,
+        )
+
+    return {
+        "loss": avg_loss,
+        "gloss_acc": gloss_acc,
+        "chicago_acc": chicago_acc,
+        "english_acc": english_acc,
+    }
 
 
 def _tpu_worker_fn(rank, args):
@@ -2708,54 +3695,54 @@ def _tpu_worker_fn(rank, args):
     is_master = (rank == 0) if _XLA_AVAILABLE else True
 
     data_dir = Path(args.data_dir)
-    label_to_idx = {}
-    for _mf in [
-        data_dir / "output_mapping.json",
-        data_dir / "vocabulary_mapping_global.json",
-        data_dir / "vocabulary_mapping_train.json",
-    ]:
-        if _mf.exists():
-            try:
-                with open(_mf, "r", encoding="utf-8") as f:
-                    raw_map = json.load(f)
-                if isinstance(raw_map, dict) and "label_to_idx" in raw_map:
-                    label_to_idx = raw_map["label_to_idx"]
-                elif isinstance(raw_map, dict):
-                    non_meta_keys = {
-                        k
-                        for k in raw_map
-                        if k
-                        not in (
-                            "task",
-                            "total_classes",
-                            "description",
-                            "name",
-                            "version",
-                            "split",
-                        )
-                    }
-                    if non_meta_keys:
-                        label_to_idx = {
-                            k: v for k, v in raw_map.items() if k in non_meta_keys
-                        }
-                if label_to_idx:
-                    break
-            except Exception as _e:
-                if is_master:
-                    print(
-                        f"[!] Warning: Failed to load mapping from '{_mf}': {_e}",
-                        flush=True,
+    vocab_path = data_dir / "vocabulary_mapping_train.json"
+    if vocab_path.exists():
+        try:
+            with open(vocab_path, "r", encoding="utf-8") as f:
+                raw_map = json.load(f)
+            if isinstance(raw_map, dict) and "label_to_idx" in raw_map:
+                label_to_idx = raw_map["label_to_idx"]
+            elif isinstance(raw_map, dict):
+                non_meta_keys = {
+                    k
+                    for k in raw_map
+                    if k
+                    not in (
+                        "task",
+                        "total_classes",
+                        "description",
+                        "name",
+                        "version",
+                        "split",
                     )
+                }
+                if non_meta_keys:
+                    label_to_idx = {
+                        k: v for k, v in raw_map.items() if k in non_meta_keys
+                    }
+        except Exception as _e:
+            if is_master:
+                print(
+                    f"[!] Warning: Failed to load mapping from '{vocab_path}': {_e}",
+                    flush=True,
+                )
 
     if not label_to_idx:
-        if is_master:
-            print(
-                "[!] Warning: No vocabulary mapping found. Using default mapping.",
-                flush=True,
-            )
-        label_to_idx = {str(i): i for i in range(6152)}
+        raise ValueError(
+            f"Failed to load vocabulary mapping from {vocab_path}. Will not hallucinate fictional classes."
+        )
 
     vocab = GlossVocabulary(label_to_idx=label_to_idx)
+
+    if _XLA_AVAILABLE:
+        import torch_xla.runtime as xr
+
+        world_size = xr.world_size()
+        assert rank < world_size
+        if is_master:
+            print(f"TPU world size: {world_size}", flush=True)
+    else:
+        world_size = 1
 
     train_loader = create_dataloader(
         dataset_dir=data_dir,
@@ -2763,9 +3750,22 @@ def _tpu_worker_fn(rank, args):
         batch_size=args.batch_size,
         max_len=args.max_len,
         worker_idx=rank if _XLA_AVAILABLE else 0,
-        num_workers=args.num_cores if _XLA_AVAILABLE else 1,
+        num_workers=world_size,
         num_dataloader_workers=args.num_dataloader_workers,
         shuffle=True,
+        augment=True,
+    )
+
+    val_loader = create_dataloader(
+        dataset_dir=data_dir,
+        split="val",
+        batch_size=args.batch_size,
+        max_len=args.max_len,
+        worker_idx=rank if _XLA_AVAILABLE else 0,
+        num_workers=world_size,
+        num_dataloader_workers=args.num_dataloader_workers,
+        shuffle=False,
+        augment=False,
     )
 
     class_weights_tensor = None
@@ -2773,23 +3773,85 @@ def _tpu_worker_fn(rank, args):
         raw_ds = getattr(train_loader, "dataset", None)
         c_counts = getattr(raw_ds, "class_counts", None) if raw_ds else None
         if c_counts:
+            # Aggregate counts globally across TPUs using RAW class space
+            raw_counts = torch.zeros(len(vocab), dtype=torch.float32, device=device)
+            for raw_idx, cnt in c_counts.items():
+                if raw_idx < len(vocab):
+                    raw_counts[raw_idx] = float(cnt)
+
+            if _XLA_AVAILABLE:
+                import torch_xla.core.xla_model as xm
+                raw_counts = xm.all_reduce(xm.REDUCE_SUM, raw_counts)
+
             w_vec = torch.ones(len(vocab), dtype=torch.float32, device=device)
-            max_c = max(c_counts.values()) if c_counts else 1
-            for r_idx, cnt in c_counts.items():
-                tok_id = r_idx + GlossVocabulary.OFFSET
-                if tok_id < len(vocab):
-                    w_vec[tok_id] = min(
-                        10.0, max(1.0, (float(max_c) / float(max(1, cnt))) ** 0.35)
-                    )
+            max_c = max(1.0, float(raw_counts.max().item()))
+
+            # Map raw counts into the offset model token space
+            for tok_id in range(GlossVocabulary.OFFSET, len(vocab)):
+                # The user's exact audit recommendation: cnt = local_counts[tok_id - GlossVocabulary.OFFSET]
+                cnt = raw_counts[tok_id - GlossVocabulary.OFFSET].item()
+                if cnt > 0:
+                    w_vec[tok_id] = min(10.0, max(1.0, (max_c / cnt) ** 0.35))
             class_weights_tensor = w_vec
-    except Exception:
-        pass
+            if is_master:
+                print(
+                    f"[INFO] Class weighting: ENABLED (calculated from raw dataset class_counts)",
+                    flush=True,
+                )
+
+            # Verifying dataset gloss_seq offset
+            assert (
+                tok_id >= GlossVocabulary.OFFSET
+            ), "class_counts contains raw IDs, we properly added the OFFSET."
+    except Exception as e:
+        if is_master:
+            print(f"[WARN] Class weighting: DISABLED due to exception: {e}", flush=True)
+        class_weights_tensor = torch.ones(
+            len(vocab), dtype=torch.float32, device=device
+        )
 
     asl_lex_csv = (
         Path(args.asl_lex_csv)
         if hasattr(args, "asl_lex_csv") and args.asl_lex_csv
         else (data_dir / "signdata.csv")
     )
+
+    eng_vsize = (
+        len(train_loader.dataset.english_vocab)
+        if hasattr(train_loader.dataset, "english_vocab")
+        else 20005
+    )
+
+    import hashlib
+
+    eng_hash = (
+        int(
+            hashlib.md5(
+                str(
+                    list(train_loader.dataset.english_vocab.token_to_id.items())
+                ).encode()
+            ).hexdigest()[:12],
+            16,
+        )
+        if hasattr(train_loader.dataset, "english_vocab")
+        else 0
+    )
+    if _XLA_AVAILABLE:
+        import torch_xla.core.xla_model as xm
+
+        local_hash = torch.tensor(eng_hash, dtype=torch.float64, device=device)
+        global_min = int(
+            xm.mesh_reduce("english_vocab_min", local_hash, lambda xs: min(xs)).item()
+        )
+        global_max = int(
+            xm.mesh_reduce("english_vocab_max", local_hash, lambda xs: max(xs)).item()
+        )
+
+        if global_min != global_max:
+            raise RuntimeError(
+                f"English vocabulary differs across TPU ranks: "
+                f"min_hash={global_min}, max_hash={global_max}"
+            )
 
     model = ASLFoundationModel(
         vocab_size=len(vocab),
@@ -2800,21 +3862,38 @@ def _tpu_worker_fn(rank, args):
         num_enc_layers=args.num_layers,
         num_dec_layers=args.num_layers,
         dropout=args.dropout,
+        max_enc_len=args.max_len,
+        english_vocab_size=eng_vsize,
         label_to_idx=label_to_idx,
         csv_path=asl_lex_csv if asl_lex_csv.exists() else None,
     ).to(device)
 
+    if _XLA_AVAILABLE:
+        xm.broadcast_master_param(model)
+
     if getattr(args, "compile", False) and hasattr(torch, "compile"):
         if is_master:
-            print("[*] JIT Compiling model with PyTorch Inductor (torch.compile)...", flush=True)
+            print(
+                "[*] JIT Compiling model with PyTorch Inductor (torch.compile)...",
+                flush=True,
+            )
         try:
             model = torch.compile(model)
         except Exception as _e:
             if is_master:
                 print(f"[!] Warning: torch.compile fallback: {_e}", flush=True)
 
-    loss_wrapper = HomoscedasticLossWrapper(num_losses=9).to(device)
+    loss_wrapper = HomoscedasticLossWrapper().to(device)
+    if _XLA_AVAILABLE:
+        xm.broadcast_master_param(loss_wrapper)
+
     supcon_fn = SupervisedContrastiveLoss().to(device)
+
+    global_min_batches = len(train_loader)
+    if _XLA_AVAILABLE:
+        global_min_batches = int(
+            xm.mesh_reduce("global_min_batches", len(train_loader), lambda x: min(x))
+        )
 
     optimizer = torch.optim.AdamW(
         _get_optimizer_groups(model, loss_wrapper, args.weight_decay),
@@ -2825,7 +3904,7 @@ def _tpu_worker_fn(rank, args):
         max_lr=args.lr,
         epochs=args.epochs,
         steps_per_epoch=max(
-            1, len(train_loader) * (args.num_cores if _XLA_AVAILABLE else 1)
+            1, math.ceil(global_min_batches / max(1, args.accum_steps))
         ),
         pct_start=0.1,
         div_factor=10.0,
@@ -2835,16 +3914,53 @@ def _tpu_worker_fn(rank, args):
     start_epoch = 1
     if hasattr(args, "resume") and args.resume and Path(args.resume).exists():
         ckpt = torch.load(args.resume, map_location="cpu")
-        model.load_state_dict(ckpt["model_state_dict"], strict=False)
+
+        missing, unexpected = model.load_state_dict(
+            ckpt["model_state_dict"], strict=False
+        )
+        if missing or unexpected:
+            raise RuntimeError(
+                f"Checkpoint mismatch. Missing: {missing}, Unexpected: {unexpected}"
+            )
+
         if "loss_wrapper_state_dict" in ckpt:
-            try:
-                loss_wrapper.load_state_dict(
-                    ckpt["loss_wrapper_state_dict"], strict=False
+            missing_lw, unexpected_lw = loss_wrapper.load_state_dict(
+                ckpt["loss_wrapper_state_dict"], strict=False
+            )
+            if missing_lw or unexpected_lw:
+                raise RuntimeError(
+                    f"Loss wrapper mismatch. Missing: {missing_lw}, Unexpected: {unexpected_lw}"
                 )
-            except Exception:
-                pass
+
         if "optimizer_state_dict" in ckpt:
-            optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+            try:
+                optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+            except Exception as e:
+                raise RuntimeError(f"Failed to load optimizer state: {e}")
+
+        if "scheduler_state_dict" in ckpt and ckpt["scheduler_state_dict"] is not None:
+            try:
+                scheduler.load_state_dict(ckpt["scheduler_state_dict"])
+            except Exception as e:
+                raise RuntimeError(f"Failed to load scheduler state: {e}")
+
+        if (
+            "scaler_state_dict" in ckpt
+            and ckpt["scaler_state_dict"] is not None
+            and "scaler" in locals()
+            and scaler is not None
+        ):
+            scaler.load_state_dict(ckpt["scaler_state_dict"])
+
+        if "rng_state_torch" in ckpt:
+            torch.set_rng_state(ckpt["rng_state_torch"])
+        if "rng_state_numpy" in ckpt:
+            np.random.set_state(ckpt["rng_state_numpy"])
+        if "rng_state_random" in ckpt:
+            import random
+
+            random.setstate(ckpt["rng_state_random"])
+
         start_epoch = ckpt.get("epoch", 0) + 1
 
     save_dir = Path(args.save_dir)
@@ -2855,20 +3971,43 @@ def _tpu_worker_fn(rank, args):
             f"       STARTING TPU MULTI-TASK FOUNDATION MODEL TRAINING ({args.epochs} EPOCHS)",
             flush=True,
         )
+        total_params = sum(p.numel() for p in model.parameters())
+        print(
+            f"       Model: {args.num_layers} layers | d_model={args.d_model} | {total_params / 1e6:.1f}M params",
+            flush=True,
+        )
         print("=" * 70, flush=True)
 
-    ema = ModelEMA(model) if is_master else None
+    ema = ModelEMA(model)
+    if "ema_state_dict" in locals().get("ckpt", {}):
+        if ckpt["ema_state_dict"] is not None:
+            for k, v in ckpt["ema_state_dict"].items():
+                if k in ema.shadow:
+                    ema.shadow[k].copy_(v.to(ema.shadow[k].device))
+            if is_master:
+                print("[+] Restored EMA state from checkpoint", flush=True)
+
+    scaler = None
+    if args.precision == "float16" and "cuda" in str(device).lower():
+        scaler = torch.amp.GradScaler("cuda")
 
     try:
         for epoch in range(start_epoch, args.epochs + 1):
-            
+
+            if hasattr(train_loader.dataset, "set_epoch"):
+                train_loader.dataset.set_epoch(epoch)
+            if hasattr(train_loader, "sampler") and hasattr(
+                train_loader.sampler, "set_epoch"
+            ):
+                train_loader.sampler.set_epoch(epoch)
+
             # --- ADD THIS TO RAMP UP NOISE CURRICULUM ---
             if hasattr(train_loader.dataset, "set_noise_level"):
                 # Ramps noise from 0.0 to 1.0 linearly over the epochs
                 train_loader.dataset.set_noise_level(epoch / max(1, args.epochs))
             # --------------------------------------------
-            
-            train_loss, train_acc = train_epoch_tpu(
+
+            train_metrics = train_epoch_tpu(
                 model=model,
                 loader=train_loader,
                 optimizer=optimizer,
@@ -2877,6 +4016,7 @@ def _tpu_worker_fn(rank, args):
                 ema=ema,
                 supcon_fn=supcon_fn,
                 device=device,
+                scaler=scaler,
                 epoch=epoch,
                 total_epochs=args.epochs,
                 prec_dtype=(
@@ -2892,20 +4032,73 @@ def _tpu_worker_fn(rank, args):
                 accum_steps=args.accum_steps,
                 class_weights=class_weights_tensor,
             )
-            ckpt_path = save_dir / f"asl_model_epoch_{epoch}.pt"
+
+            # --- VALIDATION LOOP ---
             raw_m = model.module if hasattr(model, "module") else model
             if ema is not None:
                 ema.apply_shadow(raw_m)
-                
-            cpu_state = {
-                "epoch": epoch,
-                "model_state_dict": raw_m.state_dict(),
-                "loss_wrapper_state_dict": loss_wrapper.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-            }
-            
+
+            val_metrics = validate_epoch_tpu(
+                model=raw_m,
+                loader=val_loader,
+                loss_wrapper=loss_wrapper,
+                device=device,
+                epoch=epoch,
+                total_epochs=args.epochs,
+                prec_dtype=(
+                    torch.float16
+                    if args.precision == "float16"
+                    else (
+                        torch.bfloat16
+                        if args.precision == "bfloat16"
+                        else torch.float32
+                    )
+                ),
+                is_master=is_master,
+                class_weights=class_weights_tensor,
+            )
+
+            if is_master:
+                print(
+                    f"[Validation Epoch {epoch}] SeqLoss: {val_metrics['loss']:.4f} | TokenAcc: {val_metrics['gloss_acc']:.2f}%",
+                    flush=True,
+                )
+
             if ema is not None:
                 ema.restore(raw_m)
+                if _XLA_AVAILABLE:
+                    import torch_xla.core.xla_model as xm
+
+                    xm.mark_step()
+
+            ckpt_path = save_dir / f"asl_model_epoch_{epoch}.pt"
+            import random
+
+            cpu_state = None
+            if is_master:
+                cpu_state = {
+                    "epoch": epoch,
+                    "model_state_dict": raw_m.state_dict(),
+                    "ema_state_dict": (
+                        {k: v.cpu() for k, v in ema.shadow.items()}
+                        if ema is not None
+                        else None
+                    ),
+                    "loss_wrapper_state_dict": loss_wrapper.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "scheduler_state_dict": (
+                        scheduler.state_dict() if scheduler is not None else None
+                    ),
+                    "scaler_state_dict": (
+                        scaler.state_dict()
+                        if "scaler" in locals() and scaler is not None
+                        else None
+                    ),
+                    "rng_state_torch": torch.get_rng_state(),
+                    "rng_state_numpy": np.random.get_state(),
+                    "rng_state_random": random.getstate(),
+                }
+
             if _XLA_AVAILABLE:
                 import torch_xla.core.xla_model as xm
 
@@ -2913,6 +4106,14 @@ def _tpu_worker_fn(rank, args):
             else:
                 if is_master:
                     torch.save(cpu_state, str(ckpt_path))
+
+            # Explicit garbage collection of the massive optimizer state dict
+            if cpu_state is not None:
+                del cpu_state
+            import gc
+
+            gc.collect()
+
             if is_master:
                 print(f"[+] Saved checkpoint to {ckpt_path}", flush=True)
                 try:
@@ -2927,11 +4128,7 @@ def _tpu_worker_fn(rank, args):
                                 old_c.unlink(missing_ok=True)
                 except Exception:
                     pass
-            if scheduler is not None:
-                try:
-                    scheduler.step()
-                except Exception:
-                    pass
+
     except Exception as e:
         import traceback, sys
 
@@ -2948,7 +4145,7 @@ def main():
     parser.add_argument(
         "--data-dir",
         type=str,
-        default="/tmp/asl_dataset/results/asl_preprocessed_phase1",
+        default=r"E:\datasets\asl_dataset\asl_preprocessed_phase1",
     )
     parser.add_argument(
         "--precision",
@@ -2964,17 +4161,29 @@ def main():
     parser.add_argument("--d-model", type=int, default=128)
     parser.add_argument("--nhead", type=int, default=4)
     parser.add_argument("--num-layers", type=int, default=3)
-    parser.add_argument("--num-cores", type=int, default=4)
+    parser.add_argument("--local_rank", type=int, default=0)
     parser.add_argument("--dropout", type=float, default=0.1)
-    parser.add_argument("--num-dataloader-workers", type=int, default=8)
+    parser.add_argument("--num-dataloader-workers", type=int, default=2)
     parser.add_argument("--accum-steps", type=int, default=1)
-    parser.add_argument("--compile", action="store_true", help="Enable PyTorch 2.0 torch.compile JIT acceleration")
+    parser.add_argument(
+        "--compile",
+        action="store_true",
+        help="Enable PyTorch 2.0 torch.compile JIT acceleration",
+    )
     parser.add_argument("--save-dir", type=str, default="/tmp/checkpoints")
     parser.add_argument("--resume", type=str, default="")
     parser.add_argument(
         "--asl-lex-csv", type=str, default="/home/binhhanh409/signdata.csv"
     )
     args = parser.parse_args()
+
+    if args.precision == "bfloat16":
+        os.environ["XLA_USE_BF16"] = "1"
+    elif args.precision == "float16":
+        os.environ["XLA_USE_F16"] = "1"
+    else:
+        os.environ.pop("XLA_USE_BF16", None)
+        os.environ.pop("XLA_USE_F16", None)
 
     if _XLA_AVAILABLE:
         import torch_xla.distributed.xla_multiprocessing as xmp

@@ -629,12 +629,12 @@ def export_and_benchmark(
     # Optional: torch.compile with reduce-overhead mode for Inductor CPU kernel fusion
     # Fuses LayerNorm+Linear+GELU chains and pre-allocates all intermediate tensors.
     # First call is slow (JIT compilation), subsequent calls are 10-20% faster.
-    try:
-        import torch._dynamo
-        model = torch.compile(model, mode="reduce-overhead", backend="inductor")
-        print("[+] torch.compile(reduce-overhead) enabled — Inductor CPU kernel fusion active.")
-    except Exception as e_compile:
-        print(f"[*] torch.compile skipped (PyTorch < 2.0 or unsupported backend): {e_compile}")
+    # try:
+    #     import torch._dynamo as dynamo
+    #     model = torch.compile(model, mode="reduce-overhead", backend="inductor")
+    #     print("[+] torch.compile(reduce-overhead) enabled — Inductor CPU kernel fusion active.")
+    # except Exception as e_compile:
+    #     print(f"[*] torch.compile skipped (PyTorch < 2.0 or unsupported backend): {e_compile}")
 
     # Create Synthetic Input Batch for CPU (Batch Size 1 for Real-Time Live Streaming)
     dummy_input = torch.randn(1, seq_len, 60, 9, dtype=torch.float32)

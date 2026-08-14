@@ -1,0 +1,23 @@
+# =====================================================================================
+# KAGGLE AUTOMATION SCRIPT
+# Copy the contents below into a single Kaggle Notebook cell and run it.
+# It handles moving the files, verifying the GPUs, and starting the training.
+# =====================================================================================
+
+# 1. Clone the repository directly into Kaggle's working directory
+!git clone https://github.com/Codering2012/netmaui-singlanguage.git
+%cd netmaui-singlanguage/"Kaggle script"/train
+
+# 3. (Optional) Verify the dual T4 GPUs are visible to PyTorch
+import torch
+print("CUDA Available:", torch.cuda.is_available())
+print("Device Count:", torch.cuda.device_count())
+
+# 4. Start the training! 
+# (Make sure to replace the --data-dir with your actual preprocessed dataset path)
+!python run_kaggle_2x_t4.py \
+    --data-dir "/kaggle/input/asl-preprocessed-phase1" \
+    --epochs 50 \
+    --batch-size 128 \
+    --lr 0.001 \
+    --save-dir "/kaggle/working/checkpoints"
