@@ -5381,7 +5381,7 @@ def _tpu_worker_fn(rank, args):
 
 def inverted_gloss_pretrain_loop(args, device, is_master, model_name="Qwen/Qwen2.5-0.5B"):
     import torch_xla.core.xla_model as xm
-    import torch_xla.distributed.parallel_loader as pl, model_name="Qwen/Qwen2.5-0.5B"):
+    import torch_xla.distributed.parallel_loader as pl
     from dataset import ASLGPC12Dataset, phase1_collate_fn, EnglishVocabulary, GlossVocabulary
     
     if is_master:
@@ -5474,7 +5474,7 @@ def inverted_gloss_pretrain_loop(args, device, is_master, model_name="Qwen/Qwen2
 
 def pseudo_gloss_gen_loop(args, device, is_master, model_name="Qwen/Qwen2.5-0.5B"):
     import torch_xla.core.xla_model as xm
-    import torch_xla.distributed.parallel_loader as pl, model_name="Qwen/Qwen2.5-0.5B"):
+    import torch_xla.distributed.parallel_loader as pl
     from dataset import ASLStreamedDataset, EnglishVocabulary, GlossVocabulary
     import shutil
     
@@ -5615,7 +5615,7 @@ def pseudo_gloss_gen_loop(args, device, is_master, model_name="Qwen/Qwen2.5-0.5B
 
 def text_pretrain_loop(args, device, is_master, model_name="Qwen/Qwen2.5-0.5B"):
     import torch_xla.core.xla_model as xm
-    import torch_xla.distributed.parallel_loader as pl, model_name="Qwen/Qwen2.5-0.5B"):
+    import torch_xla.distributed.parallel_loader as pl
     from dataset import Phase1MixedIterable, phase1_collate_fn, EnglishVocabulary, GlossVocabulary
     
     if is_master:
