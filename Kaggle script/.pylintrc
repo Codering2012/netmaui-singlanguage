@@ -1,0 +1,14 @@
+[MASTER]
+ignore=CVS
+jobs=1
+
+[MESSAGES CONTROL]
+disable=
+    E0401, # import-error
+    F0401  # import-error
+
+[REPORTS]
+output-format=text
+
+[FORMAT]
+max-line-length=120
