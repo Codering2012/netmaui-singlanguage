@@ -3713,7 +3713,7 @@ def train_epoch_tpu(
                 chicago_nt_t,
                 english_nc_t,
                 english_nt_t,
-                loss_seq.detach(),
+                loss_seq.detach() if 'loss_seq' in locals() else torch.tensor(0.0, device=device),
                 loss_aux.detach(),
                 loss_ctc.detach(),
                 loss_dense_sem.detach(),
@@ -3936,7 +3936,7 @@ def train_epoch_tpu(
                     c_nt_t.detach(),
                     e_nc_t.detach(),
                     e_nt_t.detach(),
-                    loss_lpc.detach(),
+                    loss_lpc.detach() if 'loss_lpc' in locals() else torch.tensor(0.0, device=device),
                 ]
             )
 
@@ -5382,7 +5382,7 @@ def _tpu_worker_fn(rank, args):
 def inverted_gloss_pretrain_loop(args, device, is_master, model_name="Qwen/Qwen2.5-0.5B"):
     import torch_xla.core.xla_model as xm
     import torch_xla.distributed.parallel_loader as pl
-    from dataset import ASLGPC12Dataset, phase1_collate_fn, EnglishVocabulary, GlossVocabulary
+    from dataset import ASLGPC12Dataset, phase1_collate_fn, phase2_collate_fn, EnglishVocabulary, GlossVocabulary
     
     if is_master:
         print(f"Starting Phase 2 Inverted Gloss Training (English -> Gloss) for {args.epochs} epochs...")
@@ -5458,6 +5458,7 @@ def inverted_gloss_pretrain_loop(args, device, is_master, model_name="Qwen/Qwen2
             logits = out[0] if isinstance(out, tuple) else out
             
             valid_mask = (tgt_out != GlossVocabulary.PAD_ID) & (tgt_out != GlossVocabulary.EOS_ID)
+            valid_mask = (tgt_out != GlossVocabulary.PAD_ID) & (tgt_out != GlossVocabulary.EOS_ID)
             loss = compute_seq_loss(logits, tgt_out, valid_mask, label_smoothing=0.1)
             
             optimizer.zero_grad()
@@ -5475,7 +5476,7 @@ def inverted_gloss_pretrain_loop(args, device, is_master, model_name="Qwen/Qwen2
 def pseudo_gloss_gen_loop(args, device, is_master, model_name="Qwen/Qwen2.5-0.5B"):
     import torch_xla.core.xla_model as xm
     import torch_xla.distributed.parallel_loader as pl
-    from dataset import ASLStreamedDataset, EnglishVocabulary, GlossVocabulary
+    from dataset import ASLStreamedDataset, EnglishVocabulary, GlossVocabulary, phase2_collate_fn
     import shutil
     
     if is_master:
@@ -5616,7 +5617,7 @@ def pseudo_gloss_gen_loop(args, device, is_master, model_name="Qwen/Qwen2.5-0.5B
 def text_pretrain_loop(args, device, is_master, model_name="Qwen/Qwen2.5-0.5B"):
     import torch_xla.core.xla_model as xm
     import torch_xla.distributed.parallel_loader as pl
-    from dataset import Phase1MixedIterable, phase1_collate_fn, EnglishVocabulary, GlossVocabulary
+    from dataset import Phase1MixedIterable, phase1_collate_fn, phase2_collate_fn, EnglishVocabulary, GlossVocabulary
     
     if is_master:
         print(f"Starting Phase 1 Text Pre-training for {args.epochs} epochs...")
@@ -5679,6 +5680,7 @@ def text_pretrain_loop(args, device, is_master, model_name="Qwen/Qwen2.5-0.5B"):
             logits = out[0] if isinstance(out, tuple) else out
             
             valid_mask = (tgt_out != 151643) & (tgt_out != 151643)
+            valid_mask = (tgt_out != GlossVocabulary.PAD_ID) & (tgt_out != GlossVocabulary.EOS_ID)
             loss = compute_seq_loss(logits, tgt_out, valid_mask, label_smoothing=0.1)
             
             optimizer.zero_grad()
