@@ -5601,7 +5601,7 @@ def pseudo_gloss_gen_loop(args, device, is_master, model_name="Qwen/Qwen2.5-0.5B
                     seq = gen_ids[j]
                     if GlossVocabulary.EOS_ID in seq:
                         seq = seq[:seq.index(GlossVocabulary.EOS_ID) + 1]
-                    rec["gloss_seq"] = [max(0, i - GlossVocabulary.OFFSET) for i in seq]
+                    rec["gloss_seq"] = [(i - 4) if i >= 4 else i for i in seq]
                     rec["has_valid_gloss"] = True
                     new_items.append(rec)
                     
@@ -5663,7 +5663,7 @@ def text_pretrain_loop(args, device, is_master, model_name="Qwen/Qwen2.5-0.5B"):
             input_ids = batch["input_ids"]
             target_ids = batch["target_ids"]
             
-            mask = (input_ids == 0) # PAD
+            mask = (input_ids == 151643) # PAD
             memory = model.english_decoder.token_emb(input_ids)
             
             tgt_in = target_ids[:, :-1]

@@ -1997,7 +1997,7 @@ def phase1_collate_fn(batch):
 
     bsz = len(batch)
     input_padded = torch.full((bsz, max_in), 0, dtype=torch.long)
-    target_padded = torch.full((bsz, max_tgt), 151643, dtype=torch.long) # Qwen PAD
+    target_padded = torch.full((bsz, max_tgt), 0, dtype=torch.long) # Gloss PAD
     is_dae_mask = torch.zeros(bsz, dtype=torch.bool)
     
     for i, x in enumerate(batch):
