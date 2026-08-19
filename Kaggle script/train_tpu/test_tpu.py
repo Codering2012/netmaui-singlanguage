@@ -5,7 +5,7 @@ import sys
 sys.path.insert(0, 'c:\\Users\\Windows 10 21H1\\source\\repos\\Kaggle script\\train')
 
 try:
-    from train_all_in_one_tpu1 import ASLFoundationModel
+    from train_all_in_one_tpu import ASLFoundationModel
     print("[+] All modules imported successfully.")
 except Exception as e:
     print(f"[-] Import failed: {e}")
