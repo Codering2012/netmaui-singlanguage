@@ -39,7 +39,7 @@ public partial class HomeViewModelTests
         // Arrange
         var mockApiService = new Mock<IApiService>();
         mockApiService.Setup(x => x.GetUserStatsAsync())
-            .ReturnsAsync((ApiResponse<UserStatsDto>?)null);
+            .ReturnsAsync((UserStatsDto?)null);
 
         // Act
         var viewModel = new HomeViewModel(mockApiService.Object);
@@ -59,7 +59,7 @@ public partial class HomeViewModelTests
         // Arrange
         var mockApiService = new Mock<IApiService>();
         mockApiService.Setup(x => x.GetUserStatsAsync())
-            .ReturnsAsync((ApiResponse<UserStatsDto>?)null);
+            .ReturnsAsync((UserStatsDto?)null);
 
         var currentHour = DateTime.Now.Hour;
 
@@ -84,7 +84,7 @@ public partial class HomeViewModelTests
         // Arrange
         var mockApiService = new Mock<IApiService>();
         mockApiService.Setup(x => x.GetUserStatsAsync())
-            .ReturnsAsync((ApiResponse<UserStatsDto>?)null);
+            .ReturnsAsync((UserStatsDto?)null);
 
         var currentHour = DateTime.Now.Hour;
 
@@ -109,7 +109,7 @@ public partial class HomeViewModelTests
         // Arrange
         var mockApiService = new Mock<IApiService>();
         mockApiService.Setup(x => x.GetUserStatsAsync())
-            .ReturnsAsync((ApiResponse<UserStatsDto>?)null);
+            .ReturnsAsync((UserStatsDto?)null);
 
         var currentHour = DateTime.Now.Hour;
 
@@ -134,7 +134,7 @@ public partial class HomeViewModelTests
         // Arrange
         var mockApiService = new Mock<IApiService>();
         mockApiService.Setup(x => x.GetUserStatsAsync())
-            .ReturnsAsync((ApiResponse<UserStatsDto>?)null);
+            .ReturnsAsync((UserStatsDto?)null);
 
         // Act
         var viewModel = new HomeViewModel(mockApiService.Object);
@@ -157,7 +157,7 @@ public partial class HomeViewModelTests
         // Arrange
         var mockApiService = new Mock<IApiService>();
         mockApiService.Setup(x => x.GetUserStatsAsync())
-            .ReturnsAsync((ApiResponse<UserStatsDto>?)null);
+            .ReturnsAsync((UserStatsDto?)null);
 
         // Act
         var viewModel = new HomeViewModel(mockApiService.Object);
@@ -179,7 +179,7 @@ public partial class HomeViewModelTests
         // Arrange
         var mockApiService = new Mock<IApiService>();
         mockApiService.Setup(x => x.GetUserStatsAsync())
-            .ReturnsAsync((ApiResponse<UserStatsDto>?)null);
+            .ReturnsAsync((UserStatsDto?)null);
 
         // Act
         var viewModel = new HomeViewModel(mockApiService.Object);
@@ -227,7 +227,7 @@ public partial class HomeViewModelTests
         // Arrange
         var mockApiService = new Mock<IApiService>();
         mockApiService.Setup(x => x.GetUserStatsAsync())
-            .ReturnsAsync((ApiResponse<UserStatsDto>?)null);
+            .ReturnsAsync((UserStatsDto?)null);
 
         // Act
         var viewModel = new HomeViewModel(mockApiService.Object);
@@ -273,7 +273,7 @@ public partial class HomeViewModelTests
         // Arrange
         var mockApiService = new Mock<IApiService>();
         mockApiService.Setup(x => x.GetUserStatsAsync())
-            .ReturnsAsync((ApiResponse<UserStatsDto>?)null);
+            .ReturnsAsync((UserStatsDto?)null);
 
         // Act
         var viewModel = new HomeViewModel(mockApiService.Object);

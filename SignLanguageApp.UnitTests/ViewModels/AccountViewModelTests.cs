@@ -468,7 +468,7 @@ public partial class AccountViewModelTests
         // Manually set IsLoading to true using reflection-free approach
         // First call will set IsLoading, we'll verify second call doesn't execute
         mockApiService.Setup(x => x.GetUserStatsAsync())
-            .ReturnsAsync((ApiResponse<UserStatsDto>?)null);
+            .ReturnsAsync((UserStatsDto?)null);
         mockApiService.Setup(x => x.GetLessonsAsync())
             .ReturnsAsync((ApiResponse<IEnumerable<LessonDto>>?)null);
 
@@ -502,15 +502,11 @@ public partial class AccountViewModelTests
     {
         // Arrange
         var mockApiService = new Mock<IApiService>();
-        var statsResponse = new ApiResponse<UserStatsDto>
-        {
-            Success = true,
-            Data = new UserStatsDto
+        var statsResponse = new UserStatsDto
             {
                 CurrentStreak = streak,
                 GlobalRanking = ranking
-            }
-        };
+            };
 
         mockApiService.Setup(x => x.GetUserStatsAsync())
             .ReturnsAsync(statsResponse);
@@ -539,7 +535,7 @@ public partial class AccountViewModelTests
         // Arrange
         var mockApiService = new Mock<IApiService>();
         mockApiService.Setup(x => x.GetUserStatsAsync())
-            .ReturnsAsync((ApiResponse<UserStatsDto>?)null);
+            .ReturnsAsync((UserStatsDto?)null);
         mockApiService.Setup(x => x.GetLessonsAsync())
             .ReturnsAsync((ApiResponse<IEnumerable<LessonDto>>?)null);
 
@@ -615,7 +611,7 @@ public partial class AccountViewModelTests
         };
 
         mockApiService.Setup(x => x.GetUserStatsAsync())
-            .ReturnsAsync((ApiResponse<UserStatsDto>?)null);
+            .ReturnsAsync((UserStatsDto?)null);
         mockApiService.Setup(x => x.GetLessonsAsync())
             .ReturnsAsync(lessonsResponse);
 
@@ -640,7 +636,7 @@ public partial class AccountViewModelTests
         // Arrange
         var mockApiService = new Mock<IApiService>();
         mockApiService.Setup(x => x.GetUserStatsAsync())
-            .ReturnsAsync((ApiResponse<UserStatsDto>?)null);
+            .ReturnsAsync((UserStatsDto?)null);
         mockApiService.Setup(x => x.GetLessonsAsync())
             .ReturnsAsync((ApiResponse<IEnumerable<LessonDto>>?)null);
 
@@ -672,7 +668,7 @@ public partial class AccountViewModelTests
         };
 
         mockApiService.Setup(x => x.GetUserStatsAsync())
-            .ReturnsAsync((ApiResponse<UserStatsDto>?)null);
+            .ReturnsAsync((UserStatsDto?)null);
         mockApiService.Setup(x => x.GetLessonsAsync())
             .ReturnsAsync(lessonsResponse);
 
@@ -697,16 +693,12 @@ public partial class AccountViewModelTests
     {
         // Arrange
         var mockApiService = new Mock<IApiService>();
-        var statsResponse = new ApiResponse<UserStatsDto>
-        {
-            Success = true,
-            Data = new UserStatsDto
+        var statsResponse = new UserStatsDto
             {
                 CurrentStreak = 42,
                 GlobalRanking = 123,
                 TotalXP = 1000
-            }
-        };
+            };
 
         var lessons = new List<LessonDto>
         {
@@ -771,15 +763,11 @@ public partial class AccountViewModelTests
     {
         // Arrange
         var mockApiService = new Mock<IApiService>();
-        var statsResponse = new ApiResponse<UserStatsDto>
-        {
-            Success = true,
-            Data = new UserStatsDto
+        var statsResponse = new UserStatsDto
             {
                 CurrentStreak = 10,
                 GlobalRanking = 50
-            }
-        };
+            };
 
         mockApiService.Setup(x => x.GetUserStatsAsync())
             .ReturnsAsync(statsResponse);
@@ -839,7 +827,7 @@ public partial class AccountViewModelTests
         var callOrder = new List<string>();
 
         mockApiService.Setup(x => x.GetUserStatsAsync())
-            .ReturnsAsync((ApiResponse<UserStatsDto>?)null)
+            .ReturnsAsync((UserStatsDto?)null)
             .Callback(() => callOrder.Add("GetUserStatsAsync"));
 
         mockApiService.Setup(x => x.GetLessonsAsync())
@@ -869,7 +857,7 @@ public partial class AccountViewModelTests
     {
         // Arrange
         var mockApiService = new Mock<IApiService>();
-        var tcs = new TaskCompletionSource<ApiResponse<UserStatsDto>?>();
+        var tcs = new TaskCompletionSource<UserStatsDto?>();
 
         mockApiService.Setup(x => x.GetUserStatsAsync())
             .Returns(tcs.Task);
@@ -905,15 +893,11 @@ public partial class AccountViewModelTests
     {
         // Arrange
         var mockApiService = new Mock<IApiService>();
-        var statsResponse = new ApiResponse<UserStatsDto>
-        {
-            Success = true,
-            Data = new UserStatsDto
+        var statsResponse = new UserStatsDto
             {
                 CurrentStreak = streak,
                 GlobalRanking = ranking
-            }
-        };
+            };
 
         mockApiService.Setup(x => x.GetUserStatsAsync())
             .ReturnsAsync(statsResponse);

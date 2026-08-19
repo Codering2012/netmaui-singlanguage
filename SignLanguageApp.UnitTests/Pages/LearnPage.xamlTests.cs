@@ -34,7 +34,7 @@ namespace SignLanguageApp.Pages.UnitTests
 
             // Assert
             Assert.IsNotNull(page);
-            Assert.AreSame(viewModel, page.BindingContext);
+            Assert.AreSame(viewModel, new Moq.Mock<SignLanguageApp.Services.IMediaDownloadAndCacheService>().Object, page.BindingContext);
         }
 
     }
