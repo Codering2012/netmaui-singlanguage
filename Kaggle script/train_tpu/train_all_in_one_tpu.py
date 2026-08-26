@@ -4483,7 +4483,7 @@ def train_epoch_tpu(
         total_batches = 2500
     min_batches = total_batches
     if is_xla:
-        bpe = 1 if getattr(args, "max_len", 256) >= 128 else getattr(args, "batches_per_execution", 1)
+        bpe = getattr(args, "batches_per_execution", 16)
         para_loader = pl.MpDeviceLoader(loader, device, batches_per_execution=bpe)
         min_batches = int(
             xm.mesh_reduce(
@@ -5473,7 +5473,7 @@ def validate_epoch_tpu(
         if args is not None and getattr(args, "val_check_steps", 0) > 0:
             min_val_batches = min(min_val_batches, args.val_check_steps)
 
-        bpe = 1 if (args is not None and getattr(args, "max_len", 256) >= 128) else (getattr(args, "batches_per_execution", 1) if args is not None else 1)
+        bpe = getattr(args, "batches_per_execution", 16) if args is not None else 16
         para_loader = pl.MpDeviceLoader(sliced_loader, device, batches_per_execution=bpe)
     else:
         para_loader = loader
@@ -7644,8 +7644,7 @@ def text_pretrain_loop(args, device, is_master, per_core_batch=None, accum_steps
     )
 
     if IS_TPU:
-        # Transformer Decoders with large sequences (max_len >= 128) must use bpe=1 to prevent massive XLA graph unrolling
-        bpe = 1 if getattr(args, "max_len", 256) >= 128 else getattr(args, "batches_per_execution", 1)
+        bpe = getattr(args, "batches_per_execution", 16)
         loader = pl.MpDeviceLoader(dataloader, device, batches_per_execution=bpe)
     else:
         loader = dataloader
