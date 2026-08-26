@@ -7705,16 +7705,13 @@ def text_pretrain_loop(args, device, is_master, per_core_batch=None, accum_steps
                     logits = phase1_net(safe_input_ids_gloss, safe_input_ids_eng, aslg_mask_b, tgt_in, mask)
 
                     valid_mask = (tgt_out != eng_vocab.PAD_ID)
-                    loss_seq, loss_eos = compute_seq_and_eos_loss(
-                        logits,
-                        tgt_out,
-                        valid_mask,
-                        valid_mask,
+                    loss = F.cross_entropy(
+                        logits.reshape(-1, logits.shape[-1]),
+                        tgt_out.reshape(-1),
+                        ignore_index=eng_vocab.PAD_ID,
                         label_smoothing=0.1,
-                        pad_id=eng_vocab.PAD_ID,
-                        eos_id=eng_vocab.EOS_ID,
                     )
-                    loss = loss_seq + loss_eos
+                    loss_seq = loss
 
                 if scaler.is_enabled():
                     scaler.scale((loss * args.bwd_weight) / effective_accum).backward()
