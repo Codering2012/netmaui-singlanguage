@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SignSpeak Avatar</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: transparent; }
+        canvas { width: 100%; height: 100%; display: block; }
+        #controls { position: absolute; bottom: 10px; left: 10px; display: flex; gap: 5px; }
+        button { padding: 5px 10px; border-radius: 5px; border: none; background: #6200EE; color: white; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <button onclick="playGesture('wave')">Wave</button>
+        <button onclick="playGesture('point')">Point</button>
+        <button onclick="resetPose()">Reset</button>
+    </div>
+    <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.152.2/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.152.2/examples/jsm/"
+        }
+    }
+    </script>
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        let scene, camera, renderer, model, skeleton, mixer, controls;
+        const clock = new THREE.Clock();
+
+        init();
+        animate();
+
+        function init() {
+            scene = new THREE.Scene();
+            // scene.background = new THREE.Color(0xf0f0f0);
+
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.set(0, 1.4, 2);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.body.appendChild(renderer.domElement);
+
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+            scene.add(ambientLight);
+
+            const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+            dirLight.position.set(5, 5, 5);
+            scene.add(dirLight);
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.target.set(0, 1.3, 0);
+            controls.update();
+
+            const loader = new GLTFLoader();
+            // Using a generic rigged human model from a public CDN
+            const modelUrl = 'https://models.readyplayer.me/646270d4f552f40445d4f3b7.glb'; 
+            
+            loader.load(modelUrl, (gltf) => {
+                model = gltf.scene;
+                scene.add(model);
+                
+                skeleton = new THREE.SkeletonHelper(model);
+                skeleton.visible = false;
+                scene.add(skeleton);
+
+                mixer = new THREE.AnimationMixer(model);
+                
+                console.log('Model loaded');
+            }, undefined, (error) => {
+                console.error('An error happened while loading the model:', error);
+            });
+
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+            if (mixer) mixer.update(delta);
+            renderer.render(scene, camera);
+        }
+
+        // Exposed functions for the app to call
+        window.playGesture = (gesture) => {
+            console.log('Playing gesture:', gesture);
+            if (!model) return;
+
+            // In a real implementation, we would have a library of bone rotations.
+            // For now, we'll just manipulate a few bones manually as a demo.
+            const rightShoulder = model.getObjectByName('RightShoulder');
+            const rightArm = model.getObjectByName('RightArm');
+            const rightHand = model.getObjectByName('RightHand');
+
+            if (rightShoulder && rightArm) {
+                if (gesture === 'wave') {
+                    rightShoulder.rotation.z = -1.2;
+                    rightArm.rotation.y = Math.sin(Date.now() * 0.01) * 0.5;
+                } else if (gesture === 'point') {
+                    rightShoulder.rotation.z = -1.5;
+                    rightArm.rotation.y = 0;
+                }
+            }
+        };
+
+        window.resetPose = () => {
+            if (!model) return;
+            model.traverse((child) => {
+                if (child.isBone) {
+                    child.rotation.set(0, 0, 0);
+                }
+            });
+        };
+    </script>
+</body>
+</html>

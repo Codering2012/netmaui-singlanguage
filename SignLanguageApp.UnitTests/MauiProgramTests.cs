@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Net.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Maui.Hosting;
@@ -72,21 +72,6 @@ namespace SignLanguageApp.UnitTests
             IAuthService? authService = app.Services.GetService<IAuthService>();
             Assert.IsNotNull(authService);
             Assert.IsInstanceOfType(authService, typeof(AuthService));
-        }
-
-        /// <summary>
-        /// Verifies that CreateMauiApp registers IOnnxInferenceService with OnnxInferenceService implementation.
-        /// </summary>
-        [TestMethod]
-        public void CreateMauiApp_WhenCalled_RegistersOnnxInferenceService()
-        {
-            // Act
-            MauiApp app = MauiProgram.CreateMauiApp();
-
-            // Assert
-            IOnnxInferenceService? onnxService = app.Services.GetService<IOnnxInferenceService>();
-            Assert.IsNotNull(onnxService);
-            Assert.IsInstanceOfType(onnxService, typeof(OnnxInferenceService));
         }
 
         /// <summary>

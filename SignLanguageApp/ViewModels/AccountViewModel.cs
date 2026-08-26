@@ -9,7 +9,7 @@ using SignLanguageApp.Services;
 
 namespace SignLanguageApp.ViewModels;
 
-public class DeviceInfo
+public partial class DeviceInfo
 {
     public string DeviceName { get; set; } = string.Empty;
     public string LastActivity { get; set; } = string.Empty;
@@ -27,65 +27,65 @@ public partial class AccountViewModel : ObservableObject
 
     // ============ Observable Properties (Using private backing fields for source generation) ============
     [ObservableProperty]
-    private string userName = string.Empty;
+    public partial string UserName { get; set; } = string.Empty;
 
     [ObservableProperty]
-    private string userEmail = string.Empty;
+    public partial string UserEmail { get; set; } = string.Empty;
 
     [ObservableProperty]
-    private string userAvatar = string.Empty;
+    public partial string UserAvatar { get; set; } = string.Empty;
 
     [ObservableProperty]
-    private string crossDeviceStatus = string.Empty;
+    public partial string CrossDeviceStatus { get; set; } = string.Empty;
 
     [ObservableProperty]
-    private string lastSyncTime = string.Empty;
+    public partial string LastSyncTime { get; set; } = string.Empty;
 
     // Learning Dashboard
     [ObservableProperty]
-    private int currentStreak;
+    public partial int CurrentStreak { get; set; }
 
     [ObservableProperty]
-    private int totalXp;
+    public partial int TotalXp { get; set; }
 
     [ObservableProperty]
-    private int totalSignsLearned;
+    public partial int TotalSignsLearned { get; set; }
 
     [ObservableProperty]
-    private int globalRanking;
+    public partial int GlobalRanking { get; set; }
 
     // Accessibility & Haptics
     [ObservableProperty]
-    private bool isHighContrastEnabled;
+    public partial bool IsHighContrastEnabled { get; set; }
 
     [ObservableProperty]
-    private double hapticIntensity;
+    public partial double HapticIntensity { get; set; }
 
     // Privacy & Gesture Data
     [ObservableProperty]
-    private bool isStrictLocalProcessing;
+    public partial bool IsStrictLocalProcessing { get; set; }
 
     [ObservableProperty]
-    private bool isGestureContributionEnabled;
+    public partial bool IsGestureContributionEnabled { get; set; }
 
     [ObservableProperty]
-    private string gestureDataContributed = string.Empty;
+    public partial string GestureDataContributed { get; set; } = string.Empty;
 
     // Hardware Diagnostics
     [ObservableProperty]
-    private double cpuUsage;
+    public partial double CpuUsage { get; set; }
 
     [ObservableProperty]
-    private double npuUsage;
+    public partial double NpuUsage { get; set; }
 
     [ObservableProperty]
-    private string deviceModel = string.Empty;
+    public partial string DeviceModel { get; set; } = string.Empty;
 
     [ObservableProperty]
-    private ObservableCollection<DeviceInfo> linkedDevices = new();
+    public partial ObservableCollection<DeviceInfo> LinkedDevices { get; set; } = new();
 
     [ObservableProperty]
-    private bool isLoading;
+    public partial bool IsLoading { get; set; }
 
     // ============ C# 14 Primary Constructor with Dependency Injection ============
     public AccountViewModel(IApiService apiService)
@@ -109,11 +109,11 @@ public partial class AccountViewModel : ObservableObject
         {
             var stats = await _apiService.GetUserStatsAsync();
 
-            if (stats?.Data != null)
+            if (stats != null)
             {
-                CurrentStreak = stats.Data.CurrentStreak;
-                TotalXp = stats.Data.TotalXP;
-                GlobalRanking = stats.Data.GlobalRanking;
+                CurrentStreak = stats.CurrentStreak;
+                TotalXp = stats.TotalXP;
+                GlobalRanking = stats.GlobalRanking;
             }
 
             var userResponse = await _apiService.GetLessonsAsync();
@@ -164,10 +164,9 @@ public partial class AccountViewModel : ObservableObject
             // Ignore API logout failures; local logout still proceeds.
         }
 
-        var window = Application.Current?.Windows?.FirstOrDefault();
-        if (window != null)
+        if (Application.Current != null)
         {
-            window.Page = new LoginShell();
+            Application.Current.MainPage = new LoginShell();
         }
     }
 

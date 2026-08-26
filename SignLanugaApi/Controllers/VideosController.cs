@@ -10,14 +10,14 @@ namespace SignLanguageApi.Controllers
     [Authorize]
     public class VideosController : ControllerBase
     {
-        private static readonly string VideoFolder = Path.Combine(Directory.GetCurrentDirectory(), "VIDEO");
+        private static readonly string VideoFolder = SignLanguageApi.Helpers.PathResolver.ResolveFolder("VIDEO");
+        private static readonly string AslLettersFolder = SignLanguageApi.Helpers.PathResolver.ResolveFolder("ASL_LETTERS");
         private static readonly ConcurrentDictionary<int, int> Likes = new();
         private static readonly ConcurrentDictionary<int, int> Views = new();
         private static readonly object ScanLock = new();
         private static List<VideoDto>? _cachedVideos;
         private static DateTime _lastScan = DateTime.MinValue;
 
-        // Scan the VIDEO folder for .mp4 files and cache results for 10 seconds
         private List<VideoDto> GetVideos()
         {
             lock (ScanLock)
@@ -28,15 +28,19 @@ namespace SignLanguageApi.Controllers
                 if (!Directory.Exists(VideoFolder))
                     Directory.CreateDirectory(VideoFolder);
 
-                var files = Directory.GetFiles(VideoFolder, "*.mp4");
+                if (!Directory.Exists(AslLettersFolder))
+                    Directory.CreateDirectory(AslLettersFolder);
+
                 var videos = new List<VideoDto>();
                 int id = 1;
-                foreach (var file in files)
+
+                // 1. Scan General VIDEO folder
+                var videoFiles = Directory.GetFiles(VideoFolder, "*.mp4");
+                foreach (var file in videoFiles)
                 {
                     var fileName = Path.GetFileName(file);
                     var title = Path.GetFileNameWithoutExtension(file);
                     var category = "General";
-                    // Optionally, parse category from file name (e.g., cat_title.mp4)
                     var parts = title.Split('_', 2);
                     if (parts.Length == 2)
                     {
@@ -55,6 +59,28 @@ namespace SignLanguageApi.Controllers
                     });
                     id++;
                 }
+
+                // 2. Scan ASL_LETTERS folder (A.mp4 - Z.mp4)
+                var letterFiles = Directory.GetFiles(AslLettersFolder, "*.mp4")
+                                          .OrderBy(f => Path.GetFileNameWithoutExtension(f))
+                                          .ToList();
+                foreach (var file in letterFiles)
+                {
+                    var fileName = Path.GetFileName(file);
+                    var letterName = Path.GetFileNameWithoutExtension(file);
+                    videos.Add(new VideoDto
+                    {
+                        Id = id,
+                        FileName = fileName,
+                        Title = $"ASL Letter: {letterName.ToUpper()}",
+                        Category = "Alphabet",
+                        Path = $"/api/videos/stream/{id}",
+                        Likes = Likes.GetValueOrDefault(id, 0),
+                        Views = Views.GetValueOrDefault(id, 0)
+                    });
+                    id++;
+                }
+
                 _cachedVideos = videos;
                 _lastScan = DateTime.UtcNow;
                 return videos;
@@ -68,7 +94,7 @@ namespace SignLanguageApi.Controllers
             return Ok(videos);
         }
 
-        [HttpGet("{id}")]
+        [HttpGet("{id:int}")]
         public ActionResult<VideoDto> GetById(int id)
         {
             var videos = GetVideos();
@@ -85,37 +111,65 @@ namespace SignLanguageApi.Controllers
             return Ok(filtered);
         }
 
-        [HttpPost("{id}/like")]
+        [HttpPost("{id:int}/like")]
         public ActionResult<bool> Like(int id)
         {
             Likes.AddOrUpdate(id, 1, (k, v) => v + 1);
             return Ok(true);
         }
 
-        [HttpPost("{id}/unlike")]
+        [HttpPost("{id:int}/unlike")]
         public ActionResult<bool> Unlike(int id)
         {
             Likes.AddOrUpdate(id, 0, (k, v) => v > 0 ? v - 1 : 0);
             return Ok(true);
         }
 
-        [HttpPost("{id}/watch")]
+        [HttpPost("{id:int}/watch")]
         public ActionResult<bool> Watch(int id)
         {
             Views.AddOrUpdate(id, 1, (k, v) => v + 1);
             return Ok(true);
         }
 
-        // Optional: Stream video file by id
-        [HttpGet("stream/{id}")]
+        [HttpGet("stream/{id:int}")]
         [AllowAnonymous]
         public IActionResult Stream(int id)
         {
             var videos = GetVideos();
             var video = videos.FirstOrDefault(v => v.Id == id);
             if (video == null) return NotFound();
-            var filePath = Path.Combine(VideoFolder, video.FileName);
-            if (!System.IO.File.Exists(filePath)) return NotFound();
+
+            string filePath = Path.Combine(VideoFolder, video.FileName);
+            if (!System.IO.File.Exists(filePath))
+            {
+                filePath = Path.Combine(AslLettersFolder, video.FileName);
+                if (!System.IO.File.Exists(filePath))
+                {
+                    filePath = video.FileName;
+                    if (!System.IO.File.Exists(filePath))
+                    {
+                        return NotFound();
+                    }
+                }
+            }
+
+            var stream = System.IO.File.OpenRead(filePath);
+            return File(stream, "video/mp4", enableRangeProcessing: true);
+        }
+
+        [HttpGet("letter/{letter}")]
+        [AllowAnonymous]
+        public IActionResult StreamLetter(string letter)
+        {
+            if (string.IsNullOrWhiteSpace(letter)) return BadRequest();
+            var cleanLetter = letter.Trim().ToUpper();
+            var filePath = Path.Combine(AslLettersFolder, $"{cleanLetter}.mp4");
+            if (!System.IO.File.Exists(filePath))
+            {
+                filePath = Path.Combine(VideoFolder, $"Letters_Alphabet {cleanLetter}.mp4");
+                if (!System.IO.File.Exists(filePath)) return NotFound();
+            }
             var stream = System.IO.File.OpenRead(filePath);
             return File(stream, "video/mp4", enableRangeProcessing: true);
         }

@@ -8,7 +8,7 @@ using SignLanguageApp.Services;
 
 namespace SignLanguageApp.ViewModels;
 
-public class RegisterViewModel : INotifyPropertyChanged
+public partial class RegisterViewModel : INotifyPropertyChanged
 {
     private readonly IApiService _apiService;
     private string _name = string.Empty;

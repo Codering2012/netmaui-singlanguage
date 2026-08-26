@@ -25,6 +25,9 @@ public partial class VideoItem : ObservableObject
     public string Category { get; set; } = string.Empty;
     public bool IsLiked { get; set; }
     public string Instructor { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial bool IsDownloaded { get; set; }
 }
 
 /// <summary>
@@ -34,29 +37,33 @@ public partial class VideoItem : ObservableObject
 public partial class VideoViewModel : ObservableObject
 {
     private readonly IApiService _apiService;
+    private readonly IMediaDownloadAndCacheService _mediaCache;
+    private readonly IDatabaseService _databaseService;
     private readonly List<VideoItem> _allVideos = [];
 
     [ObservableProperty]
-    private ObservableCollection<VideoItem> videos = new();
+    public partial ObservableCollection<VideoItem> Videos { get; set; } = new();
 
     [ObservableProperty]
-    private ObservableCollection<string> categories = new();
+    public partial ObservableCollection<string> Categories { get; set; } = new();
 
     [ObservableProperty]
-    private string selectedCategory = "All";
+    public partial string SelectedCategory { get; set; } = "All";
 
     [ObservableProperty]
-    private bool isLoading;
+    public partial bool IsLoading { get; set; }
 
     [ObservableProperty]
-    private string searchQuery = string.Empty;
+    public partial string SearchQuery { get; set; } = string.Empty;
 
     [ObservableProperty]
-    private int totalVideos = 0;
+    public partial int TotalVideos { get; set; } = 0;
 
-    public VideoViewModel(IApiService apiService)
+    public VideoViewModel(IApiService apiService, IMediaDownloadAndCacheService mediaCache, IDatabaseService databaseService)
     {
         _apiService = apiService;
+        _mediaCache = mediaCache;
+        _databaseService = databaseService;
     }
 
     [RelayCommand]
@@ -85,7 +92,8 @@ public partial class VideoViewModel : ObservableObject
                     DurationSeconds = dto.DurationSeconds,
                     Category = dto.Category,
                     Instructor = dto.Instructor,
-                    IsLiked = dto.IsLiked
+                    IsLiked = dto.IsLiked,
+                    IsDownloaded = dto.IsDownloaded
                 });
                 _allVideos.Clear();
                 _allVideos.AddRange(videoItems);
@@ -172,6 +180,54 @@ public partial class VideoViewModel : ObservableObject
         catch (Exception ex)
         {
             await ShowAlertAsync("Error", $"Could not open video: {ex.Message}");
+        }
+    }
+
+    [RelayCommand]
+    public async Task DownloadVideo(VideoItem video)
+    {
+        if (video == null || video.IsDownloaded) return;
+
+        try
+        {
+            var page = Application.Current?.Windows?.FirstOrDefault()?.Page;
+            if (page == null) return;
+
+            var action = await page.DisplayActionSheetAsync(
+                "Download Options", 
+                "Cancel", 
+                null, 
+                "Download for Local Storage", 
+                "Download for In-App Use", 
+                "Local and In-App"
+            );
+
+            if (action == "Cancel" || string.IsNullOrEmpty(action)) return;
+
+            if (!string.IsNullOrWhiteSpace(video.VideoUrl))
+            {
+                var cachedPath = await _mediaCache.GetCachedMediaAsync(video.VideoUrl);
+                if (!string.IsNullOrEmpty(cachedPath))
+                {
+                    video.IsDownloaded = true;
+                    // Save to SQLite
+                    await _databaseService.SaveDownloadStateAsync(video.Id, "Video", true, cachedPath, action);
+                    
+                    await ShowAlertAsync("Success", $"Downloaded successfully for: {action}");
+                }
+                else
+                {
+                    await ShowAlertAsync("Download Failed", "Could not cache the video.");
+                }
+            }
+            else
+            {
+                await ShowAlertAsync("No Video", "This video does not have a downloadable URL yet.");
+            }
+        }
+        catch (Exception ex)
+        {
+            await ShowAlertAsync("Download Error", $"Failed to download: {ex.Message}");
         }
     }
 

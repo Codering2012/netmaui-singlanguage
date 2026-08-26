@@ -54,13 +54,13 @@ public class RateLimitMiddleware
             context.Response.ContentType = "application/json";
 
             var timeRemaining = resetTime - now;
-            var response = new
+            var response = new SignLanguageApi.Dtos.RateLimitResponseDto
             {
                 message = "Too many requests. Please try again later.",
                 retryAfterSeconds = (int)timeRemaining.TotalSeconds
             };
 
-            await context.Response.WriteAsJsonAsync(response);
+            await context.Response.WriteAsJsonAsync(response, SignLanguageApi.Dtos.ApiJsonContext.Default.RateLimitResponseDto);
             return;
         }
 

@@ -20,9 +20,34 @@ public partial class AnimatedBackgroundView : ContentView
     private const double WAVE_SPEED = 0.015;
     private const int ANIMATION_FRAME_DELAY = 50;
 
+    private class BlobState
+    {
+        public double X;
+        public double Y;
+        public double Vx;
+        public double Vy;
+        public double MinX = -60;
+        public double MaxX = 60;
+        public double MinY = -60;
+        public double MaxY = 60;
+    }
+
+    private readonly BlobState[] _blobs = new BlobState[5];
+
     public AnimatedBackgroundView()
     {
         InitializeComponent();
+        
+        for (int i = 0; i < 5; i++)
+        {
+            _blobs[i] = new BlobState
+            {
+                X = _random.Next(-30, 30),
+                Y = _random.Next(-30, 30),
+                Vx = (_random.NextDouble() * 1.5 + 0.5) * (_random.Next(2) == 0 ? 1 : -1),
+                Vy = (_random.NextDouble() * 1.5 + 0.5) * (_random.Next(2) == 0 ? 1 : -1)
+            };
+        }
     }
 
     protected override void OnHandlerChanged()
@@ -63,31 +88,30 @@ public partial class AnimatedBackgroundView : ContentView
         {
             while (!cancellationToken.IsCancellationRequested && _isAnimating)
             {
-                _waveTime += WAVE_SPEED;
+                foreach (var b in _blobs)
+                {
+                    b.X += b.Vx;
+                    b.Y += b.Vy;
 
-                // Calculate positions using sine waves
-                double blob1X = Math.Sin(_waveTime) * 25;
-                double blob1Y = Math.Cos(_waveTime * 0.8) * 20;
-
-                double blob2X = Math.Sin(_waveTime + Math.PI / 2) * 30;
-                double blob2Y = Math.Cos(_waveTime * 0.9 + Math.PI / 3) * 25;
-
-                double blob3X = Math.Sin(_waveTime * 0.7) * 35;
-                double blob3Y = Math.Cos(_waveTime * 1.1) * 30;
-
-                double blob4X = Math.Sin(_waveTime + Math.PI) * 28;
-                double blob4Y = Math.Cos(_waveTime * 0.85 + Math.PI / 4) * 22;
-
-                double blob5X = Math.Sin(_waveTime * 0.9 + Math.PI / 6) * 32;
-                double blob5Y = Math.Cos(_waveTime * 1.0 + Math.PI / 2) * 28;
+                    if (b.X <= b.MinX || b.X >= b.MaxX)
+                    {
+                        b.Vx = -b.Vx;
+                        b.X = Math.Clamp(b.X, b.MinX, b.MaxX);
+                    }
+                    if (b.Y <= b.MinY || b.Y >= b.MaxY)
+                    {
+                        b.Vy = -b.Vy;
+                        b.Y = Math.Clamp(b.Y, b.MinY, b.MaxY);
+                    }
+                }
 
                 // Apply translations without creating task list
                 await ApplyAnimationsAsync(
-                    (blob1X, blob1Y),
-                    (blob2X, blob2Y),
-                    (blob3X, blob3Y),
-                    (blob4X, blob4Y),
-                    (blob5X, blob5Y),
+                    (_blobs[0].X, _blobs[0].Y),
+                    (_blobs[1].X, _blobs[1].Y),
+                    (_blobs[2].X, _blobs[2].Y),
+                    (_blobs[3].X, _blobs[3].Y),
+                    (_blobs[4].X, _blobs[4].Y),
                     cancellationToken);
 
                 await Task.Delay(ANIMATION_FRAME_DELAY, cancellationToken);

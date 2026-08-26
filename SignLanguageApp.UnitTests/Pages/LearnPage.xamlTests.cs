@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -27,14 +27,16 @@ namespace SignLanguageApp.Pages.UnitTests
             // Arrange
             var mockApiService = new Mock<IApiService>();
             var payloadSecurityService = new LessonPayloadSecurityService();
-            var viewModel = new LearnViewModel(mockApiService.Object, payloadSecurityService);
+            var mockMedia = new Mock<IMediaDownloadAndCacheService>();
+            var mockDb = new Mock<IDatabaseService>();
+            var viewModel = new LearnViewModel(mockApiService.Object, payloadSecurityService, mockMedia.Object, mockDb.Object);
 
             // Act
             var page = new LearnPage(viewModel);
 
             // Assert
             Assert.IsNotNull(page);
-            Assert.AreSame(viewModel, new Moq.Mock<SignLanguageApp.Services.IMediaDownloadAndCacheService>().Object, page.BindingContext);
+            Assert.AreSame(viewModel, page.BindingContext);
         }
 
     }

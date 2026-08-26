@@ -171,7 +171,7 @@ namespace SignLanguageApp.UnitTests.Services
         {
             var jsonPayload = JsonSerializer.Serialize(new[]
             {
-                new SignerCreditDto { SignerId = 1, SignerName = "Alice", LicenseType = "CC-BY-4.0", Bio = "Sign Language Enthusiast" }
+                new SignerCreditDto { SignerName = "Alice", LicenseType = "CC-BY-4.0", Bio = "Sign Language Enthusiast" }
             });
 
             var responseMessage = new HttpResponseMessage

@@ -1,26 +1,31 @@
-﻿<?xml version="1.0" encoding="UTF-8" ?>
+<?xml version="1.0" encoding="UTF-8" ?>
 <?xaml-comp compile="true" ?>
 <ResourceDictionary 
     xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
     xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml">
 
-    <!-- Modern Gradient Color Palette -->
-    <Color x:Key="Primary">#0EA5A4</Color>
-    <Color x:Key="PrimaryLight">#2DD4BF</Color>
-    <Color x:Key="Secondary">#FB923C</Color>
-    <Color x:Key="SecondaryLight">#FDBA74</Color>
-    <Color x:Key="Accent">#38BDF8</Color>
-    <Color x:Key="AccentLight">#7DD3FC</Color>
-
+    <!-- Modern Gradient Color Palette (Hyper-Saturated) -->
+    <Color x:Key="Primary">#00F0FF</Color>       <!-- Electric Cyan -->
+    <Color x:Key="PrimaryLight">#7AFAFF</Color>
+    <Color x:Key="Secondary">#6366F1</Color>     <!-- Neon Indigo -->
+    <Color x:Key="SecondaryLight">#818CF8</Color>
+    <Color x:Key="Accent">#D946EF</Color>        <!-- Fuchsia Glow -->
+    <Color x:Key="AccentLight">#E879F9</Color>
+    <Color x:Key="Tertiary">#F97316</Color>      <!-- Sunset Orange -->
+    
+    <!-- Glass Highlights & Shadows -->
+    <Color x:Key="GlassBorderWhite">#40FFFFFF</Color>
+    <Color x:Key="GlassBorderDark">#40000000</Color>
+    
     <!-- Backgrounds -->
     <Color x:Key="ColorBackgroundLight">#FFFFFF</Color>
-    <Color x:Key="ColorBackgroundDark">#07121D</Color>
+    <Color x:Key="ColorBackgroundDark">#050814</Color>
     <Color x:Key="ColorCardLight">#F8FAFC</Color>
-    <Color x:Key="ColorCardDark">#132235</Color>
+    <Color x:Key="ColorCardDark">#0B1229</Color>
 
     <!-- Text Colors -->
-    <Color x:Key="ColorTextLight">#1E293B</Color>
-    <Color x:Key="ColorTextDark">#E6F1FA</Color>
+    <Color x:Key="ColorTextLight">#0F172A</Color>
+    <Color x:Key="ColorTextDark">#F8FAFC</Color>
     <Color x:Key="White">#FFFFFF</Color>
 
     <!-- Grays -->
@@ -29,26 +34,26 @@
     <Color x:Key="Gray300">#CBD5E1</Color>
     <Color x:Key="Gray400">#94A3B8</Color>
     <Color x:Key="Gray500">#64748B</Color>
-    <Color x:Key="Gray600">#35506A</Color>
-    <Color x:Key="Gray900">#0B1A29</Color>
-    <Color x:Key="Gray950">#05101A</Color>
+    <Color x:Key="Gray600">#334155</Color>
+    <Color x:Key="Gray900">#0F172A</Color>
+    <Color x:Key="Gray950">#020617</Color>
 
-    <!-- Legacy Support -->
-    <Color x:Key="MidnightBlue">#0B1A29</Color>
-    <Color x:Key="PrimaryDark">#123549</Color>
-    <Color x:Key="PrimaryDarkText">#D9ECF7</Color>
-    <Color x:Key="SecondaryDarkText">#86A7BE</Color>
-    <Color x:Key="Magenta">#FB923C</Color>
-    <Color x:Key="OffBlack">#07121D</Color>
+    <!-- Legacy Support (Mapped to new scheme) -->
+    <Color x:Key="MidnightBlue">#0B1229</Color>
+    <Color x:Key="PrimaryDark">#050814</Color>
+    <Color x:Key="PrimaryDarkText">#E2E8F0</Color>
+    <Color x:Key="SecondaryDarkText">#94A3B8</Color>
+    <Color x:Key="Magenta">#D946EF</Color>
+    <Color x:Key="OffBlack">#020617</Color>
     <Color x:Key="Black">#000000</Color>
-    <Color x:Key="SlateBlueDark">#132235</Color>
-    <Color x:Key="IcyGray">#07121D</Color>
+    <Color x:Key="SlateBlueDark">#0F172A</Color>
+    <Color x:Key="IcyGray">#CBD5E1</Color>
     <Color x:Key="OffWhite">#F1F5F9</Color>
 
     <!-- Gradient Palette -->
-    <Color x:Key="SpaceCadet">#07121D</Color>
-    <Color x:Key="SlateGray">#35506A</Color>
-    <Color x:Key="TanColor">#86A7BE</Color>
+    <Color x:Key="SpaceCadet">#050814</Color>
+    <Color x:Key="SlateGray">#334155</Color>
+    <Color x:Key="TanColor">#FDBA74</Color>
     <Color x:Key="WhiteColor">#FFFFFF</Color>
 
     <!-- Brushes -->
@@ -56,15 +61,19 @@
     <SolidColorBrush x:Key="BackgroundBrush" Color="{AppThemeBinding Light={StaticResource ColorBackgroundLight}, Dark={StaticResource ColorBackgroundDark}}"/>
     <SolidColorBrush x:Key="CardBrush" Color="{AppThemeBinding Light={StaticResource ColorCardLight}, Dark={StaticResource ColorCardDark}}"/>
     <SolidColorBrush x:Key="TextBrush" Color="{AppThemeBinding Light={StaticResource ColorTextLight}, Dark={StaticResource ColorTextDark}}"/>
+    <SolidColorBrush x:Key="GlassBorderBrush" Color="{AppThemeBinding Light={StaticResource GlassBorderDark}, Dark={StaticResource GlassBorderWhite}}"/>
+    <SolidColorBrush x:Key="Gray200Brush" Color="{StaticResource Gray200}"/>
+    <SolidColorBrush x:Key="Gray500Brush" Color="{StaticResource Gray500}"/>
+    <SolidColorBrush x:Key="WhiteBrush" Color="{StaticResource White}"/>
 
     <!-- Styles -->
     <Style x:Key="AppShellStyle" TargetType="Shell">
-        <Setter Property="BackgroundColor" Value="{StaticResource BackgroundBrush}" />
-        <Setter Property="ForegroundColor" Value="{StaticResource TextBrush}" />
+        <Setter Property="BackgroundColor" Value="Transparent" />
+        <Setter Property="Shell.ForegroundColor" Value="{StaticResource TextBrush}" />
     </Style>
 
     <Style TargetType="ContentPage">
-        <Setter Property="BackgroundColor" Value="{StaticResource BackgroundBrush}" />
+        <Setter Property="BackgroundColor" Value="Transparent" />
     </Style>
 
     <Style x:Key="CardFrame" TargetType="Border">

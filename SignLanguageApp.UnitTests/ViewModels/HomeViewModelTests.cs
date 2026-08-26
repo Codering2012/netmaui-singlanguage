@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -165,7 +165,7 @@ public partial class HomeViewModelTests
         // Assert
         Assert.IsNotNull(viewModel.Shorts);
         Assert.IsNotNull(viewModel.RecommendedLessons);
-        Assert.IsNotNull(viewModel.Community);
+        Assert.IsNotNull(viewModel.SourceCreators);
     }
 
     /// <summary>
@@ -202,9 +202,8 @@ public partial class HomeViewModelTests
         // Arrange
         var mockApiService = new Mock<IApiService>();
         var statsData = new UserStatsDto { CurrentStreak = 7 };
-        var response = new ApiResponse<UserStatsDto> { Data = statsData };
         mockApiService.Setup(x => x.GetUserStatsAsync())
-            .ReturnsAsync(response);
+            .ReturnsAsync(statsData);
 
         // Act
         var viewModel = new HomeViewModel(mockApiService.Object);

@@ -28,8 +28,13 @@ namespace SignLanguageApp.UnitTests.Services
             {
                 BaseAddress = new System.Uri("http://localhost/")
             };
+            var mockConnectivity = new Mock<IConnectivityService>();
+            var mockApiConfig = new Mock<IApiConfigService>();
+            var mockLessonPayloadSecurity = new Mock<ILessonPayloadSecurityService>();
+            var mockDatabase = new Mock<IDatabaseService>();
+
             // Assuming no secure storage is mocked for simple API tests
-            _apiService = new ApiService(_httpClient);
+            _apiService = new ApiService(_httpClient, mockConnectivity.Object, mockApiConfig.Object, mockLessonPayloadSecurity.Object, mockDatabase.Object);
         }
 
         private void SetupHttpResponse(HttpStatusCode statusCode, object content)

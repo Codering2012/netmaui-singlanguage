@@ -11,7 +11,7 @@ using SignLanguageApp.Services;
 
 namespace SignLanguageApp.ViewModels;
 
-public class HandGestureResult
+public partial class HandGestureResult
 {
     public string GestureLabel { get; set; } = string.Empty;
     public float ConfidenceScore { get; set; }
@@ -20,9 +20,12 @@ public class HandGestureResult
     public List<CoordinateDto>? Coordinates { get; set; }
     public int SourceFrameWidth { get; set; }
     public int SourceFrameHeight { get; set; }
+    public List<CoordinateDto>? IndexTrail { get; set; }
+    public List<CoordinateDto>? PinkyTrail { get; set; }
+    public string TrackingLetter { get; set; } = string.Empty;
 }
 
-public class GestureFrame
+public partial class GestureFrame
 {
     public string Label { get; set; } = string.Empty;
     public float Confidence { get; set; }
@@ -32,7 +35,7 @@ public class GestureFrame
 #pragma warning disable MVVMTK0045 // Field using [ObservableProperty] not AOT compatible for WinRT
 public partial class CameraTranslationViewModel : ObservableObject
 {
-    private const int FrameSendIntervalMs = 30;
+    private const int FrameSendIntervalMs = 100;
     private const int MaxDetectionHistoryEntries = 200;
     private static readonly TimeSpan FrameCaptureTimeout = TimeSpan.FromSeconds(5);
     private const float LetterCommitConfidenceThreshold = 0.80f;
@@ -57,46 +60,46 @@ public partial class CameraTranslationViewModel : ObservableObject
     public ObservableCollection<HandGestureResult> DetectionHistory { get; } = [];
 
     [ObservableProperty]
-    private bool isCameraAvailable;
+    public partial bool IsCameraAvailable { get; set; }
 
     [ObservableProperty]
-    private bool isProcessingFrames;
+    public partial bool IsProcessingFrames { get; set; }
 
     [ObservableProperty]
-    private string currentGestureLabel = string.Empty;
+    public partial string CurrentGestureLabel { get; set; } = string.Empty;
 
     [ObservableProperty]
-    private float currentConfidenceScore;
+    public partial float CurrentConfidenceScore { get; set; }
 
     [ObservableProperty]
-    private double processingTimeMs;
+    public partial double ProcessingTimeMs { get; set; }
 
     [ObservableProperty]
-    private int framesProcessed;
+    public partial int FramesProcessed { get; set; }
 
     [ObservableProperty]
-    private string frameRate = "0 fps";
+    public partial string FrameRate { get; set; } = "0 fps";
 
     [ObservableProperty]
-    private bool isRecordingSession;
+    public partial bool IsRecordingSession { get; set; }
 
     [ObservableProperty]
-    private string translatedText = string.Empty;
+    public partial string TranslatedText { get; set; } = string.Empty;
 
     [ObservableProperty]
-    private string confidenceText = string.Empty;
+    public partial string ConfidenceText { get; set; } = string.Empty;
 
     [ObservableProperty]
-    private bool isProcessing;
+    public partial bool IsProcessing { get; set; }
 
     [ObservableProperty]
-    private bool useNpuAcceleration;
+    public partial bool UseNpuAcceleration { get; set; }
 
     [ObservableProperty]
-    private bool isFrameFrozen;
+    public partial bool IsFrameFrozen { get; set; }
 
     [ObservableProperty]
-    private IDrawable? drawable;
+    public partial IDrawable? Drawable { get; set; }
 
     public CameraTranslationViewModel() : this(null) { }
 
@@ -129,7 +132,7 @@ public partial class CameraTranslationViewModel : ObservableObject
         TranslatedText = "Waiting for sign...";
         ConfidenceText = string.Empty;
         _processingCts = new CancellationTokenSource();
-        await ProcessFramesAsync(_processingCts.Token);
+        _ = Task.Run(() => ProcessFramesAsync(_processingCts.Token));
     }
 
     [RelayCommand]
@@ -338,7 +341,7 @@ public partial class CameraTranslationViewModel : ObservableObject
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
 
-            var prediction = await _apiService.PredictGestureFromImageAsync(frameBytes, timeoutCts.Token);
+            var prediction = await _apiService.PredictGestureFromImageAsync(frameBytes, cancellationToken: timeoutCts.Token);
 
             if (prediction == null)
             {

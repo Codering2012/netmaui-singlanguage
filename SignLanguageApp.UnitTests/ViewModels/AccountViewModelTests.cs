@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -562,11 +562,7 @@ public partial class AccountViewModelTests
     {
         // Arrange
         var mockApiService = new Mock<IApiService>();
-        var statsResponse = new ApiResponse<UserStatsDto>
-        {
-            Success = false,
-            Data = null
-        };
+        UserStatsDto? statsResponse = null;
 
         mockApiService.Setup(x => x.GetUserStatsAsync())
             .ReturnsAsync(statsResponse);

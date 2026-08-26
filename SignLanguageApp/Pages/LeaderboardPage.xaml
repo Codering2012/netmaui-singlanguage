@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:SignLanguageApp.ViewModels"
+             xmlns:model="clr-namespace:SignLanguageApp.Model"
+             xmlns:helpers="clr-namespace:SignLanguageApp.Helpers"
+             x:Class="SignLanguageApp.Pages.LeaderboardPage"
+             x:DataType="vm:LeaderboardViewModel"
+             Title="Global Rankings"
+             Background="{DynamicResource PageGradient}">
+    
+    <ContentPage.Resources>
+        <helpers:RankToColorConverter x:Key="RankToColorConverter" />
+        <helpers:BooleanToColorConverter x:Key="BooleanToColorConverter" />
+        <helpers:NotNullToBooleanConverter x:Key="NotNullToBooleanConverter" />
+    </ContentPage.Resources>
+
+    <Grid RowDefinitions="Auto, *">
+        <!-- Header Section -->
+        <VerticalStackLayout Padding="20,20,20,10" Spacing="5">
+            <Label Text="Global Leaderboard" FontSize="28" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+            <Label Text="Compete with learners around the world" FontSize="14" TextColor="{DynamicResource SecondaryTextColor}" />
+        </VerticalStackLayout>
+
+        <Grid Grid.Row="1" RowDefinitions="*, Auto">
+            <!-- Top Entries List -->
+            <RefreshView Command="{Binding LoadLeaderboardCommand}" IsRefreshing="{Binding IsBusy}">
+                <CollectionView ItemsSource="{Binding TopEntries}" Margin="20,10">
+                    <CollectionView.Header>
+                        <Grid ColumnDefinitions="50, *, 80" Padding="10,0,10,10">
+                            <Label Text="Rank" FontSize="12" FontAttributes="Bold" TextColor="{DynamicResource SecondaryTextColor}" />
+                            <Label Grid.Column="1" Text="Learner" FontSize="12" FontAttributes="Bold" TextColor="{DynamicResource SecondaryTextColor}" Margin="10,0,0,0"/>
+                            <Label Grid.Column="2" Text="Total XP" FontSize="12" FontAttributes="Bold" TextColor="{DynamicResource SecondaryTextColor}" HorizontalOptions="End" />
+                        </Grid>
+                    </CollectionView.Header>
+                    <CollectionView.ItemTemplate>
+                        <DataTemplate x:DataType="model:LeaderboardEntryDto">
+                            <Border StrokeThickness="0" 
+                                    BackgroundColor="{Binding IsCurrentUser, Converter={StaticResource BooleanToColorConverter}, ConverterParameter='CurrentUserCardColor'}" 
+                                    StrokeShape="RoundRectangle 16" 
+                                    Padding="12" 
+                                    Margin="0,0,0,12">
+                                <Grid ColumnDefinitions="40, Auto, *, Auto" RowDefinitions="Auto, Auto" ColumnSpacing="15" VerticalOptions="Center">
+                                    <!-- Rank Number -->
+                                    <Label Grid.RowSpan="2"
+                                           Text="{Binding Rank}" 
+                                           FontSize="18" 
+                                           FontAttributes="Bold" 
+                                           VerticalOptions="Center" 
+                                           HorizontalOptions="Center"
+                                           TextColor="{Binding Rank, Converter={StaticResource RankToColorConverter}}" />
+
+                                    <!-- Avatar -->
+                                    <Border Grid.Column="1" Grid.RowSpan="2" WidthRequest="44" HeightRequest="44" StrokeShape="RoundRectangle 22" StrokeThickness="2" Stroke="{DynamicResource PrimaryThemeBrush}">
+                                        <Image Source="{Binding AvatarUrl}" Aspect="AspectFill" />
+                                    </Border>
+
+                                    <!-- Name -->
+                                    <Label Grid.Column="2" Grid.Row="0" Text="{Binding Name}" FontSize="16" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" VerticalOptions="End" />
+                                    <Label Grid.Column="2" Grid.Row="1" Text="Level 12 Learner" FontSize="12" TextColor="{DynamicResource SecondaryTextColor}" VerticalOptions="Start" />
+
+                                    <!-- XP -->
+                                    <Label Grid.Column="3" Grid.RowSpan="2"
+                                           Text="{Binding TotalXp, StringFormat='{0:N0}'}" 
+                                           FontSize="16" 
+                                           FontAttributes="Bold" 
+                                           TextColor="{DynamicResource PrimaryColor}" 
+                                           VerticalOptions="Center" />
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </CollectionView.ItemTemplate>
+                </CollectionView>
+            </RefreshView>
+
+            <!-- Current User Static Bar at Bottom -->
+            <Border Grid.Row="1" 
+                    BackgroundColor="{DynamicResource PrimaryColor}" 
+                    Padding="20,15" 
+                    StrokeThickness="0" 
+                    StrokeShape="RoundRectangle 24,24,0,0"
+                    IsVisible="{Binding CurrentUserEntry, Converter={StaticResource NotNullToBooleanConverter}}">
+                <Grid ColumnDefinitions="40, Auto, *, Auto" ColumnSpacing="15">
+                    <Label Text="{Binding CurrentUserEntry.Rank}" FontSize="20" FontAttributes="Bold" TextColor="White" VerticalOptions="Center" HorizontalOptions="Center" />
+                    
+                    <Border Grid.Column="1" WidthRequest="44" HeightRequest="44" StrokeShape="RoundRectangle 22" StrokeThickness="0">
+                        <Image Source="{Binding CurrentUserEntry.AvatarUrl}" Aspect="AspectFill" />
+                    </Border>
+
+                    <VerticalStackLayout Grid.Column="2" VerticalOptions="Center">
+                        <Label Text="You" FontSize="16" FontAttributes="Bold" TextColor="White" />
+                        <Label Text="Keep practicing to rank up!" FontSize="12" TextColor="#E0E0E0" />
+                    </VerticalStackLayout>
+
+                    <Label Grid.Column="3" Text="{Binding CurrentUserEntry.TotalXp, StringFormat='{0:N0} XP'}" FontSize="18" FontAttributes="Bold" TextColor="White" VerticalOptions="Center" />
+                </Grid>
+            </Border>
+        </Grid>
+        
+        <ActivityIndicator Grid.RowSpan="2" IsVisible="{Binding IsBusy}" IsRunning="{Binding IsBusy}" Color="{DynamicResource PrimaryColor}" HorizontalOptions="Center" VerticalOptions="Center" />
+    </Grid>
+</ContentPage>

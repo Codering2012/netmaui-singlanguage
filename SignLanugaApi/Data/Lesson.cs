@@ -10,6 +10,8 @@ namespace SignLanguageApi.Data
 
         public string? ThumbnailUrl { get; set; }
 
+        public string? VideoUrl { get; set; }
+
         public int DurationSeconds { get; set; }
 
         public string InstructorName { get; set; } = string.Empty;

@@ -8,62 +8,141 @@ namespace SignLanguageApi.Data
         {
             var utcNow = DateTime.UtcNow;
 
+            // 1. Categories
             if (!await context.LessonCategories.AnyAsync())
             {
                 context.LessonCategories.AddRange(
                     new LessonCategory
                     {
                         Id = 1,
-                        Title = "Basics",
-                        Description = "Foundational signs for daily communication.",
+                        Title = "ASL Alphabet & Letters",
+                        Description = "Master all 26 manual alphabet handshapes from A to Z.",
                         Difficulty = "Beginner",
-                        IconUrl = "https://images.unsplash.com/photo-1455390582262-044cdead277a?w=300"
+                        IconUrl = "/api/media/image/alphabet.png"
                     },
                     new LessonCategory
                     {
                         Id = 2,
-                        Title = "Conversations",
-                        Description = "Practical conversational phrases and responses.",
+                        Title = "Conversations & Greetings",
+                        Description = "Practical conversational phrases and everyday greetings.",
                         Difficulty = "Intermediate",
-                        IconUrl = "https://images.unsplash.com/photo-1521737604893-d14cc237f11d?w=300"
+                        IconUrl = "/api/media/image/phrases.png"
                     },
                     new LessonCategory
                     {
                         Id = 3,
-                        Title = "Advanced Grammar",
-                        Description = "Sentence structure and complex sign patterns.",
+                        Title = "Advanced Grammar & Classifiers",
+                        Description = "Spatial placement, classifiers, and complex sign structures.",
                         Difficulty = "Advanced",
-                        IconUrl = "https://images.unsplash.com/photo-1450101499163-c8848c66ca85?w=300"
+                        IconUrl = "/api/media/image/dynamic.png"
+                    },
+                    new LessonCategory
+                    {
+                        Id = 4,
+                        Title = "Numbers & Everyday Vocabulary",
+                        Description = "Count numbers 1-20, tell time, and sign family members.",
+                        Difficulty = "Beginner",
+                        IconUrl = "/api/media/image/basics.png"
+                    },
+                    new LessonCategory
+                    {
+                        Id = 5,
+                        Title = "Real-Time Camera Drills",
+                        Description = "Interactive camera-based sign language practice.",
+                        Difficulty = "All Levels",
+                        IconUrl = "/api/media/image/spelling_practice.png"
                     });
+
+                await context.SaveChangesAsync();
             }
 
+            // 2. Lessons
             if (!await context.Lessons.AnyAsync())
             {
-                context.Lessons.AddRange(
-                    new Lesson { Id = 1, CategoryId = 1, Title = "Alphabet A-M", Description = "Learn letters A through M.", Difficulty = "Beginner", DurationSeconds = 420, InstructorName = "Sarah Kim", ThumbnailUrl = "https://images.unsplash.com/photo-1513258496099-48168024aec0?w=640" },
-                    new Lesson { Id = 2, CategoryId = 1, Title = "Alphabet N-Z", Description = "Learn letters N through Z.", Difficulty = "Beginner", DurationSeconds = 420, InstructorName = "Sarah Kim", ThumbnailUrl = "https://images.unsplash.com/photo-1523240795612-9a054b0db644?w=640" },
-                    new Lesson { Id = 3, CategoryId = 1, Title = "Numbers 1-20", Description = "Sign common numbers for everyday use.", Difficulty = "Beginner", DurationSeconds = 360, InstructorName = "Daniel Chen", ThumbnailUrl = "https://images.unsplash.com/photo-1588072432836-e10032774350?w=640" },
-                    new Lesson { Id = 4, CategoryId = 2, Title = "Greetings", Description = "Say hello, goodbye, and introduce yourself.", Difficulty = "Intermediate", DurationSeconds = 480, InstructorName = "Ava Brooks", ThumbnailUrl = "https://images.unsplash.com/photo-1529156069898-49953e39b3ac?w=640" },
-                    new Lesson { Id = 5, CategoryId = 2, Title = "Questions", Description = "Ask common questions clearly and confidently.", Difficulty = "Intermediate", DurationSeconds = 540, InstructorName = "Ava Brooks", ThumbnailUrl = "https://images.unsplash.com/photo-1522202176988-66273c2fd55f?w=640" },
-                    new Lesson { Id = 6, CategoryId = 3, Title = "Classifier Basics", Description = "Use classifiers for spatial and movement concepts.", Difficulty = "Advanced", DurationSeconds = 720, InstructorName = "Luis Ortega", ThumbnailUrl = "https://images.unsplash.com/photo-1434030216411-0b793f4b4173?w=640" },
-                    new Lesson { Id = 7, CategoryId = 1, Title = "Camera Practice Set 1: Alphabet", Description = "Real-time camera practice for basic alphabet hand signs.", Difficulty = "Beginner", DurationSeconds = 600, InstructorName = "Realtime Coach", ThumbnailUrl = "https://images.unsplash.com/photo-1516321497487-e288fb19713f?w=640" },
-                    new Lesson { Id = 8, CategoryId = 2, Title = "Camera Practice Set 2: Greetings", Description = "Use camera mode to practice greeting signs with instant prediction.", Difficulty = "Intermediate", DurationSeconds = 720, InstructorName = "Realtime Coach", ThumbnailUrl = "https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=640" },
-                    new Lesson { Id = 9, CategoryId = 3, Title = "Camera Practice Set 3: Advanced Phrases", Description = "Advanced real-time drills using gesture recognition feedback.", Difficulty = "Advanced", DurationSeconds = 900, InstructorName = "Realtime Coach", ThumbnailUrl = "https://images.unsplash.com/photo-1509062522246-3755977927d7?w=640" },
-                    new Lesson { Id = 10, CategoryId = 1, Title = "Family Signs", Description = "Learn common signs for family members and relationships.", Difficulty = "Beginner", DurationSeconds = 510, InstructorName = "Sarah Kim", ThumbnailUrl = "https://images.unsplash.com/photo-1511895426328-dc8714191300?w=640" },
-                    new Lesson { Id = 11, CategoryId = 1, Title = "Days and Time", Description = "Practice signs for days of the week and daily time expressions.", Difficulty = "Beginner", DurationSeconds = 540, InstructorName = "Daniel Chen", ThumbnailUrl = "https://images.unsplash.com/photo-1506784983877-45594efa4cbe?w=640" },
-                    new Lesson { Id = 12, CategoryId = 2, Title = "Shopping Dialogues", Description = "Use practical signs for buying, asking prices, and checkout.", Difficulty = "Intermediate", DurationSeconds = 660, InstructorName = "Ava Brooks", ThumbnailUrl = "https://images.unsplash.com/photo-1472851294608-062f824d29cc?w=640" },
-                    new Lesson { Id = 13, CategoryId = 2, Title = "School & Work Phrases", Description = "Build confidence with signs used in classroom and workplace conversations.", Difficulty = "Intermediate", DurationSeconds = 690, InstructorName = "Ava Brooks", ThumbnailUrl = "https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?w=640" },
-                    new Lesson { Id = 14, CategoryId = 3, Title = "Narrative Classifiers", Description = "Apply classifiers in storytelling with movement and spatial context.", Difficulty = "Advanced", DurationSeconds = 840, InstructorName = "Luis Ortega", ThumbnailUrl = "https://images.unsplash.com/photo-1456324504439-367cee3b3c32?w=640" });
+                var lessons = new List<Lesson>();
+                int lessonId = 1;
+
+                // Category 1: ASL Alphabet A-Z (26 Individual Letter Lessons)
+                string[] letters = { "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z" };
+                foreach (var letter in letters)
+                {
+                    lessons.Add(new Lesson
+                    {
+                        Id = lessonId++,
+                        CategoryId = 1,
+                        Title = $"Letter {letter}",
+                        Description = $"Learn the official ASL handshape for the letter '{letter}' with high-definition video demonstration.",
+                        Difficulty = "Beginner",
+                        DurationSeconds = 120,
+                        InstructorName = "Sarah Kim (ASL Specialist)",
+                        ThumbnailUrl = $"/api/media/image/letters_{(letter.ToLower() == "a" ? "a" : letter.ToLower() == "b" ? "b" : "a")}.png",
+                        VideoUrl = $"/api/videos/letter/{letter}"
+                    });
+                }
+
+                // Group Alphabet Lessons
+                lessons.Add(new Lesson
+                {
+                    Id = lessonId++,
+                    CategoryId = 1,
+                    Title = "Alphabet Mastery: A through M",
+                    Description = "Comprehensive video drill for letters A to M.",
+                    Difficulty = "Beginner",
+                    DurationSeconds = 420,
+                    InstructorName = "Sarah Kim",
+                    ThumbnailUrl = "/api/media/image/letters_a_m.png",
+                    VideoUrl = "/api/videos/letter/A"
+                });
+
+                lessons.Add(new Lesson
+                {
+                    Id = lessonId++,
+                    CategoryId = 1,
+                    Title = "Alphabet Mastery: N through Z",
+                    Description = "Comprehensive video drill for letters N to Z.",
+                    Difficulty = "Beginner",
+                    DurationSeconds = 420,
+                    InstructorName = "Sarah Kim",
+                    ThumbnailUrl = "/api/media/image/letters_n_z.png",
+                    VideoUrl = "/api/videos/letter/N"
+                });
+
+                // Category 2: Conversations & Greetings
+                lessons.Add(new Lesson { Id = lessonId++, CategoryId = 2, Title = "Greetings & Introductions", Description = "Say hello, goodbye, and introduce yourself in ASL.", Difficulty = "Intermediate", DurationSeconds = 480, InstructorName = "Ava Brooks", ThumbnailUrl = "/api/media/image/phrases.png", VideoUrl = "/api/videos/letter/H" });
+                lessons.Add(new Lesson { Id = lessonId++, CategoryId = 2, Title = "Common Questions", Description = "Ask WHO, WHAT, WHERE, WHEN, and WHY in ASL.", Difficulty = "Intermediate", DurationSeconds = 540, InstructorName = "Ava Brooks", ThumbnailUrl = "/api/media/image/phrases.png", VideoUrl = "/api/videos/letter/W" });
+                lessons.Add(new Lesson { Id = lessonId++, CategoryId = 2, Title = "Shopping & Prices", Description = "Practical signs for buying, asking prices, and checkout.", Difficulty = "Intermediate", DurationSeconds = 660, InstructorName = "Ava Brooks", ThumbnailUrl = "/api/media/image/spelling_practice.png" });
+                lessons.Add(new Lesson { Id = lessonId++, CategoryId = 2, Title = "Workplace & School", Description = "Signs used in classroom and office environments.", Difficulty = "Intermediate", DurationSeconds = 690, InstructorName = "Ava Brooks", ThumbnailUrl = "/api/media/image/basics.png" });
+
+                // Category 3: Advanced Grammar & Classifiers
+                lessons.Add(new Lesson { Id = lessonId++, CategoryId = 3, Title = "Classifier Basics (CL:1, CL:3)", Description = "Use classifiers for spatial movement and object descriptions.", Difficulty = "Advanced", DurationSeconds = 720, InstructorName = "Luis Ortega", ThumbnailUrl = "/api/media/image/dynamic.png" });
+                lessons.Add(new Lesson { Id = lessonId++, CategoryId = 3, Title = "Narrative Classifiers & Storytelling", Description = "Apply spatial agreement and classifiers in fluid ASL narratives.", Difficulty = "Advanced", DurationSeconds = 840, InstructorName = "Luis Ortega", ThumbnailUrl = "/api/media/image/dynamic.png" });
+
+                // Category 4: Numbers & Everyday Vocabulary
+                lessons.Add(new Lesson { Id = lessonId++, CategoryId = 4, Title = "Numbers 1-20", Description = "Sign numbers clearly for everyday counting.", Difficulty = "Beginner", DurationSeconds = 360, InstructorName = "Daniel Chen", ThumbnailUrl = "/api/media/image/basics.png" });
+                lessons.Add(new Lesson { Id = lessonId++, CategoryId = 4, Title = "Family & Relationships", Description = "Learn signs for Mother, Father, Friend, and Siblings.", Difficulty = "Beginner", DurationSeconds = 510, InstructorName = "Sarah Kim", ThumbnailUrl = "/api/media/image/basics.png" });
+                lessons.Add(new Lesson { Id = lessonId++, CategoryId = 4, Title = "Days, Months & Time", Description = "Signs for days of the week, months, and time of day.", Difficulty = "Beginner", DurationSeconds = 540, InstructorName = "Daniel Chen", ThumbnailUrl = "/api/media/image/basics.png" });
+
+                // Category 5: Real-Time Camera Practice Drills
+                lessons.Add(new Lesson { Id = lessonId++, CategoryId = 5, Title = "Camera Practice: Alphabet Drill", Description = "Real-time camera practice with immediate AI hand landmarker feedback.", Difficulty = "Beginner", DurationSeconds = 600, InstructorName = "Realtime AI Coach", ThumbnailUrl = "/api/media/image/spelling_practice.png" });
+                lessons.Add(new Lesson { Id = lessonId++, CategoryId = 5, Title = "Camera Practice: Dynamic Gestures", Description = "Practice dynamic motion signs with camera recognition.", Difficulty = "Intermediate", DurationSeconds = 720, InstructorName = "Realtime AI Coach", ThumbnailUrl = "/api/media/image/speed_test.png" });
+
+                context.Lessons.AddRange(lessons);
+                await context.SaveChangesAsync();
             }
 
+            // 3. Achievements
             if (!await context.Achievements.AnyAsync())
             {
                 context.Achievements.AddRange(
-                    new Achievement { Id = 1, Title = "First Steps", Description = "Complete your first lesson.", RequiredPoints = 10, BadgeColor = "#10B981", IconChar = "🌟" },
-                    new Achievement { Id = 2, Title = "Consistency", Description = "Keep a 3-day learning streak.", RequiredPoints = 30, BadgeColor = "#3B82F6", IconChar = "🔥" },
-                    new Achievement { Id = 3, Title = "Dedicated Learner", Description = "Reach 100 XP.", RequiredPoints = 100, BadgeColor = "#F59E0B", IconChar = "🏆" });
+                    new Achievement { Id = 1, Title = "First Steps", Description = "Complete your first ASL lesson.", RequiredPoints = 10, BadgeColor = "#10B981", IconChar = "🌟" },
+                    new Achievement { Id = 2, Title = "Streak Master", Description = "Maintain a 3-day learning streak.", RequiredPoints = 30, BadgeColor = "#3B82F6", IconChar = "🔥" },
+                    new Achievement { Id = 3, Title = "Alphabet Champion", Description = "Master all 26 ASL alphabet letters.", RequiredPoints = 100, BadgeColor = "#F59E0B", IconChar = "🏆" },
+                    new Achievement { Id = 4, Title = "Camera Prodigy", Description = "Complete 5 real-time camera drills.", RequiredPoints = 150, BadgeColor = "#8B5CF6", IconChar = "📷" });
+
+                await context.SaveChangesAsync();
             }
 
+            // 4. Demo User & Seed Progress
             var demoUser = await context.Users.FirstOrDefaultAsync(u => u.Email == "demo@signlanguage.app");
             if (demoUser == null)
             {
@@ -73,49 +152,51 @@ namespace SignLanguageApi.Data
                     Email = "demo@signlanguage.app",
                     Name = "Demo Learner",
                     PasswordHash = BCrypt.Net.BCrypt.HashPassword("DemoPass123!"),
-                    LearningStreak = 2,
-                    TotalXp = 45,
+                    LearningStreak = 3,
+                    TotalXp = 120,
                     CreatedAt = utcNow.AddDays(-10),
-                    LastLoginAt = utcNow.AddHours(-2)
+                    LastLoginAt = utcNow.AddHours(-1)
                 };
 
                 context.Users.Add(demoUser);
+                await context.SaveChangesAsync();
             }
 
-            await context.SaveChangesAsync();
-
+            // User Lessons
             if (!await context.UserLessons.AnyAsync(ul => ul.UserId == demoUser.Id))
             {
                 context.UserLessons.AddRange(
                     new UserLesson { UserId = demoUser.Id, LessonId = 1, CompletionPercentage = 100, IsCompleted = true, CompletedAt = utcNow.AddDays(-3), StartedAt = utcNow.AddDays(-3), TotalAttempts = 2 },
-                    new UserLesson { UserId = demoUser.Id, LessonId = 2, CompletionPercentage = 70, IsCompleted = false, StartedAt = utcNow.AddDays(-2), TotalAttempts = 3 },
-                    new UserLesson { UserId = demoUser.Id, LessonId = 4, CompletionPercentage = 30, IsCompleted = false, StartedAt = utcNow.AddDays(-1), TotalAttempts = 1 },
-                    new UserLesson { UserId = demoUser.Id, LessonId = 7, CompletionPercentage = 40, IsCompleted = false, StartedAt = utcNow.AddHours(-12), TotalAttempts = 2 },
-                    new UserLesson { UserId = demoUser.Id, LessonId = 8, CompletionPercentage = 15, IsCompleted = false, StartedAt = utcNow.AddHours(-6), TotalAttempts = 1 },
-                    new UserLesson { UserId = demoUser.Id, LessonId = 9, CompletionPercentage = 0, IsCompleted = false, StartedAt = utcNow.AddHours(-2), TotalAttempts = 1 });
+                    new UserLesson { UserId = demoUser.Id, LessonId = 2, CompletionPercentage = 100, IsCompleted = true, CompletedAt = utcNow.AddDays(-2), StartedAt = utcNow.AddDays(-2), TotalAttempts = 1 },
+                    new UserLesson { UserId = demoUser.Id, LessonId = 3, CompletionPercentage = 80, IsCompleted = false, StartedAt = utcNow.AddDays(-1), TotalAttempts = 3 },
+                    new UserLesson { UserId = demoUser.Id, LessonId = 27, CompletionPercentage = 100, IsCompleted = true, CompletedAt = utcNow.AddHours(-12), StartedAt = utcNow.AddHours(-12), TotalAttempts = 1 },
+                    new UserLesson { UserId = demoUser.Id, LessonId = 29, CompletionPercentage = 40, IsCompleted = false, StartedAt = utcNow.AddHours(-2), TotalAttempts = 1 });
+
+                await context.SaveChangesAsync();
             }
 
+            // Spaced Repetition Cards
             if (!await context.SpacedRepetitionLessons.AnyAsync(sr => sr.UserId == demoUser.Id))
             {
                 context.SpacedRepetitionLessons.AddRange(
-                    new SpacedRepetitionLesson { UserId = demoUser.Id, LessonId = 1, DueDate = utcNow.AddHours(-3), RepetitionCount = 2, RetentionPercentage = 82, Interval = 3, EaseFactor = 2.4, LastReviewedAt = utcNow.AddDays(-2) },
-                    new SpacedRepetitionLesson { UserId = demoUser.Id, LessonId = 2, DueDate = utcNow.AddDays(1), RepetitionCount = 1, RetentionPercentage = 65, Interval = 1, EaseFactor = 2.5, LastReviewedAt = utcNow.AddDays(-1) },
-                    new SpacedRepetitionLesson { UserId = demoUser.Id, LessonId = 4, DueDate = utcNow.AddDays(4), RepetitionCount = 0, RetentionPercentage = 50, Interval = 1, EaseFactor = 2.5, LastReviewedAt = utcNow.AddDays(-1) });
+                    new SpacedRepetitionLesson { UserId = demoUser.Id, LessonId = 1, DueDate = utcNow.AddHours(-1), RepetitionCount = 3, RetentionPercentage = 90, Interval = 4, EaseFactor = 2.5, LastReviewedAt = utcNow.AddDays(-2) },
+                    new SpacedRepetitionLesson { UserId = demoUser.Id, LessonId = 2, DueDate = utcNow.AddDays(1), RepetitionCount = 2, RetentionPercentage = 80, Interval = 2, EaseFactor = 2.4, LastReviewedAt = utcNow.AddDays(-1) },
+                    new SpacedRepetitionLesson { UserId = demoUser.Id, LessonId = 3, DueDate = utcNow.AddDays(2), RepetitionCount = 1, RetentionPercentage = 70, Interval = 1, EaseFactor = 2.5, LastReviewedAt = utcNow.AddHours(-6) });
+
+                await context.SaveChangesAsync();
             }
 
+            // Achievements Unlocked
             if (!await context.UserAchievements.AnyAsync(ua => ua.UserId == demoUser.Id))
             {
-                context.UserAchievements.Add(new UserAchievement
-                {
-                    UserId = demoUser.Id,
-                    AchievementId = 1,
-                    UnlockedAt = utcNow.AddDays(-3)
-                });
+                context.UserAchievements.AddRange(
+                    new UserAchievement { UserId = demoUser.Id, AchievementId = 1, UnlockedAt = utcNow.AddDays(-3) },
+                    new UserAchievement { UserId = demoUser.Id, AchievementId = 2, UnlockedAt = utcNow.AddDays(-1) });
+
+                await context.SaveChangesAsync();
             }
 
-            await context.SaveChangesAsync();
-
-            logger.LogInformation("Demo data ready. Demo account: demo@signlanguage.app / DemoPass123!");
+            logger.LogInformation("Demo dataset fully seeded with 26 ASL Letter videos, categories, achievements, and user progress!");
         }
     }
 }

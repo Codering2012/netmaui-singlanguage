@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:SignLanguageApp.ViewModels"
+             xmlns:controls="clr-namespace:SignLanguageApp.Controls"
+             x:Class="SignLanguageApp.Pages.SentenceBuilderPage"
+             x:DataType="vm:SentenceBuilderViewModel"
+             x:Name="sentenceBuilderPage"
+             Title="Sentence Builder Workspace"
+             Shell.NavBarIsVisible="False"
+             BackgroundColor="Transparent">
+
+    <controls:MainLayout>
+        <Grid RowDefinitions="Auto, *, Auto" Padding="16">
+
+            <!-- Header -->
+            <Grid Grid.Row="0" ColumnDefinitions="Auto, *" Padding="20, 24, 20, 16">
+                <Button Text="←" 
+                        FontSize="24" 
+                        TextColor="{DynamicResource PrimaryTextColor}" 
+                        BackgroundColor="Transparent"
+                        Command="{Binding ClearCommand}"
+                        HeightRequest="44"
+                        WidthRequest="44"
+                        Padding="0"/>
+                <VerticalStackLayout Grid.Column="1" VerticalOptions="Center" Margin="12,0,0,0">
+                    <Label Text="ASL Sentence Builder Workspace" FontSize="22" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}"/>
+                    <Label Text="Assemble sign words into grammatically structured ASL sentences" FontSize="14" TextColor="{DynamicResource SecondaryTextColor}"/>
+                </VerticalStackLayout>
+            </Grid>
+
+            <!-- Main Workspace -->
+            <ScrollView Grid.Row="1" Padding="20, 10, 20, 20">
+                <VerticalStackLayout Spacing="20">
+                    <!-- Active Assembled Sentence Card -->
+                    <Border StrokeShape="RoundRectangle 24"
+                            StrokeThickness="2"
+                            Stroke="{DynamicResource PrimaryColor}"
+                            BackgroundColor="{DynamicResource CardBackgroundColor}"
+                            Padding="24"
+                            MinimumHeightRequest="160">
+                        <Border.Shadow>
+                            <Shadow Brush="Black" Offset="0,4" Radius="12" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                        </Border.Shadow>
+                        <VerticalStackLayout Spacing="16">
+                            <Grid ColumnDefinitions="*, Auto">
+                                <Label Text="Target ASL Sentence Structure:" FontSize="14" FontAttributes="Bold" TextColor="{DynamicResource SecondaryTextColor}"/>
+                                <Border Grid.Column="1" BackgroundColor="{DynamicResource PrimaryGlassBackgroundColor}" StrokeShape="RoundRectangle 12" Padding="12,4">
+                                    <Label Text="Syntax Workspace" FontSize="12" FontAttributes="Bold" TextColor="{DynamicResource PrimaryColor}"/>
+                                </Border>
+                            </Grid>
+
+                            <Label Text="{Binding CurrentSentence}" 
+                                   FontSize="28"
+                                   TextColor="{DynamicResource PrimaryColor}"
+                                   FontAttributes="Bold"
+                                   HorizontalOptions="Center"
+                                   HorizontalTextAlignment="Center"/>
+
+                            <FlexLayout BindableLayout.ItemsSource="{Binding SelectedSigns}" Wrap="Wrap" JustifyContent="Center">
+                                <BindableLayout.ItemTemplate>
+                                    <DataTemplate x:DataType="x:String">
+                                        <Border BackgroundColor="{DynamicResource PrimaryColor}"
+                                                StrokeShape="RoundRectangle 16"
+                                                Padding="16,10"
+                                                Margin="6">
+                                            <Border.GestureRecognizers>
+                                                <TapGestureRecognizer Command="{Binding Source={RelativeSource AncestorType={x:Type vm:SentenceBuilderViewModel}}, Path=RemoveSignCommand}"
+                                                                      CommandParameter="{Binding .}"/>
+                                            </Border.GestureRecognizers>
+                                            <HorizontalStackLayout Spacing="8">
+                                                <Label Text="{Binding .}" TextColor="{DynamicResource ButtonTextColor}" FontAttributes="Bold" FontSize="16"/>
+                                                <Label Text="✕" TextColor="{DynamicResource ErrorColor}" FontSize="14" VerticalOptions="Center"/>
+                                            </HorizontalStackLayout>
+                                        </Border>
+                                    </DataTemplate>
+                                </BindableLayout.ItemTemplate>
+                            </FlexLayout>
+                        </VerticalStackLayout>
+                    </Border>
+
+                    <!-- Word Bank Tokens -->
+                    <Border StrokeShape="RoundRectangle 24"
+                            Stroke="{DynamicResource BorderBrush}"
+                            StrokeThickness="1"
+                            BackgroundColor="{DynamicResource CardBackgroundColor}"
+                            Padding="24">
+                        <Border.Shadow>
+                            <Shadow Brush="Black" Offset="0,4" Radius="12" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                        </Border.Shadow>
+                        <VerticalStackLayout Spacing="16">
+                            <Label Text="Sign Word Bank (Tap to add to sentence):" FontSize="15" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}"/>
+
+                            <FlexLayout BindableLayout.ItemsSource="{Binding AvailableSigns}" Wrap="Wrap" JustifyContent="Center">
+                                <BindableLayout.ItemTemplate>
+                                    <DataTemplate x:DataType="x:String">
+                                        <Border BackgroundColor="{DynamicResource CardBackgroundColor}"
+                                                Stroke="{DynamicResource BorderBrush}"
+                                                StrokeThickness="2"
+                                                StrokeShape="RoundRectangle 16"
+                                                Padding="16,10"
+                                                Margin="6">
+                                            <Border.GestureRecognizers>
+                                                <TapGestureRecognizer Command="{Binding Source={RelativeSource AncestorType={x:Type vm:SentenceBuilderViewModel}}, Path=AddSignCommand}"
+                                                                      CommandParameter="{Binding .}"/>
+                                            </Border.GestureRecognizers>
+                                            <HorizontalStackLayout Spacing="8">
+                                                <Label Text="➕" FontSize="14" VerticalOptions="Center"/>
+                                                <Label Text="{Binding .}" TextColor="{DynamicResource PrimaryTextColor}" FontAttributes="Bold" FontSize="16"/>
+                                            </HorizontalStackLayout>
+                                        </Border>
+                                    </DataTemplate>
+                                </BindableLayout.ItemTemplate>
+                            </FlexLayout>
+                        </VerticalStackLayout>
+                    </Border>
+                </VerticalStackLayout>
+            </ScrollView>
+
+            <!-- Footer Action -->
+            <Border Grid.Row="2" Padding="20, 16" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeThickness="0">
+                <Border.Shadow>
+                    <Shadow Brush="Black" Offset="0,-4" Radius="15" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                </Border.Shadow>
+                <Grid ColumnDefinitions="*, *">
+                    <Button Grid.Column="0" 
+                            Text="CLEAR SENTENCE"
+                            Command="{Binding ClearCommand}"
+                            BackgroundColor="Transparent"
+                            TextColor="{DynamicResource SecondaryTextColor}"
+                            BorderColor="{DynamicResource BorderBrush}"
+                            BorderWidth="1"
+                            CornerRadius="16"
+                            HeightRequest="60"
+                            FontSize="14"
+                            FontAttributes="Bold"
+                            Margin="0,0,8,0"/>
+
+                    <Button Grid.Column="1" 
+                            Text="PRACTICE ASL ➔"
+                            Command="{Binding ClearCommand}"
+                            BackgroundColor="{DynamicResource PrimaryColor}"
+                            TextColor="{DynamicResource ButtonTextColor}"
+                            FontAttributes="Bold"
+                            CornerRadius="16"
+                            HeightRequest="60"
+                            FontSize="14"
+                            Margin="8,0,0,0"/>
+                </Grid>
+            </Border>
+        </Grid>
+    </controls:MainLayout>
+</ContentPage>

@@ -1,0 +1,207 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:SignLanguageApp.ViewModels"
+             xmlns:controls="clr-namespace:SignLanguageApp.Controls"
+             x:Class="SignLanguageApp.Pages.DictionaryPage"
+             x:DataType="vm:DictionaryViewModel"
+             Title="Dictionary"
+             BackgroundColor="Transparent">
+    
+    <controls:MainLayout>
+        <Grid>
+            <ScrollView Padding="0,0,0,100">
+                <VerticalStackLayout Spacing="20" Padding="20,20,20,120">
+                    
+                    <!-- Title Header -->
+                    <Border StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 24" Padding="24">
+                        <Border.Shadow>
+                            <Shadow Brush="Black" Offset="0,6" Radius="15" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                        </Border.Shadow>
+                        <VerticalStackLayout Spacing="8">
+                            <Label Text="ASL Dictionary 📖" FontSize="32" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+                            <Label Text="Search for ASL signs, fingerspelling letters, and daily vocabulary" FontSize="14" TextColor="{DynamicResource SecondaryTextColor}" />
+                        </VerticalStackLayout>
+                    </Border>
+
+                    <!-- Search Bar Card -->
+                    <Border StrokeShape="RoundRectangle 20" 
+                            BackgroundColor="{DynamicResource CardBackgroundColor}" 
+                            Stroke="{DynamicResource BorderBrush}" 
+                            StrokeThickness="1" 
+                            Padding="12,4">
+                        <Border.Shadow>
+                            <Shadow Brush="Black" Offset="0,4" Radius="10" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                        </Border.Shadow>
+                        <SearchBar Placeholder="Search signs, hand shapes, or phrases..." 
+                                   Text="{Binding SearchQuery, Mode=TwoWay}"
+                                   PlaceholderColor="{DynamicResource SecondaryTextColor}" 
+                                   TextColor="{DynamicResource PrimaryTextColor}" 
+                                   BackgroundColor="Transparent" 
+                                   CancelButtonColor="{DynamicResource PrimaryTextColor}" />
+                    </Border>
+
+                    <!-- Category Filter Chips -->
+                    <ScrollView Orientation="Horizontal" HorizontalScrollBarVisibility="Never">
+                        <HorizontalStackLayout BindableLayout.ItemsSource="{Binding Categories}" Spacing="8">
+                            <BindableLayout.ItemTemplate>
+                                <DataTemplate x:DataType="x:String">
+                                    <Button Text="{Binding .}"
+                                            Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.SelectCategoryFilterCommand}"
+                                            CommandParameter="{Binding .}"
+                                            BackgroundColor="{DynamicResource SecondaryBackgroundColor}"
+                                            TextColor="{DynamicResource PrimaryTextColor}"
+                                            FontAttributes="Bold"
+                                            FontSize="12"
+                                            CornerRadius="16"
+                                            Padding="16,8" />
+                                </DataTemplate>
+                            </BindableLayout.ItemTemplate>
+                        </HorizontalStackLayout>
+                    </ScrollView>
+
+                    <!-- Results Counter -->
+                    <Label Text="{Binding FilteredItems.Count, StringFormat='Showing {0} sign entries ✋'}" 
+                           FontSize="13" 
+                           FontAttributes="Bold" 
+                           TextColor="{DynamicResource SecondaryTextColor}" />
+
+                    <!-- Dictionary Sign Cards List -->
+                    <VerticalStackLayout BindableLayout.ItemsSource="{Binding FilteredItems}" Spacing="12">
+                        <BindableLayout.ItemTemplate>
+                            <DataTemplate x:DataType="vm:DictionaryItemViewModel">
+                                <Border StrokeShape="RoundRectangle 20" 
+                                        BackgroundColor="{DynamicResource CardBackgroundColor}" 
+                                        Stroke="{DynamicResource BorderBrush}"
+                                        StrokeThickness="1" 
+                                        Padding="16">
+                                    <Border.Shadow>
+                                        <Shadow Brush="Black" Offset="0,4" Radius="10" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                                    </Border.Shadow>
+                                    <Grid ColumnDefinitions="80,*,Auto" ColumnSpacing="15">
+                                        <!-- Sign Image Thumbnail -->
+                                        <Border Grid.Column="0" StrokeThickness="0" BackgroundColor="{DynamicResource SecondaryBackgroundColor}" StrokeShape="RoundRectangle 14" HeightRequest="70" WidthRequest="80">
+                                            <Image Source="{Binding ThumbnailUrl}" Aspect="AspectFill" />
+                                        </Border>
+
+                                        <!-- Details -->
+                                        <VerticalStackLayout Grid.Column="1" Spacing="4" VerticalOptions="Center">
+                                            <HorizontalStackLayout Spacing="8">
+                                                <Label Text="{Binding SignName}" FontSize="17" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+                                                <Border BackgroundColor="{DynamicResource SecondaryBackgroundColor}" StrokeThickness="0" StrokeShape="RoundRectangle 8" Padding="6,2">
+                                                    <Label Text="{Binding Category}" FontSize="10" FontAttributes="Bold" TextColor="{DynamicResource SecondaryColor}" />
+                                                </Border>
+                                            </HorizontalStackLayout>
+                                            <Label Text="{Binding Description}" FontSize="12" TextColor="{DynamicResource SecondaryTextColor}" MaxLines="2" LineBreakMode="TailTruncation" />
+                                        </VerticalStackLayout>
+
+                                        <!-- Open Detail Action Button -->
+                                        <Button Grid.Column="2" 
+                                                Text="View 👁️" 
+                                                Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.OpenSignDetailCommand}"
+                                                CommandParameter="{Binding .}"
+                                                BackgroundColor="{DynamicResource PrimaryColor}" 
+                                                TextColor="{DynamicResource ButtonTextColor}" 
+                                                FontAttributes="Bold" 
+                                                FontSize="12" 
+                                                CornerRadius="12" 
+                                                Padding="14,8"
+                                                VerticalOptions="Center" />
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </BindableLayout.ItemTemplate>
+                    </VerticalStackLayout>
+
+                </VerticalStackLayout>
+            </ScrollView>
+
+            <!-- Interactive Sign Detail Modal Sheet Overlay -->
+            <Grid IsVisible="{Binding IsDetailModalVisible}" BackgroundColor="#90000000" Padding="20">
+                <Border StrokeShape="RoundRectangle 24" 
+                        BackgroundColor="{DynamicResource CardBackgroundColor}" 
+                        Stroke="{DynamicResource BorderBrush}"
+                        StrokeThickness="1" 
+                        HorizontalOptions="Center" 
+                        VerticalOptions="Center"
+                        WidthRequest="380"
+                        Padding="24">
+                    <Border.Shadow>
+                        <Shadow Brush="Black" Offset="0,10" Radius="25" Opacity="0.4"/>
+                    </Border.Shadow>
+                    
+                    <VerticalStackLayout Spacing="16">
+                        <!-- Top Header -->
+                        <Grid ColumnDefinitions="*,Auto">
+                            <Label Grid.Column="0" Text="{Binding SelectedSign.SignName}" FontSize="24" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" VerticalOptions="Center" />
+                            <Button Grid.Column="1" Text="✕" 
+                                    Command="{Binding CloseSignDetailCommand}" 
+                                    BackgroundColor="Transparent" 
+                                    TextColor="{DynamicResource SecondaryTextColor}" 
+                                    FontSize="18" 
+                                    FontAttributes="Bold" 
+                                    Padding="5" />
+                        </Grid>
+
+                        <!-- Thumbnail Preview -->
+                        <Border StrokeShape="RoundRectangle 16" StrokeThickness="0" HeightRequest="160" BackgroundColor="{DynamicResource SecondaryBackgroundColor}">
+                            <Image Source="{Binding SelectedSign.ThumbnailUrl}" Aspect="AspectFill" />
+                        </Border>
+
+                        <!-- Category & Difficulty Badges -->
+                        <HorizontalStackLayout Spacing="10">
+                            <Border BackgroundColor="{DynamicResource SecondaryBackgroundColor}" StrokeThickness="0" StrokeShape="RoundRectangle 10" Padding="10,4">
+                                <Label Text="{Binding SelectedSign.Category, StringFormat='Category: {0}'}" FontSize="12" FontAttributes="Bold" TextColor="{DynamicResource PrimaryColor}" />
+                            </Border>
+                            <Border BackgroundColor="{DynamicResource SecondaryBackgroundColor}" StrokeThickness="0" StrokeShape="RoundRectangle 10" Padding="10,4">
+                                <Label Text="{Binding SelectedSign.Difficulty, StringFormat='Difficulty: {0}'}" FontSize="12" FontAttributes="Bold" TextColor="{DynamicResource SecondaryColor}" />
+                            </Border>
+                        </HorizontalStackLayout>
+
+                        <!-- Description & Step-by-Step Hand Shape Guide -->
+                        <VerticalStackLayout Spacing="6">
+                            <Label Text="Hand Shape Guide ✋" FontSize="14" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+                            <Label Text="{Binding SelectedSign.HandShapeInstruction}" FontSize="13" TextColor="{DynamicResource SecondaryTextColor}" LineBreakMode="WordWrap" />
+                        </VerticalStackLayout>
+
+                        <!-- Action Buttons -->
+                        <VerticalStackLayout Spacing="10" Margin="0,10,0,0">
+                            <Button Text="Practice in Camera Mode 🎯" 
+                                    Command="{Binding PracticeSignCommand}"
+                                    CommandParameter="{Binding SelectedSign}"
+                                    BackgroundColor="{DynamicResource PrimaryColor}" 
+                                    TextColor="{DynamicResource ButtonTextColor}" 
+                                    FontAttributes="Bold" 
+                                    FontSize="14" 
+                                    CornerRadius="14" 
+                                    Padding="16,12" />
+                            
+                            <Grid ColumnDefinitions="*,*">
+                                <Button Grid.Column="0" 
+                                        Text="Favorite ⭐" 
+                                        Command="{Binding ToggleFavoriteCommand}"
+                                        CommandParameter="{Binding SelectedSign}"
+                                        BackgroundColor="{DynamicResource SecondaryBackgroundColor}" 
+                                        TextColor="{DynamicResource PrimaryTextColor}" 
+                                        FontAttributes="Bold" 
+                                        FontSize="12" 
+                                        CornerRadius="12" 
+                                        Margin="0,0,5,0" />
+                                <Button Grid.Column="1" 
+                                        Text="Close" 
+                                        Command="{Binding CloseSignDetailCommand}"
+                                        BackgroundColor="{DynamicResource SecondaryBackgroundColor}" 
+                                        TextColor="{DynamicResource SecondaryTextColor}" 
+                                        FontAttributes="Bold" 
+                                        FontSize="12" 
+                                        CornerRadius="12" 
+                                        Margin="5,0,0,0" />
+                            </Grid>
+                        </VerticalStackLayout>
+                    </VerticalStackLayout>
+                </Border>
+            </Grid>
+
+        </Grid>
+    </controls:MainLayout>
+</ContentPage>

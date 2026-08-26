@@ -3,6 +3,7 @@ using Microsoft.Maui.Controls.Shapes;
 using SignLanguageApp.Services;
 using SignLanguageApp.ViewModels;
 using System.Linq;
+using SignLanguageApp.Helpers;
 
 namespace SignLanguageApp.Pages;
 
@@ -84,20 +85,52 @@ public sealed class StartupLoadingPage : ContentPage
 
     protected override async void OnAppearing()
     {
-        base.OnAppearing();
-
-        if (_initialized)
+        try
         {
-            return;
+            base.OnAppearing();
+
+            if (_initialized)
+            {
+                return;
+            }
+
+            _initialized = true;
+
+            FileLogger.Log("[STARTUP] PrepareAndResolveRootAsync completed!");
+            var nextRoot = await PrepareAndResolveRootAsync();
+            FileLogger.Log("[STARTUP] nextRoot resolved!");
+            
+            if (Application.Current != null)
+            {
+                FileLogger.Log("[STARTUP] Changing MainPage...");
+                MainThread.BeginInvokeOnMainThread(async () => 
+                {
+                    try
+                    {
+                        FileLogger.Log("[STARTUP] Inside BeginInvokeOnMainThread...");
+                        await Task.Delay(50);
+                        FileLogger.Log("[STARTUP] Task.Delay finished...");
+                        
+                        var window = this.Window ?? Application.Current.Windows.FirstOrDefault();
+                        FileLogger.Log($"[STARTUP] Window resolved: {window != null}");
+                        
+                        FileLogger.Log("[STARTUP] ABOUT TO ASSIGN MAINPAGE!");
+#pragma warning disable CS0618
+                        Application.Current.MainPage = nextRoot;
+#pragma warning restore CS0618
+                        FileLogger.Log("[STARTUP] MainPage changed successfully!");
+                    }
+                    catch (Exception ex)
+                    {
+                        FileLogger.Log($"[FATAL ERROR IN LAMBDA]: {ex}");
+                        SignLanguageApp.Helpers.GlobalExceptionHandler.HandleException(ex);
+                    }
+                });
+            }
         }
-
-        _initialized = true;
-
-        var nextRoot = await PrepareAndResolveRootAsync();
-        var window = Application.Current?.Windows?.FirstOrDefault();
-        if (window != null)
+        catch (Exception ex)
         {
-            window.Page = nextRoot;
+            SignLanguageApp.Helpers.GlobalExceptionHandler.HandleException(ex);
         }
     }
 
@@ -120,21 +153,27 @@ public sealed class StartupLoadingPage : ContentPage
 
             if (isAuthenticated)
             {
+                System.Diagnostics.Debug.WriteLine("[STARTUP] Calling RefreshTokenAsync...");
                 var refreshSucceeded = await authService!.RefreshTokenAsync();
+                System.Diagnostics.Debug.WriteLine($"[STARTUP] RefreshTokenAsync returned: {refreshSucceeded}");
                 if (refreshSucceeded)
                 {
-                    return new AppShell();
+                    FileLogger.Log("[STARTUP] Instantiating AppShell...");
+                    var shell = await MainThread.InvokeOnMainThreadAsync(() => new AppShell())
+                                                .WithTimeout("AppShell Constructor", 5000);
+                    FileLogger.Log("[STARTUP] AppShell instantiated successfully!");
+                    return shell;
                 }
 
                 await authService.LogoutAsync();
-                return new LoginShell();
+                return await MainThread.InvokeOnMainThreadAsync(() => new LoginShell());
             }
 
-            return new LoginShell();
+            return await MainThread.InvokeOnMainThreadAsync(() => new LoginShell());
         }
-        catch
+        catch (Exception ex)
         {
-            return new LoginShell();
+            throw; // Let OnAppearing catch this and handle it properly
         }
     }
 }

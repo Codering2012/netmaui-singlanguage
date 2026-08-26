@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using SignLanguageApp.Model;
 
 namespace SignLanguageApp.Services;
@@ -66,8 +66,9 @@ public class AuthService : IAuthService
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"Login error: {ex.Message}");
-            return null;
+            Debug.WriteLine($"Login error in AuthService: {ex.Message}");
+            // Rethrow so the ViewModel can see the actual error (e.g. ServerUnreachableException)
+            throw;
         }
     }
 
@@ -119,7 +120,13 @@ public class AuthService : IAuthService
     public async Task<bool> IsAuthenticatedAsync()
     {
         var token = await _databaseService.GetAccessTokenAsync();
-        return !string.IsNullOrEmpty(token);
+        if (!string.IsNullOrEmpty(token) && AuthenticationHelper.IsTokenValid(token))
+        {
+            // Sync token to API service so future requests are authorized
+            _apiService.SetAuthToken(token);
+            return true;
+        }
+        return false;
     }
 
     public async Task<bool> RefreshTokenAsync()
@@ -135,7 +142,12 @@ public class AuthService : IAuthService
             }
 
             var refreshed = await _apiService.RefreshTokenAsync(refreshToken);
-            if (!refreshed)
+            if (refreshed)
+            {
+                // Access tokens are already saved by ApiService.RefreshTokenAsync
+                // during its internal logic.
+            }
+            else
             {
                 await _databaseService.ClearAllAsync();
                 _apiService.SetAuthToken(string.Empty);

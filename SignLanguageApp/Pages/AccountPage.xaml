@@ -2,118 +2,147 @@
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              xmlns:vm="clr-namespace:SignLanguageApp.ViewModels"
+             xmlns:controls="clr-namespace:SignLanguageApp.Controls"
              x:Class="SignLanguageApp.Pages.AccountPage"
              x:DataType="vm:AccountViewModel"
              Title="Profile"
-             BackgroundColor="{StaticResource ColorBackgroundDark}">
+             BackgroundColor="Transparent">
 
-    <Grid>
-        <ScrollView>
-            <VerticalStackLayout Spacing="16" Padding="16,10,16,24">
+    <controls:MainLayout>
+        <Grid>
+            <ScrollView Padding="0,0,0,100">
+                <VerticalStackLayout Spacing="20" Padding="20,20,20,120">
 
-                <Border StrokeThickness="0" Background="#123247" StrokeShape="RoundRectangle 20" Padding="18">
-                    <VerticalStackLayout Spacing="12">
-                        <Grid ColumnDefinitions="70,*" ColumnSpacing="12">
-                            <Border Grid.Column="0" StrokeThickness="0" Background="#0B1F2F" StrokeShape="RoundRectangle 35" HeightRequest="70" WidthRequest="70">
-                                <Image Source="{Binding UserAvatar}" Aspect="AspectFill" />
-                            </Border>
-                            <VerticalStackLayout Grid.Column="1" Spacing="2" VerticalOptions="Center">
-                                <Label Text="{Binding UserName, TargetNullValue='Learner'}" FontSize="20" FontAttributes="Bold" TextColor="White" />
-                                <Label Text="{Binding UserEmail, TargetNullValue='user@domain.com'}" FontSize="12" TextColor="#BFD7E8" />
+                    <Border StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 24" Padding="24">
+                        <Border.Shadow>
+                            <Shadow Brush="Black" Offset="0,6" Radius="15" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                        </Border.Shadow>
+                        <VerticalStackLayout Spacing="16">
+                            <Grid ColumnDefinitions="80,*" ColumnSpacing="16">
+                                <Border Grid.Column="0" StrokeThickness="2" Stroke="{DynamicResource PrimaryColor}" BackgroundColor="{DynamicResource SecondaryBackgroundColor}" StrokeShape="RoundRectangle 40" HeightRequest="80" WidthRequest="80">
+                                    <Image Source="{Binding UserAvatar}" Aspect="AspectFill" />
+                                </Border>
+                                <VerticalStackLayout Grid.Column="1" Spacing="4" VerticalOptions="Center">
+                                    <Label Text="{Binding UserName, TargetNullValue='Learner'}" FontSize="24" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+                                    <Label Text="{Binding UserEmail, TargetNullValue='user@domain.com'}" FontSize="14" TextColor="{DynamicResource SecondaryTextColor}" />
+                                </VerticalStackLayout>
+                            </Grid>
+
+                            <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                                <Button Grid.Column="0" Text="Edit profile" Command="{Binding EditProfileCommand}" BackgroundColor="{DynamicResource SecondaryBackgroundColor}" TextColor="{DynamicResource PrimaryTextColor}" FontAttributes="Bold" FontSize="14" CornerRadius="12" Padding="16,10" />
+                                <Button Grid.Column="1" Text="Logout" Command="{Binding LogoutCommand}" BackgroundColor="{DynamicResource ErrorColor}" TextColor="White" FontAttributes="Bold" FontSize="14" CornerRadius="12" Padding="16,10" />
+                            </Grid>
+                        </VerticalStackLayout>
+                    </Border>
+
+                    <Grid ColumnDefinitions="*,*,*" ColumnSpacing="12">
+                        <Border Grid.Column="0" StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 16" Padding="12">
+                            <Border.Shadow>
+                                <Shadow Brush="Black" Offset="0,4" Radius="10" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                            </Border.Shadow>
+                            <VerticalStackLayout Spacing="4" HorizontalOptions="Center">
+                                <Label Text="Streak" FontSize="12" TextColor="{DynamicResource SecondaryTextColor}" HorizontalOptions="Center" />
+                                <Label Text="{Binding CurrentStreak, StringFormat='{0} days'}" FontSize="20" FontAttributes="Bold" TextColor="{DynamicResource SecondaryColor}" HorizontalOptions="Center" />
                             </VerticalStackLayout>
-                        </Grid>
+                        </Border>
+                        <Border Grid.Column="1" StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 16" Padding="12">
+                            <Border.Shadow>
+                                <Shadow Brush="Black" Offset="0,4" Radius="10" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                            </Border.Shadow>
+                            <VerticalStackLayout Spacing="4" HorizontalOptions="Center">
+                                <Label Text="XP" FontSize="12" TextColor="{DynamicResource SecondaryTextColor}" HorizontalOptions="Center" />
+                                <Label Text="{Binding TotalXp, StringFormat='{0:N0}'}" FontSize="20" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" HorizontalOptions="Center" />
+                            </VerticalStackLayout>
+                        </Border>
+                        <Border Grid.Column="2" StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 16" Padding="12">
+                            <Border.Shadow>
+                                <Shadow Brush="Black" Offset="0,4" Radius="10" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                            </Border.Shadow>
+                            <VerticalStackLayout Spacing="4" HorizontalOptions="Center">
+                                <Label Text="Signs" FontSize="12" TextColor="{DynamicResource SecondaryTextColor}" HorizontalOptions="Center" />
+                                <Label Text="{Binding TotalSignsLearned}" FontSize="20" FontAttributes="Bold" TextColor="{DynamicResource PrimaryColor}" HorizontalOptions="Center" />
+                            </VerticalStackLayout>
+                        </Border>
+                    </Grid>
 
-                        <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
-                            <Button Grid.Column="0" Text="Edit profile" Command="{Binding EditProfileCommand}" BackgroundColor="White" TextColor="#0D2A3E" FontAttributes="Bold" FontSize="12" />
-                            <Button Grid.Column="1" Text="Logout" Command="{Binding LogoutCommand}" BackgroundColor="#C2410C" TextColor="White" FontAttributes="Bold" FontSize="12" />
-                        </Grid>
-                    </VerticalStackLayout>
-                </Border>
+                    <Border StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 20" Padding="20">
+                        <Border.Shadow>
+                            <Shadow Brush="Black" Offset="0,4" Radius="12" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                        </Border.Shadow>
+                        <VerticalStackLayout Spacing="12">
+                            <Label Text="Diagnostics" FontSize="18" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+                            <Label Text="{Binding LastSyncTime, StringFormat='Last sync: {0}'}" FontSize="13" TextColor="{DynamicResource SecondaryTextColor}" />
 
-                <Grid ColumnDefinitions="*,*,*" ColumnSpacing="10">
-                    <Border Grid.Column="0" StrokeThickness="0" Background="#0D2335" StrokeShape="RoundRectangle 12" Padding="10">
-                        <VerticalStackLayout Spacing="2">
-                            <Label Text="Streak" FontSize="11" TextColor="#87A7BE" />
-                            <Label Text="{Binding CurrentStreak, StringFormat='{0} days'}" FontSize="16" FontAttributes="Bold" TextColor="White" />
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10" Margin="0,5,0,0">
+                                <Label Grid.Column="0" Text="CPU usage" FontSize="14" TextColor="{DynamicResource SecondaryTextColor}" VerticalOptions="Center" />
+                                <Label Grid.Column="1" Text="{Binding CpuUsage, StringFormat='{0:P0}'}" FontSize="14" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" VerticalOptions="Center" />
+                            </Grid>
+                            <ProgressBar Progress="{Binding CpuUsage}" ProgressColor="{DynamicResource AccentColor}" BackgroundColor="{DynamicResource BorderBrush}" HeightRequest="8" />
+
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10" Margin="0,5,0,0">
+                                <Label Grid.Column="0" Text="NPU usage" FontSize="14" TextColor="{DynamicResource SecondaryTextColor}" VerticalOptions="Center" />
+                                <Label Grid.Column="1" Text="{Binding NpuUsage, StringFormat='{0:P0}'}" FontSize="14" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" VerticalOptions="Center" />
+                            </Grid>
+                            <ProgressBar Progress="{Binding NpuUsage}" ProgressColor="{DynamicResource PrimaryColor}" BackgroundColor="{DynamicResource BorderBrush}" HeightRequest="8" />
+
+                            <Button Text="Refresh diagnostics" Command="{Binding RefreshDiagnosticsCommand}" BackgroundColor="{DynamicResource SecondaryBackgroundColor}" TextColor="{DynamicResource PrimaryTextColor}" FontAttributes="Bold" FontSize="14" CornerRadius="12" HorizontalOptions="Start" Padding="16,10" Margin="0,10,0,0" />
                         </VerticalStackLayout>
                     </Border>
-                    <Border Grid.Column="1" StrokeThickness="0" Background="#0D2335" StrokeShape="RoundRectangle 12" Padding="10">
-                        <VerticalStackLayout Spacing="2">
-                            <Label Text="XP" FontSize="11" TextColor="#87A7BE" />
-                            <Label Text="{Binding TotalXp, StringFormat='{0:N0}'}" FontSize="16" FontAttributes="Bold" TextColor="White" />
+
+                    <Border StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 20" Padding="20">
+                        <Border.Shadow>
+                            <Shadow Brush="Black" Offset="0,4" Radius="12" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                        </Border.Shadow>
+                        <VerticalStackLayout Spacing="16">
+                            <Label Text="Preferences" FontSize="18" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                                <Label Grid.Column="0" Text="Light / Dark Mode" FontSize="14" FontAttributes="Bold" TextColor="{DynamicResource SecondaryTextColor}" VerticalOptions="Center" />
+                                <Switch x:Name="ThemeSwitch" Grid.Column="1" OnColor="{DynamicResource PrimaryColor}" />
+                            </Grid>
+
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                                <Label Grid.Column="0" Text="High contrast mode" FontSize="14" FontAttributes="Bold" TextColor="{DynamicResource SecondaryTextColor}" VerticalOptions="Center" />
+                                <Switch Grid.Column="1" IsToggled="{Binding IsHighContrastEnabled}" OnColor="{DynamicResource PrimaryColor}" />
+                            </Grid>
+
+                            <VerticalStackLayout Spacing="8">
+                                <Label Text="Haptic intensity" FontSize="14" FontAttributes="Bold" TextColor="{DynamicResource SecondaryTextColor}" />
+                                <Slider Minimum="0" Maximum="1" Value="{Binding HapticIntensity}" MinimumTrackColor="{DynamicResource PrimaryColor}" MaximumTrackColor="{DynamicResource BorderBrush}" ThumbColor="{DynamicResource PrimaryColor}" />
+                            </VerticalStackLayout>
+
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                                <Label Grid.Column="0" Text="Strict local processing" FontSize="14" FontAttributes="Bold" TextColor="{DynamicResource SecondaryTextColor}" VerticalOptions="Center" />
+                                <Switch Grid.Column="1" IsToggled="{Binding IsStrictLocalProcessing}" OnColor="{DynamicResource PrimaryColor}" />
+                            </Grid>
+
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                                <Label Grid.Column="0" Text="Gesture data contribution" FontSize="14" FontAttributes="Bold" TextColor="{DynamicResource SecondaryTextColor}" VerticalOptions="Center" />
+                                <Switch Grid.Column="1" IsToggled="{Binding IsGestureContributionEnabled}" OnColor="{DynamicResource PrimaryColor}" />
+                            </Grid>
                         </VerticalStackLayout>
                     </Border>
-                    <Border Grid.Column="2" StrokeThickness="0" Background="#0D2335" StrokeShape="RoundRectangle 12" Padding="10">
-                        <VerticalStackLayout Spacing="2">
-                            <Label Text="Signs" FontSize="11" TextColor="#87A7BE" />
-                            <Label Text="{Binding TotalSignsLearned}" FontSize="16" FontAttributes="Bold" TextColor="White" />
+
+                    <Border StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 20" Padding="20">
+                        <Border.Shadow>
+                            <Shadow Brush="Black" Offset="0,4" Radius="12" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                        </Border.Shadow>
+                        <VerticalStackLayout Spacing="12">
+                            <Label Text="Data and privacy" FontSize="18" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+                            <Button Text="Export learning data" Command="{Binding ExportDataCommand}" BackgroundColor="{DynamicResource SecondaryBackgroundColor}" TextColor="{DynamicResource PrimaryTextColor}" FontSize="14" FontAttributes="Bold" CornerRadius="12" Padding="16,12" HorizontalOptions="Fill" />
+                            <Button Text="Privacy policy" Command="{Binding ViewPrivacyPolicyCommand}" BackgroundColor="Transparent" TextColor="{DynamicResource SecondaryTextColor}" BorderColor="{DynamicResource BorderBrush}" BorderWidth="1" FontSize="14" CornerRadius="12" Padding="16,12" />
                         </VerticalStackLayout>
                     </Border>
-                </Grid>
 
-                <Border StrokeThickness="0" Background="#10283A" StrokeShape="RoundRectangle 14" Padding="14">
-                    <VerticalStackLayout Spacing="10">
-                        <Label Text="Diagnostics" FontSize="15" FontAttributes="Bold" TextColor="White" />
-                        <Label Text="{Binding LastSyncTime, StringFormat='Last sync: {0}'}" FontSize="12" TextColor="#98B8CD" />
+                </VerticalStackLayout>
+            </ScrollView>
 
-                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                            <Label Grid.Column="0" Text="CPU usage" FontSize="12" TextColor="#A4C3D7" VerticalOptions="Center" />
-                            <Label Grid.Column="1" Text="{Binding CpuUsage, StringFormat='{0:P0}'}" FontSize="12" TextColor="White" VerticalOptions="Center" />
-                        </Grid>
-                        <ProgressBar Progress="{Binding CpuUsage}" ProgressColor="{StaticResource Accent}" BackgroundColor="#2B4359" HeightRequest="6" />
-
-                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                            <Label Grid.Column="0" Text="NPU usage" FontSize="12" TextColor="#A4C3D7" VerticalOptions="Center" />
-                            <Label Grid.Column="1" Text="{Binding NpuUsage, StringFormat='{0:P0}'}" FontSize="12" TextColor="White" VerticalOptions="Center" />
-                        </Grid>
-                        <ProgressBar Progress="{Binding NpuUsage}" ProgressColor="{StaticResource Primary}" BackgroundColor="#2B4359" HeightRequest="6" />
-
-                        <Button Text="Refresh diagnostics" Command="{Binding RefreshDiagnosticsCommand}" BackgroundColor="#1D4A61" TextColor="White" FontAttributes="Bold" FontSize="12" HorizontalOptions="Start" Padding="14,8" />
-                    </VerticalStackLayout>
-                </Border>
-
-                <Border StrokeThickness="0" Background="#0F2233" StrokeShape="RoundRectangle 14" Padding="14">
-                    <VerticalStackLayout Spacing="12">
-                        <Label Text="Preferences" FontSize="15" FontAttributes="Bold" TextColor="White" />
-
-                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
-                            <Label Grid.Column="0" Text="High contrast mode" FontSize="12" TextColor="#A4C3D7" VerticalOptions="Center" />
-                            <Switch Grid.Column="1" IsToggled="{Binding IsHighContrastEnabled}" OnColor="{StaticResource Primary}" />
-                        </Grid>
-
-                        <VerticalStackLayout Spacing="4">
-                            <Label Text="Haptic intensity" FontSize="12" TextColor="#A4C3D7" />
-                            <Slider Minimum="0" Maximum="1" Value="{Binding HapticIntensity}" />
-                        </VerticalStackLayout>
-
-                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
-                            <Label Grid.Column="0" Text="Strict local processing" FontSize="12" TextColor="#A4C3D7" VerticalOptions="Center" />
-                            <Switch Grid.Column="1" IsToggled="{Binding IsStrictLocalProcessing}" OnColor="{StaticResource Primary}" />
-                        </Grid>
-
-                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
-                            <Label Grid.Column="0" Text="Gesture data contribution" FontSize="12" TextColor="#A4C3D7" VerticalOptions="Center" />
-                            <Switch Grid.Column="1" IsToggled="{Binding IsGestureContributionEnabled}" OnColor="{StaticResource Primary}" />
-                        </Grid>
-                    </VerticalStackLayout>
-                </Border>
-
-                <Border StrokeThickness="0" Background="#0C1A29" StrokeShape="RoundRectangle 14" Padding="14">
-                    <VerticalStackLayout Spacing="10">
-                        <Label Text="Data and privacy" FontSize="15" FontAttributes="Bold" TextColor="White" />
-                        <Button Text="Export learning data" Command="{Binding ExportDataCommand}" BackgroundColor="#1D4A61" TextColor="White" FontSize="12" FontAttributes="Bold" HorizontalOptions="Fill" />
-                        <Button Text="Privacy policy" Command="{Binding ViewPrivacyPolicyCommand}" BackgroundColor="Transparent" TextColor="#9EC0D7" BorderColor="#27445E" BorderWidth="1" FontSize="12" />
-                    </VerticalStackLayout>
-                </Border>
-
-            </VerticalStackLayout>
-        </ScrollView>
-
-        <ActivityIndicator IsVisible="{Binding IsLoading}"
-                           IsRunning="{Binding IsLoading}"
-                           HorizontalOptions="Center"
-                           VerticalOptions="Center"
-                           Color="{StaticResource Primary}"
-                           Scale="1.3" />
-    </Grid>
+            <ActivityIndicator IsVisible="{Binding IsLoading}"
+                               IsRunning="{Binding IsLoading}"
+                               HorizontalOptions="Center"
+                               VerticalOptions="Center"
+                               Color="{DynamicResource PrimaryColor}"
+                               Scale="1.5" />
+        </Grid>
+    </controls:MainLayout>
 </ContentPage>

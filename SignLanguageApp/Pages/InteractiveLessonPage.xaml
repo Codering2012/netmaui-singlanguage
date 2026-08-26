@@ -1,0 +1,306 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:SignLanguageApp.ViewModels"
+             xmlns:toolkit="http://schemas.microsoft.com/dotnet/2022/maui/toolkit"
+             xmlns:cv="clr-namespace:CommunityToolkit.Maui.Views;assembly=CommunityToolkit.Maui.Camera"
+             xmlns:helpers="clr-namespace:SignLanguageApp.Helpers"
+             xmlns:controls="clr-namespace:SignLanguageApp.Controls"
+             x:Class="SignLanguageApp.Pages.InteractiveLessonPage"
+             x:DataType="vm:InteractiveLessonViewModel"
+             x:Name="lessonPage"
+             Shell.NavBarIsVisible="False"
+             Title="Interactive Lesson"
+             BackgroundColor="Transparent">
+
+    <ContentPage.Resources>
+        <helpers:InvertedBoolConverter x:Key="InvertedBoolConverter" />
+        <helpers:StringIsNotNullOrEmptyConverter x:Key="StringIsNotNullOrEmptyConverter" />
+        <toolkit:IsListNotNullOrEmptyConverter x:Key="IsListNotNullOrEmptyConverter" />
+    </ContentPage.Resources>
+
+    <controls:MainLayout>
+        <Grid RowDefinitions="Auto, *, Auto">
+            <!-- Renovated Top HUD: Exit, Combo Streak, XP Multiplier & Progress Bar -->
+            <Grid Grid.Row="0" ColumnDefinitions="Auto, *, Auto, Auto" Padding="16, 20, 16, 12" VerticalOptions="Start">
+                <Button Text="✕" 
+                        FontSize="24" 
+                        TextColor="{DynamicResource PrimaryTextColor}" 
+                        BackgroundColor="Transparent"
+                        Command="{Binding CloseLessonCommand}"
+                        Padding="0"
+                        HeightRequest="44"
+                        WidthRequest="44"
+                        HorizontalOptions="Start"/>
+
+                <ProgressBar Grid.Column="1" 
+                             Progress="{Binding Progress}" 
+                             ProgressColor="{DynamicResource PrimaryColor}" 
+                             BackgroundColor="{DynamicResource BorderBrush}"
+                             ScaleY="4"
+                             Margin="16, 0"
+                             VerticalOptions="Center"/>
+                
+                <Border Grid.Column="2" 
+                        BackgroundColor="{DynamicResource WarningGlassBackgroundColor}"
+                        Stroke="{DynamicResource WarningGlassStrokeColor}"
+                        StrokeThickness="1"
+                        StrokeShape="RoundRectangle 14"
+                        Padding="12, 6"
+                        Margin="0,0,10,0">
+                    <HorizontalStackLayout Spacing="6">
+                        <Label Text="🔥" FontSize="14" VerticalOptions="Center"/>
+                        <Label Text="{Binding ComboStreak, StringFormat='{0}x Streak'}" FontSize="14" FontAttributes="Bold" TextColor="#F59E0B" VerticalOptions="Center"/>
+                    </HorizontalStackLayout>
+                </Border>
+
+                <Border Grid.Column="3" 
+                        BackgroundColor="{DynamicResource SuccessGlassBackgroundColor}"
+                        Stroke="{DynamicResource SuccessGlassStrokeColor}"
+                        StrokeThickness="1"
+                        StrokeShape="RoundRectangle 14"
+                        Padding="12, 6">
+                    <HorizontalStackLayout Spacing="6">
+                        <Label Text="⚡" FontSize="14" VerticalOptions="Center"/>
+                        <Label Text="{Binding ComboMultiplier, StringFormat='{0:F1}x XP'}" FontSize="14" FontAttributes="Bold" TextColor="#10B981" VerticalOptions="Center"/>
+                    </HorizontalStackLayout>
+                </Border>
+            </Grid>
+
+            <!-- Main Interactive Content Area -->
+            <ScrollView Grid.Row="1" Padding="20, 10, 20, 20">
+                <VerticalStackLayout Spacing="20">
+                    <!-- Title & Description Header -->
+                    <VerticalStackLayout Spacing="8">
+                        <Label Text="{Binding CurrentStep.Title}" 
+                               FontSize="28" 
+                               FontAttributes="Bold" 
+                               TextColor="{DynamicResource PrimaryTextColor}"/>
+
+                        <Label Text="{Binding CurrentStep.Description}" 
+                               FontSize="16" 
+                               TextColor="{DynamicResource SecondaryTextColor}"/>
+                    </VerticalStackLayout>
+
+                    <!-- Instructional Video Tutorial Guidance Card (when available) -->
+                    <Border IsVisible="{Binding CurrentStep.HandPostureTips, Converter={StaticResource StringIsNotNullOrEmptyConverter}}"
+                            StrokeShape="RoundRectangle 20"
+                            BackgroundColor="{DynamicResource PrimaryGlassBackgroundColor}"
+                            Stroke="{DynamicResource PrimaryGlassStrokeColor}"
+                            StrokeThickness="1"
+                            Padding="20">
+                        <Grid ColumnDefinitions="Auto, *, Auto">
+                            <Label Text="💡" FontSize="28" VerticalOptions="Center" Margin="0,0,16,0"/>
+                            <VerticalStackLayout Grid.Column="1" VerticalOptions="Center" Spacing="4">
+                                <Label Text="Hand Posture Tip &amp; Demonstration" FontAttributes="Bold" FontSize="15" TextColor="{DynamicResource PrimaryTextColor}"/>
+                                <Label Text="{Binding CurrentStep.HandPostureTips}" FontSize="14" TextColor="{DynamicResource SecondaryTextColor}"/>
+                            </VerticalStackLayout>
+                            <Button Grid.Column="2" 
+                                    Text="Credits 📜"
+                                    FontSize="13"
+                                    FontAttributes="Bold"
+                                    HeightRequest="40"
+                                    Padding="12,0"
+                                    BackgroundColor="{DynamicResource PrimaryGlassBackgroundColor}"
+                                    TextColor="{DynamicResource PrimaryTextColor}"
+                                    Command="{Binding OpenSignerCreditsCommand}"/>
+                        </Grid>
+                    </Border>
+
+                    <!-- Main Card Area (Dynamic Modes) -->
+                    <Border StrokeShape="RoundRectangle 24" 
+                            StrokeThickness="1" 
+                            Stroke="{DynamicResource BorderBrush}"
+                            BackgroundColor="{DynamicResource CardBackgroundColor}"
+                            Padding="24"
+                            MinimumHeightRequest="300">
+                        <Border.Shadow>
+                            <Shadow Brush="Black" Offset="0,6" Radius="15" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                        </Border.Shadow>
+                        <Grid>
+                            <!-- Mode: Flashcard Image -->
+                            <Image Source="{Binding CurrentStep.ImageUrl}"
+                                   IsVisible="{Binding CurrentStep.ImageUrl, Converter={StaticResource StringIsNotNullOrEmptyConverter}}"
+                                   Aspect="AspectFit"
+                                   HeightRequest="260"
+                                   HorizontalOptions="Center"/>
+
+                            <!-- Mode: Camera Practice Overlay -->
+                            <Border IsVisible="{Binding IsCameraActive}"
+                                    StrokeShape="RoundRectangle 20"
+                                    BackgroundColor="Black"
+                                    StrokeThickness="1"
+                                    Stroke="{DynamicResource BorderBrush}"
+                                    HeightRequest="300">
+                                <Grid>
+                                    <controls:VideoProcessingCameraView x:Name="CameraViewAndroid"
+                                                                        IsVisible="{OnPlatform Android=True, Default=False}" />
+                                    <cv:CameraView x:Name="CameraViewDefault"
+                                                   IsVisible="{OnPlatform Android=False, Default=True}" />
+                                    <controls:SkeletonReticleView IsScanning="{Binding IsCameraActive}" />
+                                    <Border VerticalOptions="Start" HorizontalOptions="Center" Margin="12" BackgroundColor="#A0000000" Padding="12,6" StrokeShape="RoundRectangle 12">
+                                        <Label Text="📷 Point camera at your hand" TextColor="White" FontSize="14" FontAttributes="Bold"/>
+                                    </Border>
+                                </Grid>
+                            </Border>
+
+                            <!-- GAMIFICATION MODE 1: Matching Cards Grid (2x4) -->
+                            <CollectionView ItemsSource="{Binding MatchingCards}"
+                                            IsVisible="{Binding MatchingCards, Converter={StaticResource IsListNotNullOrEmptyConverter}}"
+                                            HeightRequest="420"
+                                            SelectionMode="None">
+                                <CollectionView.ItemsLayout>
+                                    <GridItemsLayout Orientation="Vertical" Span="2" HorizontalItemSpacing="12" VerticalItemSpacing="12"/>
+                                </CollectionView.ItemsLayout>
+                                <CollectionView.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:MatchingCardTile">
+                                        <Border HeightRequest="90"
+                                                StrokeShape="RoundRectangle 16"
+                                                StrokeThickness="2"
+                                                BackgroundColor="{DynamicResource SecondaryBackgroundColor}"
+                                                Padding="10">
+                                            <Border.Triggers>
+                                                <DataTrigger TargetType="Border" Binding="{Binding IsMatched}" Value="True">
+                                                    <Setter Property="BackgroundColor" Value="{DynamicResource SuccessGlassBackgroundColor}"/>
+                                                    <Setter Property="Stroke" Value="#10B981"/>
+                                                </DataTrigger>
+                                                <DataTrigger TargetType="Border" Binding="{Binding IsSelected}" Value="True">
+                                                    <Setter Property="BackgroundColor" Value="{DynamicResource PrimaryGlassBackgroundColor}"/>
+                                                    <Setter Property="Stroke" Value="#3B82F6"/>
+                                                </DataTrigger>
+                                                <DataTrigger TargetType="Border" Binding="{Binding IsSelected}" Value="False">
+                                                    <Setter Property="BackgroundColor" Value="{DynamicResource SecondaryBackgroundColor}"/>
+                                                    <Setter Property="Stroke" Value="{DynamicResource BorderBrush}"/>
+                                                </DataTrigger>
+                                            </Border.Triggers>
+                                            <Border.GestureRecognizers>
+                                                <TapGestureRecognizer Command="{Binding Source={RelativeSource AncestorType={x:Type vm:InteractiveLessonViewModel}}, Path=SelectMatchingCardCommand}"
+                                                                      CommandParameter="{Binding .}"/>
+                                            </Border.GestureRecognizers>
+                                            <VerticalStackLayout VerticalOptions="Center" HorizontalOptions="Center" Spacing="6">
+                                                <Image Source="{Binding ImageUrl}" IsVisible="{Binding ImageUrl, Converter={StaticResource StringIsNotNullOrEmptyConverter}}" HeightRequest="40" Aspect="AspectFit"/>
+                                                <Label Text="{Binding DisplayText}" FontSize="15" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" HorizontalOptions="Center" HorizontalTextAlignment="Center"/>
+                                            </VerticalStackLayout>
+                                        </Border>
+                                    </DataTemplate>
+                                </CollectionView.ItemTemplate>
+                            </CollectionView>
+
+                            <!-- GAMIFICATION MODE 2: Sentence Sequence Builder -->
+                            <VerticalStackLayout IsVisible="{Binding AvailableSequenceTokens, Converter={StaticResource IsListNotNullOrEmptyConverter}}" Spacing="20" Padding="10">
+                                <Label Text="Construct sentence in ASL order:" FontSize="15" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}"/>
+                                
+                                <!-- Active Sequence Target Zone -->
+                                <Border StrokeShape="RoundRectangle 16" Background="{DynamicResource PageGradient}" Padding="16" MinimumHeightRequest="80" StrokeDashArray="4,4" StrokeThickness="2" Stroke="{DynamicResource PrimaryColor}">
+                                    <FlexLayout Wrap="Wrap" BindableLayout.ItemsSource="{Binding UserSequenceTokens}">
+                                        <BindableLayout.ItemTemplate>
+                                            <DataTemplate x:DataType="x:String">
+                                                <Border BackgroundColor="{DynamicResource PrimaryColor}" StrokeShape="RoundRectangle 12" Padding="12,8" Margin="4">
+                                                    <Border.GestureRecognizers>
+                                                        <TapGestureRecognizer Command="{Binding Source={RelativeSource AncestorType={x:Type vm:InteractiveLessonViewModel}}, Path=RemoveSequenceTokenCommand}" CommandParameter="{Binding .}"/>
+                                                    </Border.GestureRecognizers>
+                                                    <Label Text="{Binding .}" TextColor="{DynamicResource ButtonTextColor}" FontAttributes="Bold" FontSize="16"/>
+                                                </Border>
+                                            </DataTemplate>
+                                        </BindableLayout.ItemTemplate>
+                                    </FlexLayout>
+                                </Border>
+
+                                <!-- Word Bank Tokens -->
+                                <Label Text="Word Bank (Tap to add):" FontSize="14" FontAttributes="Bold" TextColor="{DynamicResource SecondaryTextColor}"/>
+                                <FlexLayout Wrap="Wrap" BindableLayout.ItemsSource="{Binding AvailableSequenceTokens}">
+                                    <BindableLayout.ItemTemplate>
+                                        <DataTemplate x:DataType="x:String">
+                                            <Border BackgroundColor="{DynamicResource CardBackgroundColor}" Stroke="{DynamicResource BorderBrush}" StrokeThickness="2" StrokeShape="RoundRectangle 12" Padding="12,8" Margin="4">
+                                                <Border.GestureRecognizers>
+                                                    <TapGestureRecognizer Command="{Binding Source={RelativeSource AncestorType={x:Type vm:InteractiveLessonViewModel}}, Path=AddSequenceTokenCommand}" CommandParameter="{Binding .}"/>
+                                                </Border.GestureRecognizers>
+                                                <Label Text="{Binding .}" TextColor="{DynamicResource PrimaryTextColor}" FontAttributes="Bold" FontSize="16"/>
+                                            </Border>
+                                        </DataTemplate>
+                                    </BindableLayout.ItemTemplate>
+                                </FlexLayout>
+
+                                <Button Text="CHECK SENTENCE ORDER" Command="{Binding CheckSequenceCommand}" BackgroundColor="{DynamicResource PrimaryColor}" TextColor="{DynamicResource ButtonTextColor}" FontAttributes="Bold" CornerRadius="14" HeightRequest="52" FontSize="15"/>
+                            </VerticalStackLayout>
+
+                            <!-- Feedback Overlay (Green / Red) -->
+                            <Border x:Name="CorrectFeedbackBorder" IsVisible="{Binding ShowCorrectFeedback}" BackgroundColor="{DynamicResource SuccessGlassSolidColor}" StrokeShape="RoundRectangle 24" Padding="30">
+                                <VerticalStackLayout VerticalOptions="Center" Spacing="12">
+                                    <Label Text="✓" FontSize="80" TextColor="White" HorizontalOptions="Center"/>
+                                    <Label Text="CORRECT!" FontSize="28" FontAttributes="Bold" TextColor="White" HorizontalOptions="Center"/>
+                                    <controls:TypewriterLabel TypedText="{Binding FeedbackMessage}" FontSize="18" TextColor="White" HorizontalOptions="Center"/>
+                                </VerticalStackLayout>
+                            </Border>
+
+                            <Border x:Name="IncorrectFeedbackBorder" IsVisible="{Binding ShowIncorrectFeedback}" BackgroundColor="{DynamicResource ErrorGlassSolidColor}" StrokeShape="RoundRectangle 24" Padding="30">
+                                <VerticalStackLayout VerticalOptions="Center" Spacing="12">
+                                    <Label Text="✕" FontSize="80" TextColor="White" HorizontalOptions="Center"/>
+                                    <Label Text="TRY AGAIN" FontSize="28" FontAttributes="Bold" TextColor="White" HorizontalOptions="Center"/>
+                                    <controls:TypewriterLabel TypedText="{Binding FeedbackMessage}" FontSize="18" TextColor="White" HorizontalOptions="Center"/>
+                                </VerticalStackLayout>
+                            </Border>
+                        </Grid>
+                    </Border>
+
+                    <!-- Multiple Choice Options (when applicable) -->
+                    <VerticalStackLayout x:Name="OptionsLayout"
+                                         IsVisible="{Binding CurrentStep.Options, Converter={StaticResource IsListNotNullOrEmptyConverter}}"
+                                         BindableLayout.ItemsSource="{Binding CurrentStep.Options}"
+                                         Spacing="12">
+                        <BindableLayout.ItemTemplate>
+                            <DataTemplate x:DataType="x:String">
+                                <Button Text="{Binding .}"
+                                        Command="{Binding Source={RelativeSource AncestorType={x:Type vm:InteractiveLessonViewModel}}, Path=CheckAnswerCommand}"
+                                        CommandParameter="{Binding .}"
+                                        BackgroundColor="{DynamicResource CardBackgroundColor}"
+                                        TextColor="{DynamicResource PrimaryTextColor}"
+                                        BorderColor="{DynamicResource BorderBrush}"
+                                        BorderWidth="1"
+                                        CornerRadius="16"
+                                        HeightRequest="60"
+                                        FontSize="18"
+                                        FontAttributes="Bold"/>
+                            </DataTemplate>
+                        </BindableLayout.ItemTemplate>
+                    </VerticalStackLayout>
+                </VerticalStackLayout>
+            </ScrollView>
+
+            <!-- Footer Action Button -->
+            <Border Grid.Row="2" 
+                    Padding="20, 16" 
+                    StrokeThickness="0"
+                    BackgroundColor="{DynamicResource CardBackgroundColor}">
+                <Border.Shadow>
+                    <Shadow Brush="Black" Offset="0,-4" Radius="15" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                </Border.Shadow>
+                <Button Text="CONTINUE STEP ➔" 
+                        Command="{Binding NextStepCommand}"
+                        BackgroundColor="{DynamicResource PrimaryColor}" 
+                        TextColor="{DynamicResource ButtonTextColor}" 
+                        FontAttributes="Bold"
+                        FontSize="18"
+                        HeightRequest="60"
+                        CornerRadius="16" />
+            </Border>
+
+            <!-- Empty / Error Overlay -->
+            <Grid Grid.RowSpan="3" IsVisible="{Binding IsEmpty}" BackgroundColor="{DynamicResource PageBackgroundColor}">
+                <VerticalStackLayout VerticalOptions="Center" HorizontalOptions="Center" Spacing="20" Padding="40">
+                    <Label Text="📚" FontSize="80" HorizontalOptions="Center"/>
+                    <Label Text="{Binding ErrorMessage, TargetNullValue='Lesson content is currently unavailable.'}" FontSize="18" TextColor="{DynamicResource SecondaryTextColor}" HorizontalTextAlignment="Center"/>
+                    <Button Text="← Go Back" Command="{Binding CloseLessonCommand}" BackgroundColor="{DynamicResource PrimaryColor}" TextColor="{DynamicResource ButtonTextColor}" FontAttributes="Bold" CornerRadius="14" HeightRequest="50" Padding="20,0"/>
+                </VerticalStackLayout>
+            </Grid>
+
+            <!-- Loading Overlay -->
+            <Grid Grid.RowSpan="3" BackgroundColor="{DynamicResource BackgroundOverlayColor}" IsVisible="{Binding IsBusy}">
+                <ActivityIndicator IsRunning="{Binding IsBusy}" VerticalOptions="Center" HorizontalOptions="Center" Color="{DynamicResource PrimaryColor}" Scale="1.5" />
+            </Grid>
+            
+            <!-- Gamification Confetti Overlay -->
+            <controls:ConfettiView x:Name="ConfettiOverlay" Grid.RowSpan="3" IsVisible="False" InputTransparent="True" />
+        </Grid>
+    </controls:MainLayout>
+</ContentPage>

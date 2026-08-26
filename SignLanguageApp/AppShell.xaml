@@ -6,13 +6,9 @@
     xmlns:pages="clr-namespace:SignLanguageApp.Pages"
     Title="SignLanguageApp"
     FlyoutBehavior="Disabled"
-    BackgroundColor="#07121D"
-    ForegroundColor="White"
-    Shell.NavBarHasShadow="False"
-    Shell.TabBarBackgroundColor="#0A1A29"
-    Shell.TabBarForegroundColor="#0EA5A4"
-    Shell.TabBarTitleColor="#E6F1FA"
-    Shell.TabBarUnselectedColor="#86A7BE">
+    BackgroundColor="{DynamicResource PageBackgroundColor}"
+    Shell.TabBarIsVisible="False"
+    Shell.NavBarIsVisible="False">
 
     <TabBar>
         <Tab Title="Home" Icon="home.png">

@@ -44,18 +44,32 @@ public static class AuthenticationHelper
             if (parts.Length != 3)
                 return false;
 
-            // Decode the payload
+            // Decode the payload (Base64Url to Base64)
             var payload = parts[1];
-            var padded = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
-            var decoded = System.Convert.FromBase64String(padded);
+            payload = payload.Replace('-', '+').Replace('_', '/');
+            var padLength = 4 - (payload.Length % 4);
+            if (padLength < 4)
+            {
+                payload = payload.PadRight(payload.Length + padLength, '=');
+            }
+            
+            var decoded = System.Convert.FromBase64String(payload);
             var json = System.Text.Encoding.UTF8.GetString(decoded);
 
-            var jObject = JsonDocument.Parse(json);
-            var expProperty = jObject.RootElement.GetProperty("exp");
-            var expirationUnix = expProperty.GetInt64();
-            var expirationDateTime = UnixTimeStampToDateTime(expirationUnix);
-
-            return expirationDateTime > DateTime.UtcNow;
+            var jObject = System.Text.Json.JsonDocument.Parse(json);
+            if (jObject.RootElement.TryGetProperty("exp", out var expProperty))
+            {
+                long expirationUnix = 0;
+                if (expProperty.ValueKind == System.Text.Json.JsonValueKind.Number)
+                {
+                    expirationUnix = expProperty.GetInt64();
+                }
+                
+                var expirationDateTime = UnixTimeStampToDateTime(expirationUnix);
+                return expirationDateTime > DateTime.UtcNow;
+            }
+            
+            return true; // No expiration means valid
         }
         catch (Exception ex)
         {

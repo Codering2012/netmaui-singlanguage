@@ -2,168 +2,302 @@
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              xmlns:vm="clr-namespace:SignLanguageApp.ViewModels"
+             xmlns:helpers="clr-namespace:SignLanguageApp.Helpers"
+             xmlns:controls="clr-namespace:SignLanguageApp.Controls"
              x:Class="SignLanguageApp.Pages.LearnPage"
              x:DataType="vm:LearnViewModel"
              Title="Learn"
-             BackgroundColor="{StaticResource ColorBackgroundDark}">
+             BackgroundColor="Transparent">
 
-    <Grid>
-        <ScrollView>
-            <VerticalStackLayout Spacing="16" Padding="16,10,16,24">
+    <ContentPage.Resources>
+        <helpers:InverseBoolConverter x:Key="InverseBoolConverter" />
+    </ContentPage.Resources>
 
-                <Border StrokeThickness="0" Background="#123247" StrokeShape="RoundRectangle 20" Padding="18">
-                    <VerticalStackLayout Spacing="8">
-                        <Label Text="Learning center" FontSize="28" FontAttributes="Bold" TextColor="White" />
-                        <Label Text="Choose a category, open a lesson, and keep your streak alive" FontSize="13" TextColor="#BBD5E8" />
-                    </VerticalStackLayout>
-                </Border>
+    <controls:MainLayout>
+        <Grid>
+            <ScrollView Padding="0,0,0,100">
+                <VerticalStackLayout Spacing="20" Padding="20,20,20,120">
 
-                <Grid ColumnDefinitions="*,*,*" ColumnSpacing="10">
-                    <Border Grid.Column="0" StrokeThickness="0" Background="#0D2335" StrokeShape="RoundRectangle 12" Padding="10">
-                        <VerticalStackLayout Spacing="2">
-                            <Label Text="Progress" FontSize="11" TextColor="#87A7BE" />
-                            <Label Text="{Binding ProgressPercentage, StringFormat='{0:P0}'}" FontSize="18" FontAttributes="Bold" TextColor="White" />
-                        </VerticalStackLayout>
-                    </Border>
-                    <Border Grid.Column="1" StrokeThickness="0" Background="#0D2335" StrokeShape="RoundRectangle 12" Padding="10">
-                        <VerticalStackLayout Spacing="2">
-                            <Label Text="Streak" FontSize="11" TextColor="#87A7BE" />
-                            <Label Text="{Binding CurrentStreak, StringFormat='{0} days'}" FontSize="18" FontAttributes="Bold" TextColor="White" />
-                        </VerticalStackLayout>
-                    </Border>
-                    <Border Grid.Column="2" StrokeThickness="0" Background="#0D2335" StrokeShape="RoundRectangle 12" Padding="10">
-                        <VerticalStackLayout Spacing="2">
-                            <Label Text="XP" FontSize="11" TextColor="#87A7BE" />
-                            <Label Text="{Binding TotalXp, StringFormat='{0:N0}'}" FontSize="18" FontAttributes="Bold" TextColor="White" />
-                        </VerticalStackLayout>
-                    </Border>
-                </Grid>
-
-                <Border StrokeThickness="0" Background="#14384F" StrokeShape="RoundRectangle 16" Padding="14">
-                    <VerticalStackLayout Spacing="8">
-                        <Label Text="Recommended next step" FontSize="15" FontAttributes="Bold" TextColor="White" />
-                        <Label Text="{Binding RecommendationTitle, TargetNullValue='Pick up your next lesson'}" FontSize="14" TextColor="#D1E6F5" />
-                        <Label Text="{Binding RecommendationReason, TargetNullValue='Continue from where you left off.'}" FontSize="12" TextColor="#A7C4D9" LineBreakMode="WordWrap" />
-                        <Button Text="Open recommendation"
-                                Command="{Binding StartLessonFromRecommendationCommand}"
-                                BackgroundColor="{StaticResource Secondary}"
-                                TextColor="White"
-                                FontAttributes="Bold"
-                                HorizontalOptions="Start"
-                                Padding="14,8" />
-                    </VerticalStackLayout>
-                </Border>
-
-                <VerticalStackLayout Spacing="10">
-                    <Label Text="Categories" FontSize="16" FontAttributes="Bold" TextColor="White" />
-                    <CollectionView ItemsSource="{Binding Categories}" SelectionMode="Single" SelectedItem="{Binding SelectedCategory}">
-                        <CollectionView.ItemsLayout>
-                            <GridItemsLayout Orientation="Vertical" Span="2" HorizontalItemSpacing="10" VerticalItemSpacing="10" />
-                        </CollectionView.ItemsLayout>
-                        <CollectionView.ItemTemplate>
-                            <DataTemplate x:DataType="vm:LessonCategory">
-                                <Border StrokeThickness="0" Background="#0F2233" StrokeShape="RoundRectangle 12" Padding="12">
-                                    <VerticalStackLayout Spacing="8">
-                                        <Label Text="{Binding Title}" FontSize="13" FontAttributes="Bold" TextColor="White" MaxLines="2" LineBreakMode="TailTruncation" />
-                                        <Label Text="{Binding Description}" FontSize="11" TextColor="#8AABC2" MaxLines="2" LineBreakMode="TailTruncation" />
-                                        <ProgressBar Progress="{Binding Progress}" ProgressColor="{StaticResource Primary}" BackgroundColor="#2B4359" HeightRequest="6" />
-                                        <Label Text="{Binding Difficulty}" FontSize="10" TextColor="{StaticResource Secondary}" />
-                                    </VerticalStackLayout>
-                                </Border>
-                            </DataTemplate>
-                        </CollectionView.ItemTemplate>
-                    </CollectionView>
-                </VerticalStackLayout>
-
-                <VerticalStackLayout Spacing="10">
-                    <Label Text="Lessons" FontSize="16" FontAttributes="Bold" TextColor="White" />
-                    <CollectionView ItemsSource="{Binding SelectedLessons}" SelectionMode="None">
-                        <CollectionView.ItemTemplate>
-                            <DataTemplate x:DataType="vm:Lesson">
-                                <Border StrokeThickness="0" Background="#0D1F30" StrokeShape="RoundRectangle 12" Padding="12" Margin="0,0,0,8">
-                                    <VerticalStackLayout Spacing="8">
-                                        <Label Text="{Binding Title}" FontSize="14" FontAttributes="Bold" TextColor="White" />
-                                        <Label Text="{Binding Description}" FontSize="12" TextColor="#89AAC1" MaxLines="2" LineBreakMode="TailTruncation" />
-                                        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8" VerticalOptions="Center">
-                                            <Label Grid.Column="0" Text="{Binding DurationSeconds, StringFormat='Duration: {0} s'}" FontSize="10" TextColor="#7D9DB4" VerticalOptions="Center" />
-                                            <Button Grid.Column="1"
-                                                    Text="Open"
-                                                    Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.OpenLessonCommand}"
-                                                    CommandParameter="{Binding .}"
-                                                    BackgroundColor="{StaticResource Primary}"
-                                                    TextColor="White"
-                                                    FontSize="11"
-                                                    Padding="12,6" />
-                                            <Button Grid.Column="2"
-                                                    Text="Complete"
-                                                    Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.CompleteLessonCommand}"
-                                                    CommandParameter="{Binding .}"
-                                                    BackgroundColor="#1F3E57"
-                                                    TextColor="White"
-                                                    FontSize="11"
-                                                    Padding="12,6" />
-                                        </Grid>
-                                    </VerticalStackLayout>
-                                </Border>
-                            </DataTemplate>
-                        </CollectionView.ItemTemplate>
-                    </CollectionView>
-                </VerticalStackLayout>
-
-                <VerticalStackLayout Spacing="10">
-                    <Label Text="Daily reviews" FontSize="16" FontAttributes="Bold" TextColor="White" />
-                    <Border StrokeThickness="0" Background="#10283A" StrokeShape="RoundRectangle 12" Padding="12">
-                        <VerticalStackLayout Spacing="6">
-                            <Label Text="{Binding DailyGoalMessage, TargetNullValue='Review sessions keep memory fresh.'}" FontSize="12" TextColor="#9FBCD1" />
-                            <ProgressBar Progress="{Binding DailyGoalProgress}" ProgressColor="{StaticResource Secondary}" BackgroundColor="#2B4359" HeightRequest="6" />
-                            <Label Text="{Binding DailyGoalCompleted, StringFormat='Completed today: {0}'}" FontSize="11" TextColor="#8FAEC4" />
+                    <!-- Title Header -->
+                    <Border StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 24" Padding="24">
+                        <Border.Shadow>
+                            <Shadow Brush="Black" Offset="0,6" Radius="15" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                        </Border.Shadow>
+                        <VerticalStackLayout Spacing="8">
+                            <Label Text="Learning Center 🎓" FontSize="32" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+                            <Label Text="Choose a category, master fingerspelling, and practice real-time camera recognition" FontSize="14" TextColor="{DynamicResource SecondaryTextColor}" />
                         </VerticalStackLayout>
                     </Border>
 
-                    <CollectionView ItemsSource="{Binding DailyReviewLessons}" SelectionMode="None">
-                        <CollectionView.ItemTemplate>
-                            <DataTemplate x:DataType="vm:SpacedRepetitionLesson">
-                                <Border StrokeThickness="0" Background="#0D1F30" StrokeShape="RoundRectangle 12" Padding="12" Margin="0,0,0,8">
-                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
-                                        <VerticalStackLayout Grid.Column="0" Spacing="2">
-                                            <Label Text="{Binding Title}" FontSize="13" FontAttributes="Bold" TextColor="White" />
-                                            <Label Text="{Binding DueDate, StringFormat='Due: {0}'}" FontSize="11" TextColor="#84A3B9" />
+                    <!-- User Stats Bar -->
+                    <Grid ColumnDefinitions="*,*,*" ColumnSpacing="12">
+                        <Border Grid.Column="0" StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 16" Padding="12">
+                            <Border.Shadow>
+                                <Shadow Brush="Black" Offset="0,4" Radius="10" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                            </Border.Shadow>
+                            <VerticalStackLayout Spacing="4" HorizontalOptions="Center">
+                                <Label Text="Progress 📊" FontSize="12" TextColor="{DynamicResource SecondaryTextColor}" HorizontalOptions="Center" />
+                                <Label Text="{Binding ProgressPercentage, StringFormat='{0:P0}'}" FontSize="20" FontAttributes="Bold" TextColor="{DynamicResource PrimaryColor}" HorizontalOptions="Center" />
+                            </VerticalStackLayout>
+                        </Border>
+                        <Border Grid.Column="1" StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 16" Padding="12">
+                            <Border.Shadow>
+                                <Shadow Brush="Black" Offset="0,4" Radius="10" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                            </Border.Shadow>
+                            <VerticalStackLayout Spacing="4" HorizontalOptions="Center">
+                                <Label Text="Streak 🔥" FontSize="12" TextColor="{DynamicResource SecondaryTextColor}" HorizontalOptions="Center" />
+                                <Label Text="{Binding CurrentStreak, StringFormat='{0} days'}" FontSize="20" FontAttributes="Bold" TextColor="{DynamicResource SecondaryColor}" HorizontalOptions="Center" />
+                            </VerticalStackLayout>
+                        </Border>
+                        <Border Grid.Column="2" StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 16" Padding="12">
+                            <Border.Shadow>
+                                <Shadow Brush="Black" Offset="0,4" Radius="10" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                            </Border.Shadow>
+                            <VerticalStackLayout Spacing="4" HorizontalOptions="Center">
+                                <Label Text="Total XP ⭐" FontSize="12" TextColor="{DynamicResource SecondaryTextColor}" HorizontalOptions="Center" />
+                                <Label Text="{Binding TotalXp, StringFormat='{0:N0}'}" FontSize="20" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" HorizontalOptions="Center" />
+                            </VerticalStackLayout>
+                        </Border>
+                    </Grid>
+
+                    <!-- Real-Time Camera Practice Feature Card -->
+                    <Border StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 20" Padding="20">
+                        <Border.Shadow>
+                            <Shadow Brush="Black" Offset="0,6" Radius="15" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                        </Border.Shadow>
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="15">
+                            <VerticalStackLayout Grid.Column="0" Spacing="6" VerticalOptions="Center">
+                                <Label Text="Real-Time AI Camera Drills 📷" FontSize="18" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+                                <Label Text="Interactive camera-based sign language recognition with real-time feedback." FontSize="13" TextColor="{DynamicResource SecondaryTextColor}" LineBreakMode="WordWrap" />
+                            </VerticalStackLayout>
+                            <Button Grid.Column="1"
+                                    Text="Start Drill 🎯"
+                                    Command="{Binding PracticeCommand}"
+                                    BackgroundColor="{DynamicResource PrimaryColor}"
+                                    TextColor="{DynamicResource ButtonTextColor}"
+                                    FontAttributes="Bold"
+                                    FontSize="14"
+                                    CornerRadius="14"
+                                    Padding="18,10"
+                                    VerticalOptions="Center" />
+                        </Grid>
+                    </Border>
+
+                    <!-- Categories Grid (Dynamic BindableLayout, No Forced Height Gap!) -->
+                    <VerticalStackLayout Spacing="12">
+                        <Label Text="Categories 📚" FontSize="20" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+                        <FlexLayout BindableLayout.ItemsSource="{Binding Categories}" 
+                                    Wrap="Wrap" 
+                                    JustifyContent="SpaceBetween" 
+                                    AlignItems="Stretch">
+                            <BindableLayout.ItemTemplate>
+                                <DataTemplate x:DataType="vm:LessonCategory">
+                                    <Border StrokeThickness="1" 
+                                            Stroke="{DynamicResource BorderBrush}" 
+                                            BackgroundColor="{DynamicResource CardBackgroundColor}" 
+                                            StrokeShape="RoundRectangle 16" 
+                                            Padding="16" 
+                                            Margin="0,0,0,12"
+                                            FlexLayout.Width="48%">
+                                        <Border.GestureRecognizers>
+                                            <TapGestureRecognizer Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.OnSelectedCategoryChangedCommand}" CommandParameter="{Binding .}" />
+                                        </Border.GestureRecognizers>
+                                        <VerticalStackLayout Spacing="8">
+                                            <Label Text="{Binding Title}" FontSize="15" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" MaxLines="2" LineBreakMode="TailTruncation" />
+                                            <Label Text="{Binding Description}" FontSize="12" TextColor="{DynamicResource SecondaryTextColor}" MaxLines="2" LineBreakMode="TailTruncation" />
+                                            <ProgressBar Progress="{Binding Progress}" ProgressColor="{DynamicResource PrimaryColor}" BackgroundColor="{DynamicResource BorderBrush}" HeightRequest="6" Margin="0,4,0,4" />
+                                            <Label Text="{Binding Difficulty}" FontSize="11" FontAttributes="Bold" TextColor="{DynamicResource SecondaryColor}" />
                                         </VerticalStackLayout>
-                                        <Button Grid.Column="1"
-                                                Text="Review"
-                                                Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.SubmitDailyReviewCommand}"
-                                                CommandParameter="{Binding .}"
-                                                BackgroundColor="{StaticResource Secondary}"
-                                                TextColor="White"
-                                                FontSize="11"
-                                                Padding="12,6" />
-                                    </Grid>
-                                </Border>
-                            </DataTemplate>
-                        </CollectionView.ItemTemplate>
-                    </CollectionView>
-                </VerticalStackLayout>
+                                    </Border>
+                                </DataTemplate>
+                            </BindableLayout.ItemTemplate>
+                        </FlexLayout>
+                    </VerticalStackLayout>
 
-                <VerticalStackLayout Spacing="8" IsVisible="{Binding HasSelectedLessonDetail}">
-                    <Label Text="Template diagnostics" FontSize="15" FontAttributes="Bold" TextColor="White" />
-                    <Border StrokeThickness="0" Background="#0C1A29" StrokeShape="RoundRectangle 12" Padding="12">
-                        <VerticalStackLayout Spacing="4">
-                            <Label Text="{Binding SelectedLessonLayoutFile, StringFormat='File: {0}'}" FontSize="11" TextColor="#8FAEC4" />
-                            <Label Text="{Binding IsLessonLayoutTrusted, StringFormat='Trusted: {0}'}" FontSize="11" TextColor="#8FAEC4" />
-                            <Label Text="{Binding IsCameraPracticeLesson, StringFormat='Camera lesson: {0}'}" FontSize="11" TextColor="#8FAEC4" />
-                            <Label Text="{Binding LessonLayoutSecurityMessage}" FontSize="11" TextColor="#8FAEC4" />
+                    <!-- Lessons List (Dynamic BindableLayout, No Forced Height Gap!) -->
+                    <VerticalStackLayout Spacing="12">
+                        <Label Text="{Binding SelectedCategory.Title, StringFormat='Lessons in {0} 📖', TargetNullValue='Lessons 📖'}" FontSize="20" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+                        <VerticalStackLayout BindableLayout.ItemsSource="{Binding SelectedLessons}" Spacing="12">
+                            <BindableLayout.ItemTemplate>
+                                <DataTemplate x:DataType="vm:Lesson">
+                                    <Border x:Name="LessonBorder" StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 20" Padding="16">
+                                        <Border.Shadow>
+                                            <Shadow Brush="Black" Offset="0,4" Radius="12" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                                        </Border.Shadow>
+                                        <Grid ColumnDefinitions="90,*" ColumnSpacing="15">
+                                            <!-- Lesson Image Thumbnail -->
+                                            <Border Grid.Column="0" StrokeThickness="0" BackgroundColor="{DynamicResource SecondaryBackgroundColor}" StrokeShape="RoundRectangle 14" HeightRequest="80" WidthRequest="90">
+                                                <Image Source="{Binding Thumbnail}" Aspect="AspectFill" />
+                                            </Border>
+
+                                            <!-- Content -->
+                                            <VerticalStackLayout Grid.Column="1" Spacing="6" VerticalOptions="Center">
+                                                <Label Text="{Binding Title}" FontSize="16" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+                                                <Label Text="{Binding Description}" FontSize="13" TextColor="{DynamicResource SecondaryTextColor}" MaxLines="2" LineBreakMode="TailTruncation" />
+                                                <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto" ColumnSpacing="8" Margin="0,4,0,0">
+                                                    <Label Grid.Column="0" Text="{Binding Difficulty}" FontSize="12" FontAttributes="Bold" TextColor="{DynamicResource SecondaryColor}" VerticalOptions="Center"/>
+                                                    <Label Grid.Column="1" Text="|" FontSize="12" TextColor="{DynamicResource SecondaryTextColor}" VerticalOptions="Center" />
+                                                    <Label Grid.Column="2" Text="{Binding DurationSeconds, StringFormat='{0}s'}" FontSize="12" TextColor="{DynamicResource SecondaryTextColor}" VerticalOptions="Center" />
+                                                    
+                                                    <Button Grid.Column="3" Text="Open 🚀"
+                                                            Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.OpenLessonCommand}"
+                                                            CommandParameter="{Binding .}"
+                                                            BackgroundColor="{DynamicResource PrimaryColor}"
+                                                            TextColor="{DynamicResource ButtonTextColor}"
+                                                            FontAttributes="Bold"
+                                                            CornerRadius="10"
+                                                            FontSize="12"
+                                                            Padding="12,6" />
+                                                    <Button Grid.Column="4" Text="Complete ✅"
+                                                            Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.CompleteLessonCommand}"
+                                                            CommandParameter="{Binding .}"
+                                                            BackgroundColor="{DynamicResource SecondaryBackgroundColor}"
+                                                            TextColor="{DynamicResource PrimaryTextColor}"
+                                                            FontAttributes="Bold"
+                                                            CornerRadius="10"
+                                                            FontSize="12"
+                                                            Padding="12,6" />
+                                                </Grid>
+                                            </VerticalStackLayout>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </BindableLayout.ItemTemplate>
                         </VerticalStackLayout>
-                    </Border>
+                    </VerticalStackLayout>
+
+                    <!-- Daily Reviews (Spaced Repetition Queue) -->
+                    <VerticalStackLayout Spacing="12">
+                        <Label Text="Daily reviews 🧠" FontSize="20" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+                        <Border StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 16" Padding="16">
+                            <Border.Shadow>
+                                <Shadow Brush="Black" Offset="0,4" Radius="10" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                            </Border.Shadow>
+                            <VerticalStackLayout Spacing="8">
+                                <Label Text="{Binding DailyGoalMessage, TargetNullValue='Review sessions keep memory fresh.'}" FontSize="14" TextColor="{DynamicResource SecondaryTextColor}" />
+                                <ProgressBar Progress="{Binding DailyGoalProgress}" ProgressColor="{DynamicResource SecondaryColor}" BackgroundColor="{DynamicResource BorderBrush}" HeightRequest="6" Margin="0,4,0,4"/>
+                                <Label Text="{Binding DailyGoalCompleted, StringFormat='Completed today: {0}'}" FontSize="12" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+                            </VerticalStackLayout>
+                        </Border>
+
+                        <VerticalStackLayout BindableLayout.ItemsSource="{Binding DailyReviewLessons}" Spacing="10">
+                            <BindableLayout.ItemTemplate>
+                                <DataTemplate x:DataType="vm:SpacedRepetitionLesson">
+                                    <Border StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 16" Padding="16">
+                                        <Border.Shadow>
+                                            <Shadow Brush="Black" Offset="0,4" Radius="10" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                                        </Border.Shadow>
+                                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                                            <VerticalStackLayout Grid.Column="0" Spacing="4">
+                                                <Label Text="{Binding Title}" FontSize="15" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+                                                <Label Text="{Binding DueDate, StringFormat='Due: {0}'}" FontSize="12" TextColor="{DynamicResource SecondaryTextColor}" />
+                                            </VerticalStackLayout>
+                                            <Button Grid.Column="1"
+                                                    Text="Review 🎯"
+                                                    Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.SubmitDailyReviewCommand}"
+                                                    CommandParameter="{Binding .}"
+                                                    BackgroundColor="{DynamicResource SecondaryColor}"
+                                                    TextColor="White"
+                                                    FontSize="12"
+                                                    CornerRadius="10"
+                                                    FontAttributes="Bold"
+                                                    Padding="16,8"
+                                                    VerticalOptions="Center" />
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </BindableLayout.ItemTemplate>
+                        </VerticalStackLayout>
+                    </VerticalStackLayout>
+
                 </VerticalStackLayout>
+            </ScrollView>
 
-            </VerticalStackLayout>
-        </ScrollView>
+            <!-- Spaced Repetition Flashcard Interactive Modal Sheet -->
+            <Grid IsVisible="{Binding IsReviewModalVisible}" BackgroundColor="#90000000" Padding="20">
+                <Border StrokeShape="RoundRectangle 24" 
+                        BackgroundColor="{DynamicResource CardBackgroundColor}" 
+                        Stroke="{DynamicResource BorderBrush}"
+                        StrokeThickness="1" 
+                        HorizontalOptions="Center" 
+                        VerticalOptions="Center"
+                        WidthRequest="380"
+                        Padding="24">
+                    <Border.Shadow>
+                        <Shadow Brush="Black" Offset="0,10" Radius="25" Opacity="0.4"/>
+                    </Border.Shadow>
+                    
+                    <VerticalStackLayout Spacing="16">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <Label Grid.Column="0" Text="Spaced Repetition Flashcard 🧠" FontSize="20" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" VerticalOptions="Center" />
+                            <Button Grid.Column="1" Text="✕" 
+                                    Command="{Binding CloseReviewModalCommand}" 
+                                    BackgroundColor="Transparent" 
+                                    TextColor="{DynamicResource SecondaryTextColor}" 
+                                    FontSize="18" 
+                                    FontAttributes="Bold" />
+                        </Grid>
 
-        <ActivityIndicator IsVisible="{Binding IsLoading}"
-                           IsRunning="{Binding IsLoading}"
-                           HorizontalOptions="Center"
-                           VerticalOptions="Center"
-                           Color="{StaticResource Primary}"
-                           Scale="1.3" />
-    </Grid>
+                        <!-- Flashcard Prompt -->
+                        <Border StrokeShape="RoundRectangle 18" BackgroundColor="{DynamicResource SecondaryBackgroundColor}" StrokeThickness="0" Padding="20" HeightRequest="140">
+                            <VerticalStackLayout Spacing="10" VerticalOptions="Center" HorizontalOptions="Center">
+                                <Label Text="Prompt" FontSize="12" TextColor="{DynamicResource SecondaryTextColor}" HorizontalOptions="Center" />
+                                <Label Text="{Binding ActiveReviewItem.Title, StringFormat='Recall the ASL sign for: {0}'}" FontSize="20" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" HorizontalOptions="Center" HorizontalTextAlignment="Center" />
+                            </VerticalStackLayout>
+                        </Border>
+
+                        <!-- Reveal Answer / Demonstration Button -->
+                        <Button Text="Reveal Sign &amp; Demonstration 📹" 
+                                Command="{Binding RevealReviewAnswerCommand}"
+                                IsVisible="{Binding IsReviewAnswerRevealed, Converter={StaticResource InverseBoolConverter}}"
+                                BackgroundColor="{DynamicResource PrimaryColor}" 
+                                TextColor="{DynamicResource ButtonTextColor}" 
+                                FontAttributes="Bold" 
+                                FontSize="14" 
+                                CornerRadius="14" 
+                                Padding="16,12" />
+
+                        <!-- Answer Details & Rating Buttons -->
+                        <VerticalStackLayout Spacing="14" IsVisible="{Binding IsReviewAnswerRevealed}">
+                            <Border StrokeShape="RoundRectangle 14" BackgroundColor="{DynamicResource SecondaryBackgroundColor}" StrokeThickness="0" Padding="14">
+                                <VerticalStackLayout Spacing="6">
+                                    <Label Text="Demonstration Guide ✋" FontSize="13" FontAttributes="Bold" TextColor="{DynamicResource PrimaryColor}" />
+                                    <Label Text="Form clear hand position at chest height. Keep fingers extended and smooth motion." FontSize="12" TextColor="{DynamicResource SecondaryTextColor}" />
+                                </VerticalStackLayout>
+                            </Border>
+
+                            <Label Text="Rate Difficulty:" FontSize="13" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" HorizontalOptions="Center" />
+                            
+                            <Grid ColumnDefinitions="*,*,*,*" ColumnSpacing="8">
+                                <Button Grid.Column="0" Text="Again 🔴" 
+                                        Command="{Binding CompleteReviewWithRatingCommand}" 
+                                        CommandParameter="1"
+                                        BackgroundColor="#EF4444" TextColor="White" FontSize="11" FontAttributes="Bold" CornerRadius="10" Padding="4,8" />
+                                <Button Grid.Column="1" Text="Hard 🟠" 
+                                        Command="{Binding CompleteReviewWithRatingCommand}" 
+                                        CommandParameter="2"
+                                        BackgroundColor="#F59E0B" TextColor="White" FontSize="11" FontAttributes="Bold" CornerRadius="10" Padding="4,8" />
+                                <Button Grid.Column="2" Text="Good 🟢" 
+                                        Command="{Binding CompleteReviewWithRatingCommand}" 
+                                        CommandParameter="4"
+                                        BackgroundColor="#10B981" TextColor="White" FontSize="11" FontAttributes="Bold" CornerRadius="10" Padding="4,8" />
+                                <Button Grid.Column="3" Text="Easy 🔵" 
+                                        Command="{Binding CompleteReviewWithRatingCommand}" 
+                                        CommandParameter="5"
+                                        BackgroundColor="#0EA5E9" TextColor="White" FontSize="11" FontAttributes="Bold" CornerRadius="10" Padding="4,8" />
+                            </Grid>
+                        </VerticalStackLayout>
+
+                    </VerticalStackLayout>
+                </Border>
+            </Grid>
+
+            <ActivityIndicator IsVisible="{Binding IsLoading}"
+                               IsRunning="{Binding IsLoading}"
+                               HorizontalOptions="Center"
+                               VerticalOptions="Center"
+                               Color="{DynamicResource PrimaryColor}"
+                               Scale="1.5" />
+        </Grid>
+    </controls:MainLayout>
 </ContentPage>

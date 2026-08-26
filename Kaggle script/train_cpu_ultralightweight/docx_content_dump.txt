@@ -1,0 +1,996 @@
+[1] TÀI LIỆU KỸ THUẬT
+[2] TỪ KÝ TỰ NGÓN TAY ĐẾN CÂU HOÀN CHỈNH
+[3] Các phương pháp ghép chuỗi ký tự nhận diện qua camera thành từ và câu
+[4] Hệ thống phiên dịch ngôn ngữ ký hiệu qua camera (Web)
+[5] Kiến trúc lai: nhận diện ở trình duyệt — hậu xử lý ngôn ngữ ở máy chủ
+[6] Đầu ra: câu tiếng Anh → dịch máy sang tiếng Việt
+[7] Phiên bản 1.0  •  Tháng 8 năm 2026
+[8] MỤC LỤC
+[9] (Mục lục là trường tự động của Word. Nếu chưa hiển thị: bấm chuột phải vào vùng mục lục → Update Field → Update entire table.)
+[10] 1. Tổng quan bài toán
+[11] 1.1. Bối cảnh
+[12] Hệ thống hiện tại nhận diện được từng ký tự riêng lẻ của bảng chữ cái ngón tay (fingerspelling) trong Ngôn ngữ ký hiệu Mỹ — ASL, dựa trên các bộ cơ sở dữ liệu của Mỹ. Camera chạy ở tốc độ khoảng 20–30 khung hình/giây, và với mỗi khung hình mô hình trả về một nhãn ký tự kèm độ tin cậy. Kết quả là một dòng chảy nhãn dày đặc và nhiễu, ví dụ:
+[13] Hình 1.1 — Dòng nhãn thô trên từng khung hình khi người dùng đánh vần "HELLO"
+[14] H H H H H H H B H H H H | E E E E E E E E | L L L L L L L L L L L L
+[15]   L L L L L L L L L L L | O O O O K O O O O O O ...
+[16] Điều người dùng cần thấy trên màn hình lại là:
+[17] Hình 1.2 — Đầu ra mong muốn
+[18] Hello my name is Adley.
+[19] Xin chào, tên tôi là Adley.
+[20] Khoảng cách giữa hai dạng dữ liệu đó chính là nội dung của tài liệu này. Đây không phải là một bài toán thị giác máy tính nữa — nó là bài toán xử lý chuỗi thời gian và xử lý ngôn ngữ tự nhiên, và có thể giải quyết gần như hoàn toàn ở lớp phần mềm mà không cần huấn luyện lại mô hình nhận diện.
+[21] 1.2. Bốn vấn đề cốt lõi
+[22] Bất kỳ giải pháp nào cũng phải trả lời được bốn câu hỏi sau. Toàn bộ tài liệu được tổ chức xoay quanh chúng.
+[23] #
+[24] Vấn đề
+[25] Mô tả
+[26] Giải quyết ở
+[27] 1
+[28] Trùng lặp theo thời gian
+[29] Một ký tự được giữ trong 10–15 khung hình sẽ sinh ra 10–15 nhãn giống nhau. Không thể ghép thẳng thành chuỗi.
+[30] Chương 3
+[31] 2
+[32] Nhiễu tức thời
+[33] Khung hình lúc chuyển tay bị nhận sai (H → B → H). Cần lọc bỏ mà không làm mất ký tự thật.
+[34] Chương 3
+[35] 3
+[36] Ranh giới từ và câu
+[37] Không có phím cách. Phải suy ra khoảng trắng từ thời gian nghỉ, cử chỉ điều khiển, hoặc từ chính mô hình ngôn ngữ.
+[38] Chương 4
+[39] 4
+[40] Lỗi còn sót lại
+[41] Dù lọc tốt vẫn còn 5–15% ký tự sai. Cần từ điển và mô hình ngôn ngữ để sửa.
+[42] Chương 5–6
+[43] Bảng 1.1 — Bốn vấn đề cốt lõi của khâu ghép ký tự thành câu
+[44] 1.3. Kiến trúc pipeline đề xuất
+[45] Cách tiếp cận được khuyến nghị là pipeline nhiều tầng, mỗi tầng làm sạch đầu ra của tầng trước. Ưu điểm lớn nhất là mỗi tầng có thể phát triển, kiểm thử, bật/tắt và đo lường độc lập — rất quan trọng khi làm đồ án hoặc sản phẩm thực tế.
+[46] Hình 1.3 — Kiến trúc pipeline 5 tầng, phân chia giữa trình duyệt và máy chủ
+[47] +--- TRINH DUYET (client) --------------------------------------+
+[48] |                                                               |
+[49] |  Camera --> MediaPipe Hands --> 21 landmark x (x,y,z)         |
+[50] |                                     |                         |
+[51] |                                     v                         |
+[52] |                         Mo hinh nhan dien ky tu               |
+[53] |                         (TF.js / ONNX Runtime Web)            |
+[54] |                                     |  {letter, conf}/frame   |
+[55] |                                     v                         |
+[56] |  TANG 1  On dinh hoa ky tu   (may trang thai + bo phieu)      |
+[57] |                                     |  ky tu da chot          |
+[58] |                                     v                         |
+[59] |  TANG 2  Phan doan tu / cau  (pause + cu chi dieu khien)      |
+[60] |                                     |  ["HELO","MY","NAM"]    |
+[61] +-------------------------------------|-------------------------+
+[62]                                       |  POST /api/compose
+[63] +--- MAY CHU (FastAPI / Node) --------v-------------------------+
+[64] |  TANG 3  Sua chinh ta + mo hinh ngon ngu (SymSpell/KenLM/LLM) |
+[65] |  TANG 4  Dung cau: viet hoa, dau cau, ngu phap                |
+[66] |  TANG 5  Dich may Anh -> Viet (vinai-translate / envit5)      |
+[67] +-------------------------------------|-------------------------+
+[68]                                       v
+[69]                       "Hello my name is Adley."
+[70]                       "Xin chao, ten toi la Adley."
+[71] Nguyên tắc thiết kế: Tầng 1 và 2 phải chạy ở trình duyệt. Chúng cần phản hồi ở mức từng khung hình (< 33 ms) và người dùng phải thấy ký tự hiện ra ngay khi họ đánh vần. Tầng 3–5 chạy ở máy chủ, được gọi theo cơ chế debounce sau khi người dùng ngừng tay khoảng 500–800 ms.
+[72] 1.4. Ranh giới phạm vi
+[73] Tài liệu này tập trung vào khâu ghép ký tự đã nhận diện thành câu. Các nội dung sau được đề cập ở mức tham chiếu chứ không đi sâu:
+[74] Cải thiện độ chính xác của bản thân mô hình nhận diện ký tự (thu thập dữ liệu, tăng cường dữ liệu, kiến trúc mạng) — xem Chương 7 để biết hướng thay thế bằng mô hình đầu-cuối.
+[75] Nhận diện ký hiệu ở cấp độ từ/cụm từ (WLASL, How2Sign) — là bước mở rộng tự nhiên sau này, không nằm trong phạm vi hiện tại.
+[76] Ngữ pháp ASL đầy đủ (trật tự từ Topic–Comment, biểu cảm khuôn mặt làm dấu câu) — chỉ áp dụng khi chuyển sang nhận diện cấp từ.
+[77] 2. Tổng quan các nhóm phương pháp
+[78] Có năm nhóm phương pháp khả thi để chuyển chuỗi ký tự thành câu. Chúng không loại trừ nhau — trên thực tế một hệ thống tốt kết hợp nhiều nhóm. Bảng dưới đây là bản đồ tổng quát; các chương sau đi vào chi tiết từng nhóm.
+[79] Nhóm
+[80] Nguyên lý
+[81] Ưu điểm
+[82] Nhược điểm
+[83] Độ khó
+[84] A. Quy tắc thời gian
+[85] Bỏ phiếu đa số trên cửa sổ trượt, máy trạng thái, ngưỡng thời gian nghỉ.
+[86] Không cần dữ liệu, chạy ngay trong trình duyệt, độ trễ gần bằng 0, dễ gỡ lỗi.
+[87] Phải chỉnh tay nhiều tham số; không sửa được lỗi ngữ nghĩa.
+[88] Thấp
+[89] B. Từ điển + khoảng cách sửa
+[90] SymSpell / BK-tree tìm từ gần nhất trong từ điển tần suất.
+[91] Rất nhanh (micro giây), thư viện sẵn có, hiệu quả rõ với 1–2 lỗi/từ.
+[92] Sửa nhầm tên riêng; không dùng ngữ cảnh câu.
+[93] Thấp
+[94] C. Mô hình ngôn ngữ n-gram
+[95] KenLM / bigram rescoring, giải mã Viterbi hoặc beam search.
+[96] Dùng được ngữ cảnh, kết hợp tốt với xác suất của mô hình thị giác.
+[97] Cần tệp mô hình 50–500 MB; cấu hình phức tạp hơn.
+[98] Trung bình
+[99] D. Mô hình ngôn ngữ lớn (LLM)
+[100] Gửi chuỗi thô cho GPT/Claude/Gemini kèm chỉ dẫn sửa và dựng câu.
+[101] Chất lượng cao nhất, xử lý được cả ngữ pháp và dấu câu, làm được đa ngôn ngữ.
+[102] Độ trễ 0,5–2 giây, tốn chi phí, cần mạng, có thể "bịa".
+[103] Thấp về mã, cao về vận hành
+[104] E. Đầu-cuối (CTC / seq2seq)
+[105] Huấn luyện mô hình xuất thẳng chuỗi ký tự từ chuỗi landmark.
+[106] Chính xác nhất, tự học ranh giới ký tự, không cần chỉnh tham số tay.
+[107] Cần huấn luyện lại, cần GPU và dữ liệu chuỗi có nhãn.
+[108] Cao
+[109] Bảng 2.1 — So sánh năm nhóm phương pháp
+[110] 2.1. Khuyến nghị lộ trình
+[111] Với hiện trạng dự án (mô hình đã nhận diện được ký tự lẻ, cần ra sản phẩm chạy được), lộ trình hợp lý là:
+[112] Bắt buộc, làm trước — Nhóm A ở trình duyệt. Đây là phần tạo ra khác biệt lớn nhất và tốn ít công nhất. Không có nhóm A thì mọi thứ phía sau đều vô nghĩa vì đầu vào là "HHHHHEEELLL...".
+[113] Bắt buộc — Nhóm B ở máy chủ. Thêm khoảng 30 dòng mã, tăng độ chính xác từ ở mức nhiễu trung bình rõ rệt (xem Chương 9).
+[114] Nên có — Nhóm D ở chế độ tuỳ chọn ("chế độ chất lượng cao"), có nút bật/tắt. Đồng thời chính là bộ dịch sang tiếng Việt luôn.
+[115] Nâng cao / hướng phát triển — Nhóm C nếu cần chạy hoàn toàn ngoại tuyến; Nhóm E nếu có điều kiện huấn luyện lại và muốn đóng góp học thuật.
+[116] 3. Tầng 1 — Ổn định hoá ký tự theo thời gian
+[117] Đây là tầng quan trọng nhất và cũng là tầng hay bị làm sai nhất. Mục tiêu: từ N nhãn/giây rút ra đúng một ký tự cho mỗi lần người dùng thực sự tạo ký hiệu.
+[118] 3.1. Phương pháp 3.1 — Ngưỡng độ tin cậy đơn giản (không nên dùng một mình)
+[119] Cách ngây thơ nhất: nếu conf > 0.9 thì xuất ký tự. Cách này luôn thất bại, vì một ký tự giữ trong 12 khung hình sẽ được xuất 12 lần. Có người khắc phục bằng cách "chỉ xuất nếu khác ký tự trước" — nhưng khi đó các từ có ký tự đôi như HELLO, SEE, ADD sẽ mất một ký tự, và một khung hình nhiễu ở giữa (L → B → L) lại làm xuất thừa. Cần một cơ chế mạnh hơn.
+[120] 3.2. Phương pháp 3.2 — Bỏ phiếu đa số trên cửa sổ trượt (N-of-M voting)
+[121] Giữ một hàng đợi vòng M khung hình gần nhất. Chỉ chấp nhận ký tự khi nó chiếm ít nhất N phiếu trong M khung. Đây là bộ lọc nhiễu kinh điển, tương đương bộ lọc trung vị theo thời gian.
+[122] Mã 3.1 — Bỏ phiếu 6/8
+[123] buf = deque(maxlen=M)            # M = 8 khung ≈ 0,3 giây ở 25 fps
+[124]  
+[125] def push(letter, conf):
+[126]     buf.append(letter if conf >= MIN_CONF else None)
+[127]     counts = Counter(x for x in buf if x)
+[128]     if not counts: return None
+[129]     top, votes = counts.most_common(1)[0]
+[130]     return top if votes >= N else None   # N = 6
+[131] Chọn M theo tốc độ đánh vần: người mới học giữ mỗi ký tự 400–600 ms, người thành thạo chỉ 120–200 ms. M nên nhỏ hơn khoảng một nửa thời gian giữ ký tự ngắn nhất mà hệ thống muốn hỗ trợ, nếu không hai ký tự liên tiếp sẽ chia phiếu và không ký tự nào đủ ngưỡng.
+[132] Cạm bẫy: Bỏ phiếu đơn thuần vẫn chưa giải quyết được trùng lặp — khi ký tự vẫn được giữ, cửa sổ vẫn tiếp tục đủ phiếu ở mọi khung hình tiếp theo. Cần thêm cơ chế "khoá" của mục 3.3.
+[133] 3.3. Phương pháp 3.3 — Máy trạng thái IDLE → HOLD → COMMIT → RELEASE (khuyến nghị)
+[134] Đây là giải pháp được khuyến nghị dùng chính thức. Ý tưởng mượn từ chống dội phím cơ (key debouncing): sau khi "gõ" một ký tự, bàn phím phải được nhả trước khi ký tự đó được gõ lại.
+[135] Trạng thái
+[136] Ý nghĩa
+[137] Điều kiện chuyển tiếp
+[138] IDLE
+[139] Chưa có ký tự nào đủ ổn định.
+[140] Khi một ký tự đạt N/M phiếu → xuất ký tự, sang RELEASE.
+[141] RELEASE
+[142] Vừa xuất một ký tự, đang chờ tay "nhả".
+[143] Cần release_frames khung hình liên tiếp có độ tin cậy thấp hoặc cho ra ký tự khác → quay lại IDLE.
+[144] RELEASE (giữ lâu)
+[145] Tay vẫn giữ nguyên ký tự vừa xuất.
+[146] Nếu giữ quá hold_repeat_frames → xuất ký tự đó lần nữa (ký tự đôi: LL, SS, DD).
+[147] PAUSE
+[148] Không phát hiện tay / độ tin cậy thấp kéo dài.
+[149] space_frames khung → phát sự kiện KHOẢNG TRẮNG; sentence_frames khung → KẾT THÚC CÂU.
+[150] Bảng 3.1 — Máy trạng thái ổn định hoá ký tự
+[151] Ba cơ chế được xử lý cùng lúc trong máy trạng thái này: chống trùng lặp (RELEASE), hỗ trợ ký tự đôi (bộ đếm giữ lâu), và phát hiện ranh giới (bộ đếm nghỉ). Mã nguồn đầy đủ ở Phụ lục A (JavaScript, chạy trong trình duyệt) và Phụ lục B (Python).
+[152] Mã 3.2 — Lõi máy trạng thái (trích từ Phụ lục B)
+[153] if state == RELEASE:
+[154]     if low_conf or (stable and top != last):
+[155]         rel += 1
+[156]         if rel >= RELEASE_FRAMES: state, rel = IDLE, 0
+[157]     elif stable and top == last:
+[158]         hold += 1
+[159]         if hold >= HOLD_REPEAT_FRAMES:      # giữ lâu = ký tự đôi
+[160]             hold = 0; return ("L", last)
+[161]     return None
+[162]  
+[163] if stable:                                   # từ IDLE
+[164]     state, last, rel, hold = RELEASE, top, 0, 0
+[165]     buf.clear()
+[166]     return ("L", top)
+[167] 3.4. Phương pháp 3.4 — Làm mượt xác suất (exponential smoothing) thay vì bỏ phiếu
+[168] Biến thể tinh vi hơn: thay vì bỏ phiếu trên nhãn, làm mượt véc-tơ xác suất đầu ra của mô hình theo thời gian, rồi mới lấy argmax.
+[169] Mã 3.3 — Làm mượt hàm mũ trên véc-tơ softmax
+[170] s_t = alpha * p_t + (1 - alpha) * s_{t-1}     # alpha ≈ 0,3
+[171] letter = argmax(s_t)
+[172] if s_t[letter] > TAU and state == IDLE: commit(letter)
+[173] Ưu điểm: mượt hơn, ít giật, chỉ cần một tham số alpha; những khung hình nhiễu có độ tin cậy thấp tự động ít ảnh hưởng. Nhược điểm: chậm phản ứng hơn khi chuyển ký tự (có độ trễ nhóm), và khó gỡ lỗi hơn bỏ phiếu. Trong thực tế kết hợp cả hai cho kết quả tốt nhất: làm mượt véc-tơ xác suất rồi bỏ phiếu trên nhãn đã làm mượt.
+[174] 3.5. Bộ tham số khuyến nghị
+[175] Tham số
+[176] Giá trị mặc định
+[177] Ở 25 fps
+[178] Ghi chú
+[179] window (M)
+[180] 8 khung
+[181] 0,32 s
+[182] Giảm còn 5–6 cho người đánh vần nhanh.
+[183] min_votes (N)
+[184] 6 khung
+[185] —
+[186] Tỉ lệ 0,75×M là điểm cân bằng tốt.
+[187] min_conf
+[188] 0,60
+[189] —
+[190] Nâng lên 0,75 nếu mô hình hay tự tin sai.
+[191] release_frames
+[192] 4 khung
+[193] 0,16 s
+[194] Quá nhỏ → ký tự bị lặp; quá lớn → mất ký tự khi đánh nhanh.
+[195] hold_repeat_frames
+[196] 25 khung
+[197] 1,0 s
+[198] Thời gian giữ để tạo ký tự đôi.
+[199] space_frames
+[200] 12 khung
+[201] 0,48 s
+[202] Nghỉ tay giữa hai từ.
+[203] sentence_frames
+[204] 45 khung
+[205] 1,8 s
+[206] Nghỉ dài = kết thúc câu, kích hoạt hậu xử lý.
+[207] Bảng 3.2 — Tham số khuyến nghị (đã kiểm chứng bằng mô phỏng ở Chương 9)
+[208] Gợi ý thực dụng: Đưa toàn bộ bảng này ra một bảng điều khiển ẩn trên giao diện web (một nút "Cài đặt nâng cao"). Mỗi người dùng có tốc độ tay khác nhau; cho phép hiệu chỉnh sẽ tăng trải nghiệm nhiều hơn bất kỳ cải tiến mô hình nào. Có thể làm thêm bước hiệu chuẩn 15 giây: yêu cầu người dùng đánh vần một từ mẫu, đo thời gian giữ trung bình, rồi tự đặt tham số.
+[209] 4. Tầng 2 — Phân đoạn từ và câu
+[210] Sau tầng 1, ta có một chuỗi ký tự sạch nhưng liền mạch: HELLOMYNAMEISADLEY. Cần chèn khoảng trắng. Có bốn phương pháp, nên dùng kết hợp.
+[211] 4.1. Phương pháp 4.1 — Dựa trên thời gian nghỉ (khuyến nghị làm mặc định)
+[212] Cơ chế tự nhiên nhất và cũng là cách người khiếm thính đánh vần trong thực tế: hạ tay hoặc dừng lại giữa hai từ. Máy trạng thái ở mục 3.3 đã có sẵn bộ đếm này.
+[213] Không phát hiện được bàn tay, hoặc độ tin cậy dưới ngưỡng, liên tiếp space_frames khung → chèn khoảng trắng.
+[214] Kéo dài tới sentence_frames khung → kết thúc câu, gọi hậu xử lý ở máy chủ, xoá bộ đệm.
+[215] Cần cơ chế trễ một lần: chỉ phát một sự kiện khoảng trắng cho mỗi lần nghỉ, không phát liên tục ở mọi khung hình sau đó.
+[216] Ưu điểm: không tốn tài nguyên, hoạt động tức thì, người dùng kiểm soát được hoàn toàn. Nhược điểm: người mới dùng hay dừng giữa chừng vì lưỡng lự và tạo ra khoảng trắng thừa. Khắc phục bằng cách hiển thị thanh tiến trình khoảng trắng trên giao diện (một vòng tròn nạp đầy dần trong 0,5 giây) để người dùng biết hệ thống sắp chèn dấu cách.
+[217] 4.2. Phương pháp 4.2 — Cử chỉ điều khiển riêng
+[218] Dành riêng một vài ký hiệu không thuộc bảng chữ cái làm phím chức năng. Cách này cho độ chính xác ranh giới gần như tuyệt đối.
+[219] Cử chỉ gợi ý
+[220] Chức năng
+[221] Ghi chú triển khai
+[222] Bàn tay xoè (open palm, 5 ngón)
+[223] KHOẢNG TRẮNG
+[224] Không trùng với chữ cái ASL nào; dễ nhận diện.
+[225] Nắm đấm giữ 1 giây
+[226] XOÁ KÝ TỰ (backspace)
+[227] Phân biệt với chữ "S"/"A" bằng thời gian giữ.
+[228] Ngón cái giơ lên
+[229] KẾT THÚC CÂU / GỬI
+[230] Kích hoạt gọi API hậu xử lý ngay.
+[231] Hai tay xuất hiện
+[232] XOÁ TOÀN BỘ
+[233] Hiếm khi vô tình xảy ra khi đánh vần một tay.
+[234] Bảng 4.1 — Bộ cử chỉ điều khiển đề xuất
+[235] Cần bổ sung 3–4 lớp này vào bộ dữ liệu huấn luyện (mỗi lớp vài trăm mẫu là đủ vì chúng rất khác biệt về hình thái). Nếu không muốn huấn luyện lại, có thể nhận diện bằng quy tắc hình học trên landmark của MediaPipe: đếm số ngón duỗi bằng cách so sánh tọa độ đầu ngón với khớp giữa.
+[236] Mã 4.1 — Nhận diện cử chỉ điều khiển bằng quy tắc hình học, không cần mô hình
+[237] // Đếm số ngón duỗi từ 21 landmark của MediaPipe Hands
+[238] function fingersUp(lm) {
+[239]   const tips = [8, 12, 16, 20], pips = [6, 10, 14, 18];
+[240]   let n = 0;
+[241]   for (let i = 0; i < 4; i++) if (lm[tips[i]].y < lm[pips[i]].y) n++;  // ngón duỗi
+[242]   if (Math.abs(lm[4].x - lm[17].x) > Math.abs(lm[5].x - lm[17].x)) n++; // ngón cái
+[243]   return n;
+[244] }
+[245] // 5 ngón duỗi + giữ 6 khung  ->  KHOẢNG TRẮNG
+[246] 4.3. Phương pháp 4.3 — Tách từ bằng thuật toán (khi không có khoảng trắng)
+[247] Khi người dùng đánh vần liền một mạch, phải tách whereisthehospital → where is the hospital bằng thuật toán. Bài toán này gọi là word segmentation và giải bằng quy hoạch động với mô hình unigram/bigram.
+[248] Công thức
+[249] Gọi s là chuỗi không dấu cách. Tìm cách chia s = w1 w2 ... wk sao cho tối đa hoá tổng log-xác suất:
+[250] Mã 4.2 — Quy hoạch động cho bài toán tách từ
+[251] score(s) = sum log P(w_i)                    (mo hinh unigram)
+[252] score(s) = sum log P(w_i | w_i-1)            (mo hinh bigram - tot hon)
+[253]  
+[254] // Quy hoach dong: best[i] = max theo j < i cua best[j] + logP(s[j..i])
+[255] for i in 1..n:
+[256]     best[i] = max_{j<i, i-j<=MAXWORD} ( best[j] + logP(s[j:i]) )
+[257] Thư viện sẵn có: symspellpy.word_segmentation() (Python), wordsegment (Python, dùng dữ liệu Google Web Trillion Word Corpus), wordsegmentation/WordSegmentationTM (C#/JS). Độ phức tạp O(n × MAXWORD), chạy vài trăm micro giây cho một câu.
+[258] Kết quả thực nghiệm quan trọng: Trong thử nghiệm ở Chương 9, tách từ thuần tuý trên chuỗi liền mạch cho kết quả kém rõ rệt: whereisthehospitl → "whereas the hospital", iamgoingtoschol → "imaging to school". Kết luận: luôn ưu tiên lấy ranh giới từ thời gian nghỉ (4.1) hoặc cử chỉ (4.2); chỉ dùng 4.3 làm phương án dự phòng khi không có ranh giới nào.
+[259] 4.4. Phương pháp 4.4 — Tách từ kết hợp xác suất của mô hình thị giác (nâng cao)
+[260] Cách mạnh nhất: không quyết định ranh giới sớm. Giữ lại top-k ứng viên cho mỗi vị trí ký tự cùng xác suất của chúng, rồi chạy beam search chung trên cả hai chiều — chọn đồng thời ký tự và ranh giới sao cho tối đa hoá:
+[261] Mã 4.3 — Hàm điểm kết hợp cho beam search
+[262] score = L1 * log P_thi_giac(chuoi ky tu)
+[263]       + L2 * log P_ngon_ngu(chuoi tu)
+[264]       + L3 * (so tu)          // thuong do dai, tranh thien vi cau ngan
+[265]  
+[266] // L1 = 1.0   L2 = 0.7   L3 = 0.3   (chinh tren tap kiem dinh)
+[267] Đây chính là cách các hệ thống nhận dạng tiếng nói giải mã. Chi tiết ở mục 5.3. Chi phí triển khai cao hơn nhưng đây là hướng cho kết quả tốt nhất nếu không huấn luyện lại mô hình.
+[268] 5. Tầng 3 — Sửa lỗi và mô hình ngôn ngữ
+[269] Sau hai tầng trên, đầu ra điển hình là: ["HELO", "MY", "NAM", "IS", "ADLEY"] — đúng cấu trúc nhưng còn lỗi ký tự. Tầng này sửa chúng.
+[270] 5.1. Phương pháp 5.1 — SymSpell (khuyến nghị làm mặc định)
+[271] SymSpell là thuật toán sửa chính tả nhanh nhất hiện nay, nhanh hơn thuật toán Peter Norvig khoảng một triệu lần ở khoảng cách sửa lỗi 3. Nguyên lý Symmetric Delete: thay vì sinh tất cả biến thể chèn/xoá/thay/hoán vị của từ đầu vào, chỉ sinh các biến thể xoá của cả từ điển lẫn từ đầu vào rồi đối chiếu — giảm không gian tìm kiếm theo cấp số nhân.
+[272] Mã 5.1 — Cài đặt SymSpell (Python)
+[273] from symspellpy import SymSpell, Verbosity
+[274] import importlib.resources as ir
+[275]  
+[276] sym = SymSpell(max_dictionary_edit_distance=2, prefix_length=7)
+[277] with ir.as_file(ir.files("symspellpy")/"frequency_dictionary_en_82_765.txt") as p:
+[278]     sym.load_dictionary(str(p), term_index=0, count_index=1)
+[279] with ir.as_file(ir.files("symspellpy")/"frequency_bigramdictionary_en_243_342.txt") as p:
+[280]     sym.load_bigram_dictionary(str(p), term_index=0, count_index=2)
+[281]  
+[282] # Sửa từng từ
+[283] sym.lookup("helo", Verbosity.TOP, max_edit_distance=2)[0].term      # -> "hello"
+[284] # Sửa cả câu, có dùng bigram làm ngữ cảnh
+[285] sym.lookup_compound("helo my nam is", max_edit_distance=2)[0].term
+[286] # Tách chuỗi liền mạch
+[287] sym.word_segmentation("thankyouverymuch").corrected_string
+[288] Ba cạm bẫy và cách khắc phục
+[289] Cạm bẫy
+[290] Hậu quả
+[291] Cách khắc phục
+[292] Sửa hỏng tên riêng
+[293] ADLEY → alley, ANNA → anna. Trong thực nghiệm lỗi này xảy ra ở 100% số lần.
+[294] Duy trì từ điển riêng của phiên làm việc: người dùng nhập tên mình một lần, đưa vào danh sách trắng. Ngoài ra: nếu từ được đánh vần ở đầu câu và viết hoa, coi là tên riêng.
+[295] Sửa quá tay với từ ngắn
+[296] Từ 2–3 ký tự luôn có hàng chục hàng xóm ở khoảng cách 2 (IS → it, in, if...).
+[297] Chia bậc theo độ dài: từ ≤2 ký tự không sửa; 3–5 ký tự cho phép khoảng cách 1; >5 ký tự cho phép khoảng cách 2.
+[298] Sửa từ vốn đã đúng
+[299] Từ hiếm nhưng đúng bị đổi thành từ phổ biến hơn.
+[300] Nếu từ đã có trong từ điển thì trả về nguyên trạng, không tra cứu.
+[301] Bảng 5.1 — Cạm bẫy khi dùng SymSpell và cách khắc phục
+[302] Mã 5.2 — Hàm sửa từ đã áp dụng cả ba biện pháp khắc phục
+[303] def fix_word(w, session_lexicon):
+[304]     lw = w.lower()
+[305]     if lw in session_lexicon: return lw              # tên riêng: giữ nguyên
+[306]     if sym.word_count.get(lw):  return lw            # từ vốn đã đúng
+[307]     d = 0 if len(lw) <= 2 else (1 if len(lw) <= 5 else 2)   # chia bậc theo độ dài
+[308]     r = sym.lookup(lw, Verbosity.TOP, max_edit_distance=d, include_unknown=True)
+[309]     return r[0].term if r else lw
+[310] 5.2. Phương pháp 5.2 — Từ điển tiền tố (Trie) + gợi ý khi đang gõ
+[311] Thay vì sửa sau khi xong từ, hãy gợi ý trong lúc đang đánh vần. Nạp từ điển 20–50 nghìn từ phổ biến vào một cây tiền tố (trie) ở phía trình duyệt; sau mỗi ký tự, tra các từ bắt đầu bằng tiền tố hiện tại và hiển thị 3 gợi ý hàng đầu theo tần suất.
+[312] Người dùng đánh H-E-L → hiện ngay "hello / help / held". Chọn gợi ý bằng cách giữ cử chỉ chọn 1 giây, giảm được rất nhiều thao tác.
+[313] Tăng tốc đáng kể: một từ 5–8 ký tự thường chỉ cần đánh 2–3 ký tự đầu.
+[314] Kích thước trie 30 nghìn từ nén xuống dưới 400 KB, hoàn toàn chạy được ở trình duyệt.
+[315] Đồng thời ràng buộc không gian tìm kiếm: nếu tiền tố hiện tại không dẫn tới bất kỳ từ nào, ký tự vừa nhận gần như chắc chắn sai → thử ứng viên top-2 của mô hình thay thế.
+[316] Đây là cải tiến có tỷ lệ lợi ích/công sức cao nhất về mặt trải nghiệm. Nó biến hệ thống từ "phiên dịch thụ động" thành "bàn phím thông minh", giống cách T9 từng làm với điện thoại phím bấm.
+[317] 5.3. Phương pháp 5.3 — Beam search có ràng buộc từ điển và mô hình ngôn ngữ
+[318] Phương pháp mạnh nhất trong nhóm không cần huấn luyện lại. Thay vì chốt cứng argmax ở mỗi ký tự, giữ lại B giả thuyết tốt nhất (B = 8–16) và mở rộng song song.
+[319] Mã 5.3 — Beam search có cắt tỉa bằng trie và tính điểm bằng mô hình ngôn ngữ
+[320] beams = [("", 0.0)]                       # (chuỗi, log-điểm)
+[321] for each committed_step:
+[322]     cands = top_k(prob_vector, k=3)       # 3 ký tự khả dĩ nhất của bước này
+[323]     new = []
+[324]     for (text, score) in beams:
+[325]         for (ch, p) in cands:
+[326]             t = text + ch
+[327]             if not trie.has_prefix(t.split()[-1]):   # cắt tỉa bằng từ điển
+[328]                 continue
+[329]             new.append((t, score + log(p) + LM_WEIGHT * lm_logprob(t)))
+[330]     beams = sorted(new, key=lambda x: -x[1])[:BEAM_WIDTH]
+[331] return beams[0][0]
+[332] Điểm mấu chốt là cắt tỉa bằng trie: mọi giả thuyết dẫn tới tiền tố không tồn tại trong từ điển đều bị loại ngay, nên không gian tìm kiếm không bùng nổ. Kết quả thường tốt hơn "argmax rồi sửa chính tả" vì mô hình được phép đổi ý về ký tự đã nhận dựa trên ngữ cảnh phía sau.
+[333] Về mô hình ngôn ngữ: dùng KenLM với mô hình n-gram bậc 3–5 huấn luyện trên một kho ngữ liệu tiếng Anh nói (ví dụ OpenSubtitles). Tệp mô hình đã lượng tử hoá khoảng 50–200 MB, truy vấn mất vài micro giây. Ở trình duyệt, có thể thay bằng một bảng bigram rút gọn 5–10 nghìn từ phổ biến nhất, chỉ khoảng 2 MB.
+[334] 5.4. Phương pháp 5.4 — Hậu xử lý bằng mô hình ngôn ngữ lớn (LLM)
+[335] Gửi chuỗi thô cùng ngữ cảnh cho một LLM và yêu cầu sửa, thêm dấu câu, đồng thời dịch. Đây là cách cho chất lượng cao nhất với ít mã nguồn nhất, đổi lại độ trễ và chi phí.
+[336] Mã 5.4 — Mẫu lời nhắc (prompt) cho hậu xử lý bằng LLM
+[337] SYSTEM:
+[338] Bạn là bộ hậu xử lý cho một hệ thống nhận diện đánh vần ngôn ngữ ký hiệu ASL.
+[339] Đầu vào là chuỗi ký tự thô, có thể sai chính tả và thiếu dấu cách.
+[340] Nhiệm vụ:
+[341]   1. Sửa lỗi chính tả, giả định lỗi là do nhận diện ký tự sai (thay/thiếu/thừa 1-2 ký tự).
+[342]   2. Chèn khoảng trắng và dấu câu, viết hoa đúng.
+[343]   3. GIỮ NGUYÊN các từ nằm trong danh sách tên riêng được cung cấp.
+[344]   4. KHÔNG thêm thông tin không có trong đầu vào. Nếu không chắc, giữ nguyên.
+[345] Trả về JSON: {"english": "...", "vietnamese": "...", "confidence": 0.0-1.0}
+[346]  
+[347] USER:
+[348] raw: "HELO MY NAM IS ADLEY"
+[349] proper_nouns: ["Adley"]
+[350] context: ["Hi there.", "Nice to meet you."]     // 2 câu trước đó
+[351]  
+[352] ASSISTANT:
+[353] {"english": "Hello, my name is Adley.",
+[354]  "vietnamese": "Xin chào, tên tôi là Adley.",
+[355]  "confidence": 0.93}
+[356] Lưu ý triển khai
+[357] Bắt buộc dùng debounce. Chỉ gọi API sau khi người dùng ngừng tay 600–800 ms, hoặc khi phát hiện sự kiện kết thúc câu. Gọi mỗi ký tự sẽ tốn chi phí gấp hàng chục lần và gây giật giao diện.
+[358] Luôn hiển thị bản nháp cục bộ trước. Cho người dùng thấy ngay kết quả của tầng 1–2 (chữ xám, nghiêng), rồi thay bằng kết quả LLM khi về (chữ đen). Đây gọi là *optimistic UI* và làm độ trễ gần như biến mất về mặt cảm nhận.
+[359] Ràng buộc chống bịa. Yêu cầu trả JSON có trường confidence; nếu dưới 0,5 thì hiển thị kết quả của tầng SymSpell thay vì kết quả LLM. Ghi nhật ký cả hai để so sánh.
+[360] Truyền ngữ cảnh hội thoại. Gửi kèm 2–3 câu trước giúp LLM chọn đúng từ đồng âm và giữ mạch hội thoại.
+[361] Phương án ngoại tuyến. Nếu cần chạy không mạng, có thể dùng một mô hình nhỏ chạy cục bộ (ví dụ họ mô hình 1–3 tỷ tham số lượng tử hoá) qua Ollama hoặc llama.cpp trên chính máy chủ.
+[362] 5.5. So sánh các phương pháp tầng 3
+[363] Phương pháp
+[364] Độ trễ
+[365] Chi phí
+[366] Chất lượng
+[367] Chạy ngoại tuyến
+[368] Khuyến nghị
+[369] SymSpell
+[370] < 1 ms
+[371] 0
+[372] Trung bình
+[373] Có
+[374] Mặc định, luôn bật
+[375] Trie + gợi ý
+[376] < 1 ms
+[377] 0
+[378] Trung bình khá
+[379] Có
+[380] Nên có, cải thiện UX mạnh
+[381] Beam + KenLM
+[382] 5–20 ms
+[383] 0
+[384] Cao
+[385] Có
+[386] Nếu cần ngoại tuyến chất lượng cao
+[387] LLM qua API
+[388] 0,5–2 s
+[389] Có phí theo token
+[390] Rất cao
+[391] Không
+[392] Chế độ tuỳ chọn + dịch tiếng Việt
+[393] LLM cục bộ
+[394] 1–4 s
+[395] Chi phí phần cứng
+[396] Cao
+[397] Có
+[398] Khi bắt buộc ngoại tuyến
+[399] Bảng 5.2 — So sánh các phương pháp hậu xử lý ngôn ngữ
+[400] 6. Tầng 4 và 5 — Dựng câu và dịch sang tiếng Việt
+[401] 6.1. Dựng câu: viết hoa và dấu câu
+[402] Với hướng "câu tiếng Anh rồi dịch sang tiếng Việt", tầng này có ba nhiệm vụ nhỏ. Nếu đã dùng LLM ở mục 5.4 thì LLM làm luôn cả ba; nếu không, dùng các quy tắc sau.
+[403] Viết hoa: ký tự đầu câu; các từ nằm trong từ điển tên riêng của phiên; đại từ I.
+[404] Dấu kết câu: nếu từ đầu tiên thuộc tập từ để hỏi (what, where, when, who, why, how, do, does, did, can, could, is, are, will, would) → dấu ?; ngược lại → dấu .. Có thể bổ sung một cử chỉ riêng để người dùng chọn dấu chấm than.
+[405] Dấu phẩy và ngữ pháp: cần mô hình. Hai lựa chọn nhẹ là deepmultilingualpunctuation (mô hình BERT khôi phục dấu câu, khoảng 500 MB) hoặc một mô hình sửa ngữ pháp T5 tinh chỉnh trên tập JFLEG/CoNLL-2014.
+[406] Mã 6.1 — Dựng câu bằng quy tắc
+[407] QUESTION_STARTERS = {"what","where","when","who","why","how",
+[408]                      "do","does","did","can","could","is","are","will","would"}
+[409]  
+[410] def punctuate(s: str) -> str:
+[411]     s = " ".join(s.split())
+[412]     if not s: return ""
+[413]     is_q = s.split()[0].lower() in QUESTION_STARTERS
+[414]     return s[0].upper() + s[1:] + ("?" if is_q else ".")
+[415] 6.2. Dịch Anh → Việt
+[416] Ba lựa chọn, xếp theo mức độ phù hợp với dự án:
+[417] Lựa chọn
+[418] Mô tả
+[419] Chất lượng
+[420] Chi phí / hạ tầng
+[421] vinai/vinai-translate-en2vi-v2
+[422] Mô hình mBART tinh chỉnh cho cặp Anh–Việt, do VinAI phát hành trên Hugging Face. Chạy cục bộ trên máy chủ.
+[423] Rất tốt cho tiếng Việt tự nhiên
+[424] ~2,4 GB, cần GPU hoặc CPU mạnh; 0,3–1 s/câu
+[425] VietAI/envit5-translation
+[426] Mô hình T5 hai chiều Anh–Việt, nhẹ hơn, dùng tiền tố en:  / vi: .
+[427] Tốt
+[428] ~900 MB; nhanh hơn
+[429] LLM đã dùng ở mục 5.4
+[430] Yêu cầu trả cả trường vietnamese trong cùng một lời gọi.
+[431] Rất tốt, đặc biệt về văn phong hội thoại
+[432] Không thêm lượt gọi nào; đây là lựa chọn hiệu quả nhất
+[433] Bảng 6.1 — So sánh các phương án dịch máy Anh → Việt
+[434] Khuyến nghị: Nếu đã bật chế độ LLM, hãy để LLM trả về đồng thời câu tiếng Anh đã sửa và bản dịch tiếng Việt trong một lần gọi. Việc này tiết kiệm một vòng gọi mạng và cho bản dịch tự nhiên hơn vì mô hình nhìn thấy cả ngữ cảnh hội thoại. Chỉ dựng đường dịch riêng bằng vinai-translate khi cần chạy ngoại tuyến hoàn toàn.
+[435] Mã 6.2 — Dịch cục bộ bằng vinai-translate
+[436] from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+[437]  
+[438] name = "vinai/vinai-translate-en2vi-v2"
+[439] tok   = AutoTokenizer.from_pretrained(name, src_lang="en_XX")
+[440] model = AutoModelForSeq2SeqLM.from_pretrained(name)
+[441]  
+[442] def to_vi(text: str) -> str:
+[443]     ids = tok(text, return_tensors="pt")
+[444]     out = model.generate(**ids,
+[445]                          decoder_start_token_id=tok.lang_code_to_id["vi_VN"],
+[446]                          num_beams=5, max_length=128, early_stopping=True)
+[447]     return tok.batch_decode(out, skip_special_tokens=True)[0]
+[448] 6.3. Lưu ý riêng cho tiếng Việt
+[449] Đại từ nhân xưng. Tiếng Anh chỉ có "I/you", tiếng Việt có "tôi/mình/em/anh/chị/con/cháu…". Máy dịch sẽ chọn một cách mặc định. Nên cho người dùng chọn cặp xưng hô ở phần cài đặt và đưa vào lời nhắc LLM, ví dụ: "Dịch sang tiếng Việt, người nói tự xưng là em, gọi người nghe là anh."
+[450] Tên riêng. Giữ nguyên, không phiên âm. Đưa danh sách tên riêng vào lời nhắc kèm chỉ dẫn giữ nguyên.
+[451] Câu quá ngắn. Chuỗi một hai từ dịch ra thường vô nghĩa. Nên chờ đủ một mệnh đề hoặc dùng ngữ cảnh câu trước.
+[452] 7. Hướng thay thế: mô hình đầu-cuối (CTC / seq2seq)
+[453] Toàn bộ tầng 1 và 2 ở trên là cách khắc phục việc mô hình chỉ phân loại từng khung hình riêng lẻ. Cách giải quyết triệt để là huấn luyện một mô hình chuỗi-sang-chuỗi: đầu vào là cả dãy landmark theo thời gian, đầu ra thẳng là chuỗi ký tự. Mô hình tự học ranh giới ký tự, tự xử lý trùng lặp — không cần chỉnh tham số tay.
+[454] 7.1. Nguyên lý CTC
+[455] CTC (Connectionist Temporal Classification) cho phép huấn luyện khi độ dài đầu vào (T khung hình) khác độ dài đầu ra (L ký tự) và không cần căn chỉnh nhãn theo từng khung. Mô hình xuất ra phân bố trên bảng chữ cái mở rộng thêm một nhãn trống eps (blank). Quy tắc gộp:
+[456] Hình 7.1 — Cơ chế gộp của CTC
+[457] Dau ra tho :  H H _ E E L L _ L _ O O        ( _ = nhan trong eps )
+[458] Buoc 1     :  gop cac ky tu giong nhau lien tiep  ->  H _ E L _ L _ O
+[459] Buoc 2     :  bo tat ca nhan trong                ->  H E L L O
+[460]  
+[461] // Nhan trong chinh la thu cho phep bieu dien ky tu doi "LL"
+[462] // Ham mat mat CTC lay tong xac suat tren MOI cach can chinh -> "HELLO"
+[463] Điểm đẹp của CTC là nó tự động làm đúng những gì máy trạng thái ở Chương 3 phải làm thủ công, và làm tối ưu theo dữ liệu chứ không theo tham số do người đặt.
+[464] 7.2. Kiến trúc khuyến nghị
+[465] Tham khảo giải pháp hạng nhất của cuộc thi *Google — American Sign Language Fingerspelling Recognition* trên Kaggle (2023), vốn nhận đầu vào chính là landmark MediaPipe giống hệ thống hiện tại:
+[466] Bộ mã hoá: Squeezeformer cải tiến (vốn dùng cho nhận dạng tiếng nói) áp dụng cho chuỗi landmark thay vì chuỗi âm thanh.
+[467] Bộ giải mã: transformer 2 lớp, hoặc đầu ra CTC trực tiếp.
+[468] Tăng cường dữ liệu: CutMix, FingerDropout (ngẫu nhiên bỏ landmark của một số ngón), TimeStretch (co giãn thời gian), che đầu vào bộ giải mã.
+[469] Thêm đầu ra điểm tin cậy để lọc mẫu hỏng ở khâu hậu xử lý.
+[470] Triển khai: huấn luyện bằng PyTorch, chuyển sang TensorFlow rồi xuất TFLite / ONNX để chạy trong trình duyệt.
+[471] Một kiến trúc đơn giản hơn nhưng vẫn hiệu quả cho đồ án: Conv1D → BiLSTM (2 lớp, 256 đơn vị) → Dense → CTC loss. Đầu vào là ma trận T × 42 (21 landmark × toạ độ x, y đã chuẩn hoá về gốc cổ tay và chuẩn hoá tỉ lệ theo chiều dài bàn tay).
+[472] 7.3. Bộ dữ liệu chuỗi
+[473] Bộ dữ liệu
+[474] Quy mô
+[475] Đặc điểm
+[476] Phù hợp cho
+[477] Google ASL Fingerspelling (Kaggle 2023)
+[478] > 3 triệu chuỗi đánh vần, landmark đã trích sẵn
+[479] Lớn nhất hiện có; điện thoại quay chính diện; đã có sẵn landmark MediaPipe nên không cần xử lý video
+[480] Huấn luyện mô hình CTC — lựa chọn tốt nhất
+[481] ChicagoFSWild
+[482] 7 304 chuỗi, 160 người ký
+[483] Video "in the wild" lấy từ Internet, nhiều góc quay và chất lượng khác nhau
+[484] Đánh giá độ bền, thích nghi người ký
+[485] ChicagoFSWild+
+[486] 55 232 chuỗi
+[487] Bản mở rộng, gán nhãn bằng cộng đồng
+[488] Huấn luyện bổ sung
+[489] ASL Alphabet (Kaggle)
+[490] 87 000 ảnh tĩnh, 29 lớp
+[491] Ảnh rời, không có thông tin thời gian
+[492] Chỉ dùng cho phân loại ký tự lẻ — chính là loại dữ liệu hệ thống hiện đang dùng
+[493] Bảng 7.1 — Các bộ dữ liệu ASL cho bài toán chuỗi
+[494] Đây là điểm mấu chốt cần hiểu rõ: Các bộ dữ liệu ảnh tĩnh như ASL Alphabet không thể dạy mô hình biết ranh giới giữa các ký tự, vì bản thân dữ liệu không có chiều thời gian. Nếu muốn đi theo hướng đầu-cuối ở Chương 7, bắt buộc phải chuyển sang bộ dữ liệu chuỗi. Nếu vẫn dùng dữ liệu ảnh tĩnh, thì các tầng 1–5 ở Chương 3–6 chính là câu trả lời đúng.
+[495] 7.4. Giải mã CTC có mô hình ngôn ngữ
+[496] Ngay cả với mô hình CTC, khâu giải mã vẫn nên dùng beam search có ghép mô hình ngôn ngữ (ctcdecode, pyctcdecode, hoặc torchaudio.models.decoder.ctc_decoder), thay vì giải mã tham lam. Điều này thường giảm thêm 15–30% tỉ lệ lỗi từ so với greedy decoding — nghĩa là Chương 5 vẫn còn nguyên giá trị.
+[497] 8. Kiến trúc triển khai và hợp đồng API
+[498] 8.1. Phân chia trách nhiệm
+[499] Thành phần
+[500] Chạy ở
+[501] Công nghệ
+[502] Ngân sách độ trễ
+[503] Trích landmark
+[504] Trình duyệt
+[505] MediaPipe Hands / Tasks Vision
+[506] 8–15 ms/khung
+[507] Phân loại ký tự
+[508] Trình duyệt
+[509] TensorFlow.js hoặc ONNX Runtime Web (WebGL/WebGPU)
+[510] 5–20 ms/khung
+[511] Tầng 1–2 (ổn định hoá, phân đoạn)
+[512] Trình duyệt
+[513] JavaScript thuần (Phụ lục A)
+[514] < 1 ms/khung
+[515] Gợi ý theo tiền tố
+[516] Trình duyệt
+[517] Trie nạp sẵn ~400 KB
+[518] < 1 ms
+[519] Tầng 3–5 (sửa lỗi, dựng câu, dịch)
+[520] Máy chủ
+[521] FastAPI + symspellpy + LLM/mô hình dịch
+[522] 80–2000 ms, gọi theo debounce
+[523] Bảng 8.1 — Phân chia trách nhiệm giữa trình duyệt và máy chủ
+[524] Vì sao tầng 1–2 phải ở trình duyệt: Chúng chạy ở tần suất từng khung hình. Gửi 25 yêu cầu mỗi giây lên máy chủ là không khả thi về băng thông lẫn độ trễ, và nếu mất mạng thì hệ thống ngừng hoạt động hoàn toàn. Đặt chúng ở trình duyệt còn giữ dữ liệu camera lại phía người dùng — một điểm cộng lớn về quyền riêng tư khi làm việc với người khuyết tật.
+[525] 8.2. Hợp đồng API
+[526] Mã 8.1 — Hợp đồng API cho lượt gọi hậu xử lý
+[527] POST /api/compose
+[528] Content-Type: application/json
+[529]  
+[530] {
+[531]   "words":      ["HELO", "MY", "NAM", "IS", "ADLEY"],
+[532]   "mode":       "fast",              // "fast" = SymSpell | "llm" = chất lượng cao
+[533]   "target_lang":"vi",
+[534]   "lexicon":    ["Adley"],           // tên riêng của phiên làm việc
+[535]   "context":    ["Hi there."],       // 1-3 câu trước, giúp LLM giữ mạch
+[536]   "session_id": "a1b2c3"
+[537] }
+[538]  
+[539] 200 OK
+[540] {
+[541]   "raw":        "helo my nam is adley",
+[542]   "english":    "Hello, my name is Adley.",
+[543]   "translated": "Xin chào, tên tôi là Adley.",
+[544]   "confidence": 0.93,
+[545]   "engine":     "symspell"           // hoặc "llm" — để hiển thị và ghi nhật ký
+[546] }
+[547] 8.3. Chiến lược gọi API và trải nghiệm người dùng
+[548] Người dùng đánh vần → tầng 1–2 hiển thị ngay chuỗi thô, màu xám, in nghiêng (bản nháp).
+[549] Mỗi ký tự mới đặt lại bộ đếm debounce 700 ms.
+[550] Hết 700 ms im lặng hoặc phát hiện cử chỉ kết thúc câu → gọi POST /api/compose.
+[551] Khi có phản hồi → thay bản nháp bằng câu hoàn chỉnh, màu đen, kèm bản dịch tiếng Việt ở dòng dưới.
+[552] Nếu lời gọi thất bại hoặc quá 3 giây → giữ nguyên bản nháp và hiển thị biểu tượng ngoại tuyến. Không bao giờ để người dùng mất nội dung đã đánh vần.
+[553] Nên duy trì một hàng đợi phía trình duyệt: khi mất mạng thì xếp câu vào hàng đợi, khi có mạng lại thì gửi bù. Với ứng dụng hỗ trợ giao tiếp, việc mất câu vừa gõ là lỗi nghiêm trọng hơn nhiều so với việc câu đó chưa được sửa chính tả.
+[554] 8.4. Giao diện — những chi tiết tạo khác biệt
+[555] Hiển thị ký tự đang chờ chốt. Vẽ một vòng tròn tiến trình quanh ký tự dự đoán, đầy dần theo số phiếu. Người dùng học được nhịp giữ tay rất nhanh.
+[556] Thanh tiến trình khoảng trắng. Khi bắt đầu nghỉ tay, hiện một thanh nạp trong 0,5 giây; người dùng biết trước khi dấu cách được chèn.
+[557] Nút xoá ký tự / xoá từ luôn hiển thị. Kể cả khi đã có cử chỉ tương ứng.
+[558] Hiển thị cả bản thô lẫn bản đã sửa. Cho phép người dùng bấm để quay lại bản thô khi hệ thống sửa sai — đặc biệt với tên riêng.
+[559] Ba gợi ý từ theo tiền tố hiện ngay dưới khung camera, chọn bằng cử chỉ hoặc bằng chuột.
+[560] 9. Kết quả thực nghiệm mô phỏng
+[561] Để định lượng đóng góp của từng tầng, một bộ mô phỏng đã được xây dựng: sinh dòng khung hình giả lập với tỉ lệ nhiễu điều khiển được, cho chạy qua máy trạng thái ở Chương 3 và bộ sửa chính tả ở Chương 5, rồi đo CER (tỉ lệ lỗi ký tự) và WER (tỉ lệ lỗi từ) theo khoảng cách Levenshtein.
+[562] 9.1. Thiết lập
+[563] 5 câu mẫu (hello my name is anna, where is the hospital, thank you very much, i need help now, can you call a doctor).
+[564] Mỗi ký tự giữ 12 khung hình, xen 4 khung chuyển tay, 16 khung nghỉ giữa hai từ.
+[565] Tỉ lệ nhiễu: tỉ lệ phần trăm khung hình bị gán nhãn ngẫu nhiên sai với độ tin cậy 0,5.
+[566] 40 lần chạy cho mỗi mức nhiễu, lấy trung bình.
+[567] 9.2. Kết quả
+[568] Tỉ lệ nhiễu khung hình
+[569] CER (chỉ tầng 1–2)
+[570] WER (chỉ tầng 1–2)
+[571] CER (+ SymSpell)
+[572] WER (+ SymSpell)
+[573] Mức cải thiện WER
+[574] 5 %
+[575] 0,001
+[576] 0,005
+[577] 0,002
+[578] 0,005
+[579] —
+[580] 10 %
+[581] 0,002
+[582] 0,011
+[583] 0,004
+[584] 0,011
+[585] —
+[586] 15 %
+[587] 0,021
+[588] 0,085
+[589] 0,016
+[590] 0,054
+[591] −36 %
+[592] 20 %
+[593] 0,066
+[594] 0,292
+[595] 0,055
+[596] 0,205
+[597] −30 %
+[598] 25 %
+[599] 0,107
+[600] 0,378
+[601] 0,103
+[602] 0,307
+[603] −19 %
+[604] 30 %
+[605] 0,197
+[606] 0,588
+[607] 0,202
+[608] 0,544
+[609] −7 %
+[610] Bảng 9.1 — CER/WER trung bình trên 40 lần chạy mỗi mức nhiễu (thấp hơn là tốt hơn)
+[611] 9.3. Nhận xét
+[612] Máy trạng thái ở Chương 3 làm gần hết việc. Ở mức nhiễu 10% — mức rất thường gặp với mô hình phân loại ký tự lẻ — WER chỉ còn 1,1%. Nếu ghép nhãn thô không qua tầng này, chuỗi đầu ra hoàn toàn không dùng được.
+[613] SymSpell có ích nhất trong dải nhiễu 15–25%, giảm 19–36% tỉ lệ lỗi từ. Đây chính là dải mà hệ thống thực tế hay rơi vào khi ánh sáng kém hoặc người dùng đánh vần nhanh.
+[614] Ở nhiễu thấp, sửa chính tả hơi phản tác dụng (CER tăng nhẹ từ 0,001 lên 0,002) vì bộ sửa can thiệp vào những từ vốn đã đúng — chủ yếu là tên riêng. Điều này khẳng định lại các biện pháp khắc phục ở Bảng 5.1: danh sách trắng tên riêng và chia bậc khoảng cách theo độ dài từ là bắt buộc, không phải tuỳ chọn.
+[615] Ở nhiễu ≥ 30%, không tầng hậu xử lý nào cứu được. Khi đó vấn đề nằm ở mô hình nhận diện hoặc điều kiện chụp, phải xử lý ở gốc (ánh sáng, khung hình, huấn luyện lại).
+[616] Lưu ý về tính đại diện: Đây là mô phỏng với nhiễu ngẫu nhiên đồng đều. Nhiễu thực tế có cấu trúc — các ký tự giống nhau về hình dạng hay bị nhầm lẫn với nhau (M/N/S/T, A/E/S, U/V/R, D/1, I/J). Nên xây dựng ma trận nhầm lẫn từ tập kiểm định của mô hình hiện tại và dùng nó làm mô hình lỗi cho bộ sửa chính tả: khoảng cách sửa lỗi có trọng số, trong đó M→N rẻ hơn nhiều so với M→Q. Đây là một cải tiến rất đáng làm và cũng là một điểm sáng nếu tài liệu này phục vụ đồ án.
+[617] 10. Lộ trình triển khai
+[618] Giai đoạn
+[619] Công việc
+[620] Thời lượng ước tính
+[621] Kết quả bàn giao
+[622] GĐ 1 — Nền tảng
+[623] Cài máy trạng thái ổn định hoá ký tự (Phụ lục A) vào trình duyệt. Thêm phát hiện khoảng trắng bằng thời gian nghỉ. Bảng điều khiển chỉnh tham số.
+[624] 2–3 ngày
+[625] Đánh vần ra được từ đúng, không còn trùng lặp ký tự
+[626] GĐ 2 — Sửa lỗi
+[627] Dựng máy chủ FastAPI với SymSpell (Phụ lục C). Từ điển tên riêng theo phiên. Chia bậc khoảng cách theo độ dài từ.
+[628] 2 ngày
+[629] Câu tiếng Anh đã sửa chính tả
+[630] GĐ 3 — Trải nghiệm
+[631] Cử chỉ điều khiển (khoảng trắng / xoá / gửi). Gợi ý từ bằng trie. Optimistic UI, hàng đợi ngoại tuyến.
+[632] 3–4 ngày
+[633] Tốc độ nhập nhanh hơn rõ rệt
+[634] GĐ 4 — Chất lượng
+[635] Tích hợp LLM cho chế độ chất lượng cao, trả về đồng thời câu tiếng Anh và bản dịch tiếng Việt. Có nút bật/tắt và phương án dự phòng.
+[636] 2 ngày
+[637] Câu có ngữ pháp và dấu câu tự nhiên + bản dịch
+[638] GĐ 5 — Đánh giá
+[639] Ma trận nhầm lẫn từ tập kiểm định. Khoảng cách sửa lỗi có trọng số. Đo CER/WER trên người dùng thật.
+[640] 3 ngày
+[641] Số liệu định lượng cho báo cáo
+[642] GĐ 6 — Mở rộng
+[643] (Tuỳ chọn) Huấn luyện mô hình CTC trên bộ Google ASL Fingerspelling; giải mã beam search có mô hình ngôn ngữ.
+[644] 2–4 tuần
+[645] Bước nhảy về độ chính xác
+[646] Bảng 10.1 — Lộ trình triển khai theo giai đoạn
+[647] 10.1. Rủi ro và cạm bẫy thường gặp
+[648] Rủi ro
+[649] Dấu hiệu
+[650] Biện pháp
+[651] Chỉnh tham số quá khớp với một người dùng
+[652] Chạy tốt với người phát triển, kém với người khác
+[653] Thu thập dữ liệu từ ≥ 5 người có tốc độ tay khác nhau; thêm bước hiệu chuẩn 15 giây
+[654] Bộ sửa chính tả phá tên riêng
+[655] Người dùng phàn nàn tên bị đổi
+[656] Danh sách trắng theo phiên; không sửa từ viết hoa; luôn hiển thị bản thô
+[657] LLM tự bịa nội dung
+[658] Câu ra dài hơn hoặc thêm ý không có
+[659] Yêu cầu trả confidence; đặt ngưỡng; so sánh độ dài đầu ra với đầu vào
+[660] Phụ thuộc mạng
+[661] Mất kết nối là hệ thống ngừng
+[662] Tầng 1–2 chạy hoàn toàn cục bộ; SymSpell có thể chạy cả ở trình duyệt
+[663] Tính đúng đắn về ngôn ngữ ký hiệu
+[664] Người dùng khiếm thính thấy hệ thống hiểu sai cách họ giao tiếp
+[665] Fingerspelling chỉ chiếm một phần nhỏ trong ASL thực tế. Nêu rõ giới hạn phạm vi; mời người dùng khiếm thính tham gia thử nghiệm sớm
+[666] Bảng 10.2 — Rủi ro và biện pháp giảm thiểu
+[667] Một lưu ý về phạm vi cần nói rõ trong báo cáo: Đánh vần bằng ngón tay trong ASL chủ yếu dùng cho tên riêng, từ mượn và thuật ngữ chuyên ngành, không phải là cách giao tiếp chính. Một hệ thống chỉ nhận diện fingerspelling là một công cụ hữu ích và là bước đi kỹ thuật đúng đắn, nhưng không nên được mô tả là "phiên dịch ngôn ngữ ký hiệu" một cách đầy đủ. Việc nêu rõ giới hạn này sẽ làm tài liệu và sản phẩm đáng tin cậy hơn.
+[668] Phụ lục A — Mã nguồn: bộ ổn định ký tự (JavaScript, trình duyệt)
+[669] Tệp stabilizer.js. Đặt ngay sau bước phân loại ký tự; gọi push(letter, confidence) cho mỗi khung hình. Lớp SentenceBuffer gom sự kiện thành từ/câu và gọi hàm hậu xử lý theo cơ chế debounce.
+[670] /**
+[671]  * LetterStabilizer — chay trong trinh duyet, dat ngay sau model nhan dien ky tu.
+[672]  * Dau vao : moi frame goi push(letter, confidence)
+[673]  * Dau ra  : callback onLetter(ch) / onSpace() / onBackspace()
+[674]  */
+[675] export class LetterStabilizer {
+[676]   constructor(opts = {}) {
+[677]     const o = Object.assign({
+[678]       window: 8,            // so frame trong cua so bo phieu
+[679]       minVotes: 6,          // >= 6/8 frame giong nhau moi chot
+[680]       minConf: 0.60,        // nguong softmax
+[681]       releaseFrames: 4,     // phai "nha" tay bao nhieu frame moi chot tiep
+[682]       spaceFrames: 12,      // nghi tay >= 12 frame -> khoang trang
+[683]       holdRepeatFrames: 25, // giu nguyen 1 ky tu lau -> ky tu doi (LL, SS)
+[684]       sentenceFrames: 45,   // nghi rat lau -> ket thuc cau
+[685]     }, opts);
+[686]     Object.assign(this, o);
+[687]     this.buf = [];
+[688]     this.state = 'IDLE';
+[689]     this.last = null;
+[690]     this.rel = 0; this.idle = 0; this.hold = 0;
+[691]   }
+[692]  
+[693]   reset() { this.buf = []; this.state = 'IDLE'; this.last = null;
+[694]             this.rel = this.idle = this.hold = 0; }
+[695]  
+[696]   /** @returns {null | {type:'LETTER'|'SPACE'|'END', value?:string}} */
+[697]   push(letter, conf) {
+[698]     const low = letter == null || conf < this.minConf;
+[699]     this.idle = low ? this.idle + 1 : 0;
+[700]     if (this.idle === this.spaceFrames) { this.reset(); this.idle = this.spaceFrames;
+[701]       return { type: 'SPACE' }; }
+[702]     if (this.idle === this.sentenceFrames) return { type: 'END' };
+[703]  
+[704]     this.buf.push(low ? null : letter);
+[705]     if (this.buf.length > this.window) this.buf.shift();
+[706]  
+[707]     const counts = new Map();
+[708]     for (const x of this.buf) if (x) counts.set(x, (counts.get(x) || 0) + 1);
+[709]     let top = null, votes = 0;
+[710]     for (const [k, v] of counts) if (v > votes) { top = k; votes = v; }
+[711]     const stable = top !== null && votes >= this.minVotes;
+[712]  
+[713]     if (this.state === 'RELEASE') {
+[714]       if (low || (stable && top !== this.last)) {
+[715]         if (++this.rel >= this.releaseFrames) { this.state = 'IDLE'; this.rel = 0; }
+[716]       } else if (stable && top === this.last) {
+[717]         if (++this.hold >= this.holdRepeatFrames) { this.hold = 0;
+[718]           return { type: 'LETTER', value: this.last }; }   // ky tu doi
+[719]       }
+[720]       return null;
+[721]     }
+[722]     if (stable) {
+[723]       this.state = 'RELEASE'; this.last = top; this.rel = 0; this.hold = 0;
+[724]       this.buf = [];
+[725]       return { type: 'LETTER', value: top };
+[726]     }
+[727]     return null;
+[728]   }
+[729] }
+[730]  
+[731] /** Bo dem cau: gom su kien tu stabilizer thanh tu / cau, goi API hau xu ly. */
+[732] export class SentenceBuffer {
+[733]   constructor({ onUpdate, correctFn } = {}) {
+[734]     this.words = []; this.cur = '';
+[735]     this.onUpdate = onUpdate || (() => {});
+[736]     this.correctFn = correctFn || (async ws => ws.join(' '));
+[737]     this._timer = null;
+[738]   }
+[739]   feed(ev) {
+[740]     if (!ev) return;
+[741]     if (ev.type === 'LETTER') this.cur += ev.value;
+[742]     else if (ev.type === 'SPACE') { if (this.cur) { this.words.push(this.cur); this.cur = ''; } }
+[743]     else if (ev.type === 'END')   { if (this.cur) { this.words.push(this.cur); this.cur = ''; }
+[744]                                     this.flush(); return; }
+[745]     this.onUpdate(this.preview());
+[746]     this._debounceCorrect();
+[747]   }
+[748]   preview() { return [...this.words, this.cur].filter(Boolean).join(' '); }
+[749]   _debounceCorrect() {
+[750]     clearTimeout(this._timer);
+[751]     this._timer = setTimeout(() => this.flush(), 700);   // 700ms im lang -> goi hau xu ly
+[752]   }
+[753]   async flush() {
+[754]     const ws = [...this.words, this.cur].filter(Boolean);
+[755]     if (!ws.length) return;
+[756]     const text = await this.correctFn(ws);
+[757]     this.onUpdate(text, /*final=*/true);
+[758]   }
+[759]   clear() { this.words = []; this.cur = ''; this.onUpdate('', true); }
+[760]   backspace() {
+[761]     if (this.cur) this.cur = this.cur.slice(0, -1);
+[762]     else if (this.words.length) this.cur = this.words.pop().slice(0, -1);
+[763]     this.onUpdate(this.preview());
+[764]   }
+[765] }
+[766] Phụ lục B — Mã nguồn: máy trạng thái và bộ mô phỏng (Python)
+[767] Tệp pipeline3.py. Bản Python của cùng máy trạng thái, kèm bộ sửa chính tả và trình mô phỏng dòng khung hình dùng để tạo số liệu ở Chương 9.
+[768] """v3: may trang thai IDLE -> HOLD -> COMMIT -> RELEASE (chuan cong nghiep).
+[769] Giai quyet: nhieu frame, lap ky tu, ky tu doi (LL, DD), khoang trang."""
+[770] from collections import deque, Counter
+[771] import importlib.resources as ir
+[772] from symspellpy import SymSpell, Verbosity
+[773]  
+[774] class FSM:
+[775]     """
+[776]     IDLE    : chua co ky tu on dinh
+[777]     HOLD    : dang tich luy phieu cho 1 ky tu
+[778]     COMMIT  : da xuat ky tu -> chuyen sang RELEASE
+[779]     RELEASE : phai 'nha' (ky tu khac / conf thap) >= release_frames moi cho chot tiep
+[780]     """
+[781]     def __init__(self, window=8, min_votes=6, min_conf=0.6,
+[782]                  release_frames=4, space_frames=12, hold_repeat_frames=25):
+[783]         self.window, self.min_votes, self.min_conf = window, min_votes, min_conf
+[784]         self.release_frames, self.space_frames = release_frames, space_frames
+[785]         self.hold_repeat_frames = hold_repeat_frames   # giu lau = ky tu doi (LL)
+[786]         self.buf = deque(maxlen=window)
+[787]         self.state = "IDLE"; self.last = None
+[788]         self.rel = 0; self.idle = 0; self.hold = 0
+[789]  
+[790]     def push(self, letter, conf):
+[791]         low = letter is None or conf < self.min_conf
+[792]         # --- phat hien khoang trang ---
+[793]         self.idle = self.idle + 1 if low else 0
+[794]         if self.idle == self.space_frames:
+[795]             self.state, self.last, self.buf = "IDLE", None, deque(maxlen=self.window)
+[796]             return ("SPACE", None)
+[797]  
+[798]         self.buf.append(None if low else letter)
+[799]         c = Counter(x for x in self.buf if x)
+[800]         top, votes = (c.most_common(1)[0] if c else (None, 0))
+[801]         stable = top is not None and votes >= self.min_votes
+[802]  
+[803]         if self.state == "RELEASE":
+[804]             # da nha khoi ky tu cu chua?
+[805]             if low or (stable and top != self.last):
+[806]                 self.rel += 1
+[807]                 if self.rel >= self.release_frames:
+[808]                     self.state = "IDLE"; self.rel = 0
+[809]             elif stable and top == self.last:
+[810]                 # van giu nguyen ky tu -> dem thoi gian giu de bat ky tu doi
+[811]                 self.hold += 1
+[812]                 if self.hold >= self.hold_repeat_frames:
+[813]                     self.hold = 0
+[814]                     return ("L", self.last)      # ky tu doi: LL, SS, DD...
+[815]             return None
+[816]  
+[817]         if stable:
+[818]             self.state = "RELEASE"; self.last = top
+[819]             self.rel = 0; self.hold = 0
+[820]             self.buf.clear()
+[821]             return ("L", top)
+[822]         return None
+[823]  
+[824] class Corrector:
+[825]     def __init__(self):
+[826]         self.sym = SymSpell(max_dictionary_edit_distance=2, prefix_length=7)
+[827]         with ir.as_file(ir.files("symspellpy")/"frequency_dictionary_en_82_765.txt") as p:
+[828]             self.sym.load_dictionary(str(p), 0, 1)
+[829]         with ir.as_file(ir.files("symspellpy")/"frequency_bigramdictionary_en_243_342.txt") as p:
+[830]             self.sym.load_bigram_dictionary(str(p), 0, 2)
+[831]     def word(self, w):
+[832]         if not w: return w
+[833]         d = 0 if len(w) <= 2 else (1 if len(w) <= 5 else 2)
+[834]         s = self.sym.lookup(w.lower(), Verbosity.TOP, max_edit_distance=d, include_unknown=True)
+[835]         return s[0].term if s else w.lower()
+[836]     def segment(self, blob):
+[837]         return self.sym.word_segmentation(blob.lower()).corrected_string
+[838]  
+[839] def cap(s):
+[840]     s = " ".join(s.split())
+[841]     return "" if not s else s[0].upper()+s[1:]+("" if s[-1] in ".?!" else ".")
+[842]  
+[843] def run(words, noise=0.15, seed=3, frames_per_letter=12, gap=4, word_gap=16):
+[844]     import random; random.seed(seed)
+[845]     N="ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+[846]     stream=[]
+[847]     for w in words:
+[848]         for ch in w:
+[849]             for _ in range(frames_per_letter):
+[850]                 stream.append((random.choice(N),0.5) if random.random()<noise else (ch,0.93))
+[851]             stream += [(None,0.0)]*gap
+[852]         stream += [(None,0.0)]*word_gap
+[853]     fsm=FSM(); toks=[]; cur=""
+[854]     for l,c in stream:
+[855]         r=fsm.push(l,c)
+[856]         if not r: continue
+[857]         if r[0]=="SPACE":
+[858]             if cur: toks.append(cur); cur=""
+[859]         else: cur+=r[1]
+[860]     if cur: toks.append(cur)
+[861]     return toks
+[862]  
+[863] if __name__=="__main__":
+[864]     co=Corrector()
+[865]     for seed in (3,7,11):
+[866]         toks = run(["HELLO","MY","NAME","IS","ADLEY"], seed=seed)
+[867]         out  = " ".join(co.word(t) for t in toks)
+[868]         print(f"seed={seed:2d}  tho={toks}")
+[869]         print(f"          cau='{cap(out)}'")
+[870] Phụ lục C — Mã nguồn: máy chủ hậu xử lý (FastAPI)
+[871] Tệp server.py. Cài đặt: pip install fastapi uvicorn symspellpy transformers torch, chạy bằng uvicorn server:app --reload.
+[872] """Backend hau xu ly: FastAPI. Nhan danh sach tu tho -> tra ve cau EN + cau VI."""
+[873] from fastapi import FastAPI
+[874] from fastapi.middleware.cors import CORSMiddleware
+[875] from pydantic import BaseModel
+[876] from typing import List, Optional
+[877] import importlib.resources as ir
+[878] from symspellpy import SymSpell, Verbosity
+[879] from functools import lru_cache
+[880]  
+[881] app = FastAPI(title="Sign2Sentence Post-Processing")
+[882] app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
+[883]                    allow_headers=["*"])
+[884]  
+[885] sym = SymSpell(max_dictionary_edit_distance=2, prefix_length=7)
+[886] with ir.as_file(ir.files("symspellpy")/"frequency_dictionary_en_82_765.txt") as p:
+[887]     sym.load_dictionary(str(p), 0, 1)
+[888] with ir.as_file(ir.files("symspellpy")/"frequency_bigramdictionary_en_243_342.txt") as p:
+[889]     sym.load_bigram_dictionary(str(p), 0, 2)
+[890]  
+[891] USER_LEXICON = set()          # ten rieng, thuat ngu nguoi dung tu them
+[892]  
+[893] class Req(BaseModel):
+[894]     words: List[str]                 # ['HELO','MY','NAM']
+[895]     mode: str = "fast"               # fast | llm
+[896]     target_lang: Optional[str] = "vi"
+[897]     lexicon: List[str] = []          # tu dien rieng cua phien lam viec
+[898]  
+[899] class Res(BaseModel):
+[900]     raw: str
+[901]     english: str
+[902]     translated: Optional[str] = None
+[903]  
+[904] def fix_word(w: str, lex: set) -> str:
+[905]     lw = w.lower()
+[906]     if lw in lex or lw in USER_LEXICON:
+[907]         return lw                                    # khong sua ten rieng
+[908]     d = 0 if len(lw) <= 2 else (1 if len(lw) <= 5 else 2)
+[909]     s = sym.lookup(lw, Verbosity.TOP, max_edit_distance=d, include_unknown=True)
+[910]     return s[0].term if s else lw
+[911]  
+[912] def punctuate(s: str) -> str:
+[913]     s = " ".join(s.split())
+[914]     if not s: return ""
+[915]     q = s.split()[0] in {"what","where","when","who","why","how","do","does",
+[916]                          "did","can","could","is","are","will","would"}
+[917]     return s[0].upper() + s[1:] + ("?" if q else ".")
+[918]  
+[919] @lru_cache(maxsize=1)
+[920] def translator():
+[921]     from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+[922]     name = "vinai/vinai-translate-en2vi-v2"
+[923]     return (AutoTokenizer.from_pretrained(name, src_lang="en_XX"),
+[924]             AutoModelForSeq2SeqLM.from_pretrained(name))
+[925]  
+[926] def to_vi(text: str) -> str:
+[927]     tok, model = translator()
+[928]     ids = tok(text, return_tensors="pt")
+[929]     out = model.generate(**ids, decoder_start_token_id=tok.lang_code_to_id["vi_VN"],
+[930]                          num_beams=5, max_length=128, early_stopping=True)
+[931]     return tok.batch_decode(out, skip_special_tokens=True)[0]
+[932]  
+[933] @app.post("/api/compose", response_model=Res)
+[934] def compose(req: Req):
+[935]     lex = {w.lower() for w in req.lexicon}
+[936]     raw = " ".join(req.words).lower()
+[937]     en = punctuate(" ".join(fix_word(w, lex) for w in req.words if w))
+[938]     vi = to_vi(en) if req.target_lang == "vi" else None
+[939]     return Res(raw=raw, english=en, translated=vi)
+[940]  
+[941] @app.post("/api/segment")
+[942] def segment(blob: str):
+[943]     """Khi khong co dau cach: tach chuoi ky tu lien tuc thanh cac tu."""
+[944]     return {"text": sym.word_segmentation(blob.lower()).corrected_string}
+[945] Phụ lục D — Mã nguồn: bộ đo CER/WER (Python)
+[946] Tệp bench.py. Sinh ra Bảng 9.1.
+[947] """Do CER/WER qua tung tang xu ly, tren 200 lan mo phong."""
+[948] import random, statistics
+[949] from pipeline3 import FSM, Corrector, cap, run
+[950]  
+[951] def lev(a,b):
+[952]     if a==b: return 0
+[953]     prev=list(range(len(b)+1))
+[954]     for i,ca in enumerate(a,1):
+[955]         cur=[i]
+[956]         for j,cb in enumerate(b,1):
+[957]             cur.append(min(prev[j]+1, cur[j-1]+1, prev[j-1]+(ca!=cb)))
+[958]         prev=cur
+[959]     return prev[-1]
+[960]  
+[961] SENTS=[["HELLO","MY","NAME","IS","ANNA"],
+[962]        ["WHERE","IS","THE","HOSPITAL"],
+[963]        ["THANK","YOU","VERY","MUCH"],
+[964]        ["I","NEED","HELP","NOW"],
+[965]        ["CAN","YOU","CALL","A","DOCTOR"]]
+[966]  
+[967] co=Corrector()
+[968] def evaluate(noise, use_fsm=True, use_spell=True, n=40):
+[969]     cers=[]; wers=[]
+[970]     for k in range(n):
+[971]         s=random.choice(SENTS)
+[972]         ref=" ".join(w.lower() for w in s)
+[973]         toks=run(s, noise=noise, seed=k*7+noise*100)
+[974]         hyp=" ".join((co.word(t) if use_spell else t.lower()) for t in toks)
+[975]         cers.append(lev(hyp,ref)/max(len(ref),1))
+[976]         wers.append(lev(hyp.split(),ref.split())/max(len(ref.split()),1))
+[977]     return statistics.mean(cers), statistics.mean(wers)
+[978]  
+[979] print(f"{'noise':>6} | {'CER tho':>8} {'WER tho':>8} | {'CER+spell':>10} {'WER+spell':>10}")
+[980] for noise in (0.05,0.10,0.15,0.20,0.25,0.30):
+[981]     c0,w0=evaluate(noise,use_spell=False)
+[982]     c1,w1=evaluate(noise,use_spell=True)
+[983]     print(f"{noise:6.2f} | {c0:8.3f} {w0:8.3f} | {c1:10.3f} {w1:10.3f}")
+[984] Tài liệu tham khảo
+[985] [1]  Google — American Sign Language Fingerspelling Recognition (Kaggle, 2023). https://www.kaggle.com/competitions/asl-fingerspelling
+[986] [2]  Christof Henkel — Giải pháp hạng nhất cuộc thi trên (mã nguồn, kiến trúc Squeezeformer). https://github.com/ChristofHenkel/kaggle-asl-fingerspelling-1st-place-solution
+[987] [3]  Thảo luận giải pháp hạng nhì — so sánh với các thuật toán nhận dạng tiếng nói. https://www.kaggle.com/competitions/asl-fingerspelling/discussion/434588
+[988] [4]  Wolf Garbe — SymSpell: thuật toán sửa chính tả Symmetric Delete. https://github.com/wolfgarbe/SymSpell
+[989] [5]  symspellpy — tài liệu tách từ (word segmentation). https://symspellpy.readthedocs.io/en/latest/examples/word_segmentation.html
+[990] [6]  WordSegmentationTM — tách từ nhanh bằng ma trận tam giác. https://github.com/wolfgarbe/WordSegmentationTM
+[991] [7]  Shi và cộng sự — American Sign Language Fingerspelling Recognition in the Wild (ChicagoFSWild). https://home.ttic.edu/~klivescu/ChicagoFSWild.htm
+[992] [8]  Kim và cộng sự — Lexicon-Free Fingerspelling Recognition from Video: Data, Models, and Signer Adaptation. https://arxiv.org/abs/1609.07876
+[993] [9]  SpellRing — Nhận diện đánh vần liên tục trong ASL (arXiv, 2025). https://arxiv.org/html/2502.10830
+[994] [10]  VinAI — mô hình dịch Anh–Việt vinai-translate-en2vi. https://huggingface.co/vinai/vinai-translate-en2vi
+[995] [11]  VietAI — envit5-translation. https://huggingface.co/VietAI/envit5-translation
+[996] [12]  MediaPipe Hands — tài liệu nhận diện bàn tay và landmark. https://developers.google.com/mediapipe/solutions/vision/hand_landmarker

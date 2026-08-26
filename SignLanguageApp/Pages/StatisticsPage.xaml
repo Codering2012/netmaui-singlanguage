@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:SignLanguageApp.ViewModels"
+             xmlns:model="clr-namespace:SignLanguageApp.Model"
+             xmlns:controls="clr-namespace:SignLanguageApp.Controls"
+             x:Class="SignLanguageApp.Pages.StatisticsPage"
+             x:DataType="vm:StatisticsViewModel"
+             Title="My Progress"
+             BackgroundColor="Transparent">
+
+    <ContentPage.ToolbarItems>
+        <ToolbarItem Text="Refresh" Command="{Binding LoadStatsCommand}" IconImageSource="refresh_icon.png" />
+    </ContentPage.ToolbarItems>
+
+    <controls:MainLayout>
+        <Grid RowDefinitions="Auto, *">
+            <!-- Background inside MainLayout is preferred if we want it to extend, but MainLayout handles it if we place controls inside -->
+            
+            <!-- Header -->
+            <VerticalStackLayout Padding="20,20,20,10" Spacing="5">
+                <Label Text="Your Achievements" FontSize="28" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+                <Label Text="Track your learning journey and stay motivated" FontSize="14" TextColor="{DynamicResource SecondaryTextColor}" />
+            </VerticalStackLayout>
+
+            <ScrollView Grid.Row="1">
+                <VerticalStackLayout Spacing="25" Padding="20,0,20,30">
+                    
+                    <!-- Main Stats Cards -->
+                    <Grid ColumnDefinitions="*,*,*" ColumnSpacing="12">
+                        <Border Grid.Column="0" StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 24" Padding="15">
+                            <Border.Shadow>
+                                <Shadow Brush="Black" Offset="0,4" Radius="12" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                            </Border.Shadow>
+                            <VerticalStackLayout HorizontalOptions="Center" Spacing="5">
+                                <Label Text="Total XP" FontSize="12" HorizontalOptions="Center" TextColor="{DynamicResource SecondaryTextColor}" />
+                                <Label Text="{Binding TotalXp}" FontSize="24" FontAttributes="Bold" HorizontalOptions="Center" TextColor="{DynamicResource SuccessColor}" />
+                            </VerticalStackLayout>
+                        </Border>
+                        
+                        <Border Grid.Column="1" StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 24" Padding="15">
+                            <Border.Shadow>
+                                <Shadow Brush="Black" Offset="0,4" Radius="12" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                            </Border.Shadow>
+                            <VerticalStackLayout HorizontalOptions="Center" Spacing="5">
+                                <Label Text="Streak" FontSize="12" HorizontalOptions="Center" TextColor="{DynamicResource SecondaryTextColor}" />
+                                <Label Text="{Binding LearningStreak}" FontSize="24" FontAttributes="Bold" HorizontalOptions="Center" TextColor="{DynamicResource WarningColor}" />
+                            </VerticalStackLayout>
+                        </Border>
+                        
+                        <Border Grid.Column="2" StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 24" Padding="15">
+                            <Border.Shadow>
+                                <Shadow Brush="Black" Offset="0,4" Radius="12" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                            </Border.Shadow>
+                            <VerticalStackLayout HorizontalOptions="Center" Spacing="5">
+                                <Label Text="Lessons" FontSize="12" HorizontalOptions="Center" TextColor="{DynamicResource SecondaryTextColor}" />
+                                <Label Text="{Binding LessonsCompleted}" FontSize="24" FontAttributes="Bold" HorizontalOptions="Center" TextColor="{DynamicResource PrimaryColor}" />
+                            </VerticalStackLayout>
+                        </Border>
+                    </Grid>
+
+                    <!-- Weekly Activity Chart (Simplified with Boxes) -->
+                    <VerticalStackLayout Spacing="15">
+                        <Label Text="Weekly Activity" FontSize="20" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+                        <Border StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 24" Padding="20">
+                            <Border.Shadow>
+                                <Shadow Brush="Black" Offset="0,4" Radius="15" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                            </Border.Shadow>
+                            <VerticalStackLayout Spacing="20">
+                            <FlexLayout BindableLayout.ItemsSource="{Binding WeeklyXp}"
+                                        JustifyContent="SpaceAround"
+                                        AlignItems="End"
+                                        HeightRequest="160"
+                                        Margin="0,10">
+                                <BindableLayout.ItemTemplate>
+                                    <DataTemplate x:DataType="model:DailyXpDto">
+                                        <VerticalStackLayout Spacing="8" WidthRequest="40">
+                                            <Label Text="{Binding Xp}" FontSize="11" FontAttributes="Bold" HorizontalOptions="Center" TextColor="{DynamicResource PrimaryColor}" />
+                                            <BoxView WidthRequest="22" 
+                                                     HeightRequest="{Binding Xp, Converter={StaticResource XpToHeightConverter}}" 
+                                                     Color="{DynamicResource PrimaryColor}" 
+                                                     CornerRadius="6"
+                                                     HorizontalOptions="Center" />
+                                            <Label Text="{Binding Date, Converter={StaticResource DateToDayConverter}}" 
+                                                   FontSize="10" 
+                                                   FontAttributes="Bold"
+                                                   HorizontalOptions="Center" 
+                                                   TextColor="{DynamicResource SecondaryTextColor}" />
+                                        </VerticalStackLayout>
+                                    </DataTemplate>
+                                </BindableLayout.ItemTemplate>
+                            </FlexLayout>
+                            </VerticalStackLayout>
+                        </Border>
+                    </VerticalStackLayout>
+
+                    <!-- Category Progress -->
+                    <VerticalStackLayout Spacing="15">
+                        <Label Text="Skills Breakdown" FontSize="20" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+                        <CollectionView ItemsSource="{Binding CategoryProgress}" HeightRequest="400">
+                            <CollectionView.ItemTemplate>
+                                <DataTemplate x:DataType="model:CategoryProgressDto">
+                                    <Border StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 20" Padding="20" Margin="0,0,0,12">
+                                        <Border.Shadow>
+                                            <Shadow Brush="Black" Offset="0,4" Radius="12" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                                        </Border.Shadow>
+                                        <Grid RowDefinitions="Auto, Auto" RowSpacing="12">
+                                            <Grid ColumnDefinitions="*, Auto">
+                                                <Label Text="{Binding CategoryName}" FontAttributes="Bold" FontSize="16" TextColor="{DynamicResource PrimaryTextColor}" />
+                                                <Label Grid.Column="1" Text="{Binding Progress, StringFormat='{0:P0}'}" FontSize="14" TextColor="{DynamicResource PrimaryColor}" FontAttributes="Bold" />
+                                            </Grid>
+                                            <ProgressBar Grid.Row="1" Progress="{Binding Progress}" ProgressColor="{DynamicResource PrimaryColor}" HeightRequest="8" />
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </CollectionView.ItemTemplate>
+                        </CollectionView>
+                    </VerticalStackLayout>
+
+                </VerticalStackLayout>
+            </ScrollView>
+
+            <ActivityIndicator Grid.RowSpan="2" 
+                               IsVisible="{Binding IsBusy}" 
+                               IsRunning="{Binding IsBusy}" 
+                               HorizontalOptions="Center" 
+                               VerticalOptions="Center"
+                               Color="{DynamicResource PrimaryColor}" />
+        </Grid>
+    </controls:MainLayout>
+</ContentPage>

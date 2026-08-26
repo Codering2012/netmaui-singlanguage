@@ -26,6 +26,10 @@ namespace SignLanguageApi.Data
 
         public virtual DbSet<SpacedRepetitionLesson> SpacedRepetitionLessons { get; set; }
 
+        public virtual DbSet<UserActivity> UserActivities { get; set; }
+
+        public virtual DbSet<UserFeedback> UserFeedbacks { get; set; }
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);

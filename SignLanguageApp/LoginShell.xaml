@@ -6,11 +6,10 @@
     xmlns:pages="clr-namespace:SignLanguageApp.Pages"
     Title="SignLanguageApp"
     FlyoutBehavior="Disabled"
-    BackgroundColor="#07121D"
-    ForegroundColor="White"
-    Shell.NavBarHasShadow="False">
+    BackgroundColor="#07121D">
 
     <ShellContent Title="Login" ContentTemplate="{DataTemplate pages:LoginPage}" Route="login" />
     <ShellContent Title="Register" ContentTemplate="{DataTemplate pages:RegisterPage}" Route="register" />
 
 </Shell>
+

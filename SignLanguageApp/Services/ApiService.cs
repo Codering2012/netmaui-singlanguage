@@ -4,7 +4,10 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using SignLanguageApp.Model;
+using SignLanguageApp.Helpers;
 
 namespace SignLanguageApp.Services;
 
@@ -17,9 +20,13 @@ public interface IApiService
     Task<bool> RefreshTokenAsync(string refreshToken);
     void SetAuthToken(string token);
     Task<string?> GetAuthTokenAsync();
+    string EnsureAbsoluteUrl(string? url);
 
     // Learning - Stats & Progress
-    Task<ApiResponse<UserStatsDto>?> GetUserStatsAsync();
+    Task<UserStatsDto?> GetUserStatsAsync();
+    Task<ApiResponse<List<MediaDto>>?> GetMediaAsync();
+    Task<ApiResponse<List<SignerCreditDto>>?> GetSignerCreditsAsync();
+    Task<bool> SubmitFeedbackAsync(FeedbackRequest feedback);
 
     // Learning - Categories
     Task<ApiResponse<IEnumerable<LessonCategoryDto>>?> GetCategoriesAsync();
@@ -37,6 +44,7 @@ public interface IApiService
 
     // Learning - Recommendations
     Task<ApiResponse<PersonalizedRecommendationDto>?> GetPersonalizedRecommendationAsync();
+    Task<ApiResponse<InteractiveLessonDto>?> GetInteractiveLessonAsync(int lessonId);
 
     // Learning - Progress Tracking
     Task<ApiResponse<bool>?> MarkLessonCompleteAsync(int lessonId);
@@ -52,75 +60,249 @@ public interface IApiService
     Task<bool> WatchVideoAsync(int videoId);
 
     // Camera - Real-Time Gesture Prediction
-    Task<GesturePredictionResponseDto?> PredictGestureFromImageAsync(byte[] imageData, CancellationToken cancellationToken = default);
+    Task<GesturePredictionResponseDto?> PredictGestureFromImageAsync(byte[] imageData, string? targetSign = null, CancellationToken cancellationToken = default);
+    // User - Profile Management
+    Task<ApiResponse<UserProfileDto>?> GetUserProfileAsync();
+    Task<bool> UpdateNameAsync(string newName);
+    Task<bool> UpdatePasswordAsync(string oldPassword, string newPassword);
+    Task<bool> UpdateAvatarAsync(string avatarUrl);
+    Task<bool> UpdateDescriptionAsync(string description);
+    void UpdateBaseAddress(string newUrl);
+    string CurrentBaseUrl { get; }
+    Task<bool> CheckConnectionAsync();
+
+    // Social & Gamification
+    Task<LeaderboardDto?> GetLeaderboardAsync(int count = 10);
+    Task<IEnumerable<AchievementBadgeDto>?> GetAchievementsAsync();
 }
 public class ApiService : IApiService
 {
     private readonly HttpClient _httpClient;
-    private const string TokenKey = "access_token";
-    private const string LegacyTokenKey = "jwt_token";
-    private static readonly JsonSerializerOptions SerializerOptions = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
-
-    public ApiService(HttpClient httpClient)
+    private readonly IConnectivityService _connectivityService;
+    private readonly IApiConfigService _apiConfig;
+    private readonly ILessonPayloadSecurityService _securityService;
+    private readonly IDatabaseService _databaseService;
+    private string? _authToken;
+    
+    public ApiService(HttpClient httpClient, IConnectivityService connectivityService, IApiConfigService apiConfig, ILessonPayloadSecurityService securityService, IDatabaseService databaseService)
     {
         _httpClient = httpClient;
+        _connectivityService = connectivityService;
+        _apiConfig = apiConfig;
+        _securityService = securityService;
+        _databaseService = databaseService;
+    }
+
+
+    private async Task EnsureConnectivityAsync()
+    {
+        if (!_connectivityService.IsConnected)
+        {
+            throw new NoInternetException();
+        }
+
+        // Only check server reachability if we have a real base URL configured
+        var currentBaseUrl = _apiConfig.BaseUrl;
+        if (!string.IsNullOrEmpty(currentBaseUrl) && 
+            !currentBaseUrl.Contains("api.internal"))
+        {
+            // Try to hit the health endpoint which is more reliable than a HEAD on the root
+            var healthUrl = currentBaseUrl.TrimEnd('/') + "/gesture/health";
+            Debug.WriteLine($"EnsureConnectivityAsync: Checking reachability of {healthUrl}");
+            if (!await _connectivityService.IsServerReachableAsync(healthUrl))
+            {
+                Debug.WriteLine($"EnsureConnectivityAsync: Server {currentBaseUrl} is NOT reachable.");
+                throw new ServerUnreachableException(currentBaseUrl);
+            }
+            Debug.WriteLine($"EnsureConnectivityAsync: Server {currentBaseUrl} is reachable.");
+        }
+    }
+
+    private async Task<T?> ExecuteSafeAsync<T>(Func<Task<HttpResponseMessage>> action, JsonTypeInfo<ApiResponse<T>> typeInfo, CancellationToken ct = default) where T : class
+    {
+        try
+        {
+            await EnsureConnectivityAsync();
+
+            using var response = await action();
+            
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                var errorBody = await response.Content.ReadAsStringAsync();
+                Debug.WriteLine($">>> LOGIN UNAUTHORIZED. Body: {errorBody}");
+                throw new UnauthorizedException();
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorContent = await response.Content.ReadAsStringAsync(ct);
+                throw new ApiException($"Server returned an error.", (int)response.StatusCode, errorContent);
+            }
+
+            var json = await response.Content.ReadAsStringAsync(ct);
+            
+            var wrapped = JsonSerializer.Deserialize(json, typeInfo);
+            if (wrapped != null && (wrapped.Success || wrapped.Data != null))
+            {
+                return wrapped.Data;
+            }
+
+            return null;
+        }
+        catch (Exception ex) when (ex is not NoInternetException && ex is not ServerUnreachableException && ex is not UnauthorizedException && ex is not ApiException)
+        {
+            Debug.WriteLine($"Unhandled API error: {ex.GetType().Name} - {ex.Message}");
+            Debug.WriteLine($"Stack Trace: {ex.StackTrace}");
+            throw new ApiException($"An unexpected error occurred while connecting to the server: {ex.Message}", 0, ex.Message);
+        }
+    }
+
+    private async Task<T?> ExecuteSafeDirectAsync<T>(Func<Task<HttpResponseMessage>> action, JsonTypeInfo<T> typeInfo, CancellationToken ct = default) where T : class
+    {
+        try
+        {
+            await EnsureConnectivityAsync();
+
+            using var response = await action();
+            
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                throw new UnauthorizedException();
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorContent = await response.Content.ReadAsStringAsync(ct);
+                throw new ApiException($"Server returned an error.", (int)response.StatusCode, errorContent);
+            }
+
+            var json = await response.Content.ReadAsStringAsync(ct);
+            return JsonSerializer.Deserialize(json, typeInfo);
+        }
+        catch (Exception ex) when (ex is not NoInternetException && ex is not ServerUnreachableException && ex is not UnauthorizedException && ex is not ApiException)
+        {
+            throw new ApiException($"An unexpected error occurred while connecting to the server: {ex.Message}", 0, ex.Message);
+        }
+    }
+
+    private async Task<T?> ExecuteSafeWithRetryAsync<T>(Func<Task<HttpResponseMessage>> action, JsonTypeInfo<ApiResponse<T>> typeInfo, int maxRetries = 2, CancellationToken ct = default) where T : class
+    {
+        int retryCount = 0;
+        while (true)
+        {
+            try
+            {
+                return await ExecuteSafeAsync<T>(action, typeInfo, ct);
+            }
+            catch (Exception ex) when (retryCount < maxRetries && (ex is ServerUnreachableException || ex is NoInternetException))
+            {
+                retryCount++;
+                Debug.WriteLine($"Retrying API call ({retryCount}/{maxRetries}) due to: {ex.Message}");
+                await Task.Delay(1000 * retryCount, ct);
+            }
+        }
+    }
+
+    public string CurrentBaseUrl => _httpClient.BaseAddress?.ToString() ?? _apiConfig.BaseUrl;
+
+    public void UpdateBaseAddress(string newUrl)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(newUrl)) return;
+
+            // Ensure trailing slash
+            if (!newUrl.EndsWith("/")) newUrl += "/";
+
+            if (Uri.TryCreate(newUrl, UriKind.Absolute, out var uri))
+            {
+                _httpClient.BaseAddress = uri;
+                _apiConfig.BaseUrl = newUrl; // Sync back to config
+                Debug.WriteLine($"ApiService BaseAddress updated to: {newUrl}");
+            }
+            else
+            {
+                Debug.WriteLine($"Invalid BaseAddress URL: {newUrl}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Failed to update BaseAddress: {ex.Message}");
+        }
+    }
+
+    public async Task<bool> CheckConnectionAsync()
+    {
+        try
+        {
+            // We use a very short timeout for the health check
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            
+            // Try to hit the gesture health endpoint which is lightweight
+            var response = await _httpClient.GetAsync("gesture/health", cts.Token);
+            return response.IsSuccessStatusCode;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Connection check failed: {ex.Message}");
+            return false;
+        }
     }
 
     public async Task<LoginResponse?> LoginAsync(string email, string password)
     {
         try
         {
-            var request = new LoginRequest { Email = email, Password = password };
-            var content = new StringContent(
-                JsonSerializer.Serialize(request),
-                System.Text.Encoding.UTF8,
-                new MediaTypeHeaderValue("application/json"));
+            await EnsureConnectivityAsync();
 
+            var request = new LoginRequest { Email = email, Password = password };
+            var json = JsonSerializer.Serialize(request, AppJsonContext.Default.LoginRequest);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+            Debug.WriteLine($">>> ATTEMPTING LOGIN for: {email} at {(_httpClient.BaseAddress?.ToString() ?? "null")}");
             var response = await _httpClient.PostAsync("auth/login", content);
+            Debug.WriteLine($">>> LOGIN RESPONSE: {response.StatusCode}");
+
+            var jsonContent = await response.Content.ReadAsStringAsync();
 
             if (response.IsSuccessStatusCode)
             {
-                var jsonContent = await response.Content.ReadAsStringAsync();
-                var wrappedResponse = JsonSerializer.Deserialize<ApiResponse<LoginApiResponse>>(jsonContent, SerializerOptions);
-                var apiResponse = wrappedResponse?.Data ?? JsonSerializer.Deserialize<LoginApiResponse>(jsonContent, SerializerOptions);
-
-                var token = apiResponse?.Token;
-                if (string.IsNullOrEmpty(token))
+                Debug.WriteLine($">>> LOGIN SUCCESS. Raw JSON: {jsonContent}");
+                
+                var apiResult = JsonSerializer.Deserialize(jsonContent, AppJsonContext.Default.LoginApiResponse);
+                if (apiResult != null && !string.IsNullOrEmpty(apiResult.Token))
                 {
-                    token = apiResponse?.AccessToken;
-                }
-
-                if (!string.IsNullOrEmpty(token))
-                {
-                    var loginResponse = new LoginResponse
+                    var result = new LoginResponse
                     {
-                        AccessToken = token,
-                        RefreshToken = apiResponse?.RefreshToken ?? string.Empty,
+                        AccessToken = apiResult.Token,
+                        RefreshToken = apiResult.RefreshToken,
                         User = new UserDto
                         {
-                            Id = apiResponse?.UserId ?? string.Empty,
-                            Name = apiResponse?.Name ?? string.Empty,
-                            Email = email
+                            Id = apiResult.UserId,
+                            Name = apiResult.Name
                         }
                     };
-
-                    SetAuthToken(token);
-                    await SetSecureTokenAsync(token);
-
-                    return loginResponse;
+                    Debug.WriteLine($">>> LOGIN DECODED: User={result.User.Name}, TokenPrefix={result.AccessToken.Substring(0, Math.Min(10, result.AccessToken.Length))}...");
+                    return result;
                 }
+                
+                Debug.WriteLine(">>> LOGIN FAILED TO DECODE. Unexpected JSON structure.");
+                return null;
             }
-
-            Debug.WriteLine($"Login error: {response.StatusCode}");
-            return null;
+            
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                Debug.WriteLine($">>> LOGIN UNAUTHORIZED. Body: {jsonContent}");
+                throw new UnauthorizedException("Invalid email or password.");
+            }
+            
+            Debug.WriteLine($">>> LOGIN FAILED. Status: {response.StatusCode}. Body: {jsonContent}");
+            throw new ApiException("Login failed.", (int)response.StatusCode, jsonContent);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not NoInternetException && ex is not ServerUnreachableException && ex is not UnauthorizedException && ex is not ApiException)
         {
-            Debug.WriteLine($"Login error: {ex.Message}");
-            return null;
+            Debug.WriteLine($">>> LOGIN UNEXPECTED ERROR: {ex.GetType().Name} - {ex.Message}");
+            throw new ApiException($"Can't connect to server: {ex.Message}", 0, ex.Message);
         }
     }
 
@@ -128,29 +310,35 @@ public class ApiService : IApiService
     {
         try
         {
+            await EnsureConnectivityAsync();
+
             var request = new RegisterRequest { Email = email, Password = password, Name = name };
             var content = new StringContent(
-                JsonSerializer.Serialize(request),
-                System.Text.Encoding.UTF8,
-                new MediaTypeHeaderValue("application/json"));
+                JsonSerializer.Serialize(request, AppJsonContext.Default.RegisterRequest),
+                Encoding.UTF8,
+                "application/json");
 
             var response = await _httpClient.PostAsync("auth/register", content);
+            var jsonContent = await response.Content.ReadAsStringAsync();
 
             if (response.IsSuccessStatusCode)
             {
-                return (true, "Registration successful");
+                return (true, "Registration successful!");
             }
-            else
-            {
-                var jsonContent = await response.Content.ReadAsStringAsync();
-                var errorResponse = JsonSerializer.Deserialize<dynamic>(jsonContent);
-                return (false, errorResponse?.ToString() ?? "Registration failed");
-            }
+
+            // AOT safe deserialize for generic object-based error responses
+            // Since we only need the message, we can use a string-string dictionary or a dedicated error type
+            var errorInfo = JsonSerializer.Deserialize(jsonContent, AppJsonContext.Default.DictionaryStringString);
+            string? message = null;
+            if (errorInfo != null && errorInfo.TryGetValue("message", out var msg)) message = msg;
+            
+            return (false, message ?? "Registration failed.");
         }
+        catch (NoInternetException) { return (false, "Can't connect to network."); }
+        catch (ServerUnreachableException) { return (false, "Can't connect to server."); }
         catch (Exception ex)
         {
-            Debug.WriteLine($"Register error: {ex.Message}");
-            return (false, ex.Message);
+            return (false, $"Registration error: {ex.Message}");
         }
     }
 
@@ -163,10 +351,38 @@ public class ApiService : IApiService
             {
                 var lessons = learnPayload.Data.Lessons;
                 var mappedLessons = lessons.Select(MapLessonDetailToSummary).ToList();
+                
+                // --- INJECT GAMIFIED WEB LESSONS ---
+                mappedLessons.Add(new LessonDto
+                {
+                    Id = 9001,
+                    Title = "Speed Round: Alphabet",
+                    Description = "Race against the clock to sign the alphabet. (Web Video)",
+                    DurationSeconds = 120,
+                    Difficulty = "Intermediate",
+                    InstructorName = "Deaf Signer",
+                    ThumbnailUrl = "https://images.unsplash.com/photo-1516979187457-637abb4f9353?auto=format&fit=crop&q=80&w=300&h=200",
+                    IsDownloaded = false
+                });
+
+                mappedLessons.Add(new LessonDto
+                {
+                    Id = 9002,
+                    Title = "Survival Signs Quiz",
+                    Description = "Test your knowledge of emergency and survival signs. (Web Video)",
+                    DurationSeconds = 180,
+                    Difficulty = "Advanced",
+                    InstructorName = "Deaf Signer",
+                    ThumbnailUrl = "https://images.unsplash.com/photo-1620336655052-a549d414a1a5?auto=format&fit=crop&q=80&w=300&h=200",
+                    IsDownloaded = false
+                });
+                
+                var filteredLessons = mappedLessons.Where(l => !string.IsNullOrEmpty(l.InstructorName) && l.InstructorName.Contains("Signer", StringComparison.OrdinalIgnoreCase)).ToList();
+
                 return new ApiResponse<IEnumerable<LessonDto>>
                 {
                     Success = true,
-                    Data = mappedLessons,
+                    Data = filteredLessons,
                     Message = learnPayload.Message
                 };
             }
@@ -182,6 +398,33 @@ public class ApiService : IApiService
 
     public async Task<ApiResponse<LessonDetailDto>?> GetLessonAsync(int lessonId)
     {
+        if (lessonId == 9001 || lessonId == 9002)
+        {
+            return new ApiResponse<LessonDetailDto>
+            {
+                Success = true,
+                Message = string.Empty,
+                Data = new LessonDetailDto
+                {
+                    Id = lessonId,
+                    Title = lessonId == 9001 ? "Speed Round: Alphabet" : "Survival Signs Quiz",
+                    Description = lessonId == 9001 ? "Race against the clock to sign the alphabet. (Web Video)" : "Test your knowledge of emergency and survival signs. (Web Video)",
+                    DurationSeconds = lessonId == 9001 ? 120 : 180,
+                    InstructorName = "Deaf Signer",
+                    ThumbnailUrl = lessonId == 9001 ? "https://images.unsplash.com/photo-1516979187457-637abb4f9353?auto=format&fit=crop&q=80&w=300&h=200" : "https://images.unsplash.com/photo-1620336655052-a549d414a1a5?auto=format&fit=crop&q=80&w=300&h=200",
+                    VideoUrl = lessonId == 9001 ? "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4" : "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
+                    Data = new LessonDetailDataDto
+                    {
+                        UiLayout = new LessonUiLayoutDto
+                        {
+                            FileName = "LessonView.xaml",
+                            XamlContent = "<ContentView xmlns=\"http://schemas.microsoft.com/dotnet/2021/maui\"><Label Text=\"Gamified lesson placeholder!\" HorizontalOptions=\"Center\" VerticalOptions=\"Center\"/></ContentView>"
+                        }
+                    }
+                }
+            };
+        }
+
         try
         {
             await AddAuthHeaderAsync();
@@ -194,7 +437,7 @@ public class ApiService : IApiService
                 return null;
             }
 
-            var wrappedResponse = JsonSerializer.Deserialize<ApiResponse<LessonDetailDto>>(jsonContent, SerializerOptions);
+            var wrappedResponse = JsonSerializer.Deserialize(jsonContent, AppJsonContext.Default.ApiResponseLessonDetailDto);
             if (wrappedResponse?.Data != null && IsMeaningfulLesson(wrappedResponse.Data))
             {
                 DecodeLessonLayoutPayload(wrappedResponse.Data);
@@ -212,7 +455,7 @@ public class ApiService : IApiService
                 return wrappedResponse;
             }
 
-            var lesson = JsonSerializer.Deserialize<LessonDetailDto>(jsonContent, SerializerOptions);
+            var lesson = JsonSerializer.Deserialize(jsonContent, AppJsonContext.Default.LessonDetailDto);
             if (lesson != null && IsMeaningfulLesson(lesson))
             {
                 DecodeLessonLayoutPayload(lesson);
@@ -239,6 +482,11 @@ public class ApiService : IApiService
             if (extractedLesson != null)
             {
                 DecodeLessonLayoutPayload(extractedLesson);
+                
+                // Fix URLs
+                extractedLesson.ThumbnailUrl = EnsureAbsoluteUrl(extractedLesson.ThumbnailUrl);
+                extractedLesson.VideoUrl = EnsureAbsoluteUrl(extractedLesson.VideoUrl);
+
                 return new ApiResponse<LessonDetailDto>
                 {
                     Success = true,
@@ -282,30 +530,32 @@ public class ApiService : IApiService
     {
         try
         {
-            var request = new { refreshToken };
-            var content = new StringContent(
-                JsonSerializer.Serialize(request),
-                System.Text.Encoding.UTF8,
-                new MediaTypeHeaderValue("application/json"));
+            var request = new RefreshTokenRequest { RefreshToken = refreshToken };
+            var json = JsonSerializer.Serialize(request, AppJsonContext.Default.RefreshTokenRequest);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
 
             var response = await _httpClient.PostAsync("auth/refresh", content);
             if (response.IsSuccessStatusCode)
             {
                 var jsonResponse = await response.Content.ReadAsStringAsync();
-                var wrappedResponse = JsonSerializer.Deserialize<ApiResponse<LoginApiResponse>>(jsonResponse, SerializerOptions);
-                var apiResponse = wrappedResponse?.Data ?? JsonSerializer.Deserialize<LoginApiResponse>(jsonResponse, SerializerOptions);
+                var apiResponse = JsonSerializer.Deserialize(jsonResponse, AppJsonContext.Default.LoginApiResponse);
 
                 var token = apiResponse?.Token;
-                if (string.IsNullOrEmpty(token))
-                {
-                    token = apiResponse?.AccessToken;
-                }
+                var newRefreshToken = apiResponse?.RefreshToken;
 
                 if (!string.IsNullOrEmpty(token))
                 {
-                    // CRITICAL FIX: Save the new token to secure storage
+                    // CRITICAL FIX: Save the new access token
                     SetAuthToken(token);
                     await SetSecureTokenAsync(token);
+
+                    // CRITICAL FIX: Save the new refresh token if provided by server
+                    if (!string.IsNullOrEmpty(newRefreshToken))
+                    {
+                        Debug.WriteLine(">>> Saving new refresh token received during refresh cycle.");
+                        await _databaseService.SaveRefreshTokenAsync(newRefreshToken);
+                    }
+                    
                     return true;
                 }
             }
@@ -318,34 +568,13 @@ public class ApiService : IApiService
         }
     }
 
-    public void SetAuthToken(string token)
-    {
-        if (!string.IsNullOrEmpty(token))
-        {
-            _httpClient.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Bearer", token);
-        }
-    }
 
     public async Task<string?> GetAuthTokenAsync() 
     {
-        try
-        {
-            var token = await SecureStorage.Default.GetAsync(TokenKey);
-            if (!string.IsNullOrEmpty(token))
-            {
-                return token;
-            }
-
-            return await SecureStorage.Default.GetAsync(LegacyTokenKey);
-        }
-        catch
-        {
-            return null;
-        }
+        return await _databaseService.GetAccessTokenAsync();
     }
 
-    private async Task<ApiResponse<T>?> HandleResponse<T>(HttpResponseMessage response)
+    private async Task<ApiResponse<T>?> HandleResponse<T>(HttpResponseMessage response, JsonTypeInfo<ApiResponse<T>> wrappedTypeInfo, JsonTypeInfo<T> directTypeInfo)
     {
         var jsonContent = await response.Content.ReadAsStringAsync();
 
@@ -354,7 +583,7 @@ public class ApiService : IApiService
             ApiResponse<T>? wrapped = null;
             try
             {
-                wrapped = JsonSerializer.Deserialize<ApiResponse<T>>(jsonContent, SerializerOptions);
+                wrapped = JsonSerializer.Deserialize(jsonContent, wrappedTypeInfo);
             }
             catch
             {
@@ -368,7 +597,7 @@ public class ApiService : IApiService
             T? direct;
             try
             {
-                direct = JsonSerializer.Deserialize<T>(jsonContent, SerializerOptions);
+                direct = JsonSerializer.Deserialize(jsonContent, directTypeInfo);
             }
             catch (Exception ex)
             {
@@ -391,63 +620,39 @@ public class ApiService : IApiService
         return null;
     }
 
-    private async Task AddAuthHeaderAsync()
+    private Task AddAuthHeaderAsync()
     {
-        try
-        {
-            var token = await SecureStorage.Default.GetAsync(TokenKey);
-            if (string.IsNullOrEmpty(token))
-            {
-                token = await SecureStorage.Default.GetAsync(LegacyTokenKey);
-            }
+        // NO-OP: We now rely on SetAuthToken being called during initialization/login
+        // and DefaultRequestHeaders being persisted on the HttpClient.
+        return Task.CompletedTask;
+    }
 
-            if (!string.IsNullOrEmpty(token))
-            {
-                _httpClient.DefaultRequestHeaders.Authorization =
-                    new AuthenticationHeaderValue("Bearer", token);
-            }
-        }
-        catch (Exception ex)
+    public void SetAuthToken(string token)
+    {
+        _authToken = token;
+        
+        if (!string.IsNullOrEmpty(token))
         {
-            Debug.WriteLine($"Add auth header warning: {ex.Message}");
+            _httpClient.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", token);
+        }
+        else
+        {
+            _httpClient.DefaultRequestHeaders.Authorization = null;
         }
     }
 
     private async Task SetSecureTokenAsync(string token)
     {
-        try
-        {
-            if (MainThread.IsMainThread)
-            {
-                await SecureStorage.Default.SetAsync(TokenKey, token);
-                await SecureStorage.Default.SetAsync(LegacyTokenKey, token);
-            }
-            else
-            {
-                await MainThread.InvokeOnMainThreadAsync(async () =>
-                {
-                    await SecureStorage.Default.SetAsync(TokenKey, token);
-                    await SecureStorage.Default.SetAsync(LegacyTokenKey, token);
-                });
-            }
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"Secure storage error: {ex.Message}");
-        }
+        SetAuthToken(token); // Update cache and header immediately
+        await _databaseService.SaveAccessTokenAsync(token);
     }
 
     private async Task DeleteSecureTokenAsync()
     {
-        try
-        {
-            SecureStorage.Default.Remove(TokenKey);
-            SecureStorage.Default.Remove(LegacyTokenKey);
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"Secure storage delete error: {ex.Message}");
-        }
+        SetAuthToken(string.Empty);
+        await _databaseService.SaveAccessTokenAsync(string.Empty);
+        await _databaseService.SaveRefreshTokenAsync(string.Empty);
     }
 
     private async Task<ApiResponse<LearnDataDto>?> GetLearnDataPayloadAsync()
@@ -462,23 +667,37 @@ public class ApiService : IApiService
             return null;
         }
 
-        var wrapped = JsonSerializer.Deserialize<ApiResponse<LearnDataDto>>(jsonContent, SerializerOptions);
+        var wrapped = JsonSerializer.Deserialize(jsonContent, AppJsonContext.Default.ApiResponseLearnDataDto);
         if (wrapped?.Data != null)
         {
             foreach (var lesson in wrapped.Data.Lessons)
             {
                 DecodeLessonLayoutPayload(lesson);
+                lesson.ThumbnailUrl = EnsureAbsoluteUrl(lesson.ThumbnailUrl);
+                lesson.VideoUrl = EnsureAbsoluteUrl(lesson.VideoUrl);
+            }
+
+            foreach (var category in wrapped.Data.Categories)
+            {
+                category.IconUrl = EnsureAbsoluteUrl(category.IconUrl);
             }
 
             return wrapped;
         }
 
-        var direct = JsonSerializer.Deserialize<LearnDataDto>(jsonContent, SerializerOptions);
+        var direct = JsonSerializer.Deserialize(jsonContent, AppJsonContext.Default.LearnDataDto);
         if (direct != null)
         {
             foreach (var lesson in direct.Lessons)
             {
                 DecodeLessonLayoutPayload(lesson);
+                lesson.ThumbnailUrl = EnsureAbsoluteUrl(lesson.ThumbnailUrl);
+                lesson.VideoUrl = EnsureAbsoluteUrl(lesson.VideoUrl);
+            }
+
+            foreach (var category in direct.Categories)
+            {
+                category.IconUrl = EnsureAbsoluteUrl(category.IconUrl);
             }
 
             return new ApiResponse<LearnDataDto>
@@ -544,31 +763,62 @@ public class ApiService : IApiService
 
     // ============ Learning APIs ============
 
-    public async Task<ApiResponse<UserStatsDto>?> GetUserStatsAsync()
+
+    public async Task<ApiResponse<List<MediaDto>>?> GetMediaAsync()
     {
         try
         {
+            await AddAuthHeaderAsync();
+            var response = await _httpClient.GetAsync("media");
+            if (response.IsSuccessStatusCode)
+            {
+                var content = await response.Content.ReadAsStringAsync();
+                return JsonSerializer.Deserialize(content, AppJsonContext.Default.ApiResponseListMediaDto);
+            }
+            return null;
+        }
+        catch { return null; }
+    }
+
+    public async Task<ApiResponse<List<SignerCreditDto>>?> GetSignerCreditsAsync()
+    {
+        try
+        {
+            await AddAuthHeaderAsync();
+            var response = await _httpClient.GetAsync("signer-credits");
+            if (response.IsSuccessStatusCode)
+            {
+                var content = await response.Content.ReadAsStringAsync();
+                return JsonSerializer.Deserialize(content, AppJsonContext.Default.ApiResponseListSignerCreditDto);
+            }
+            return null;
+        }
+        catch { return null; }
+    }
+
+    public async Task<UserStatsDto?> GetUserStatsAsync()
+    {
+        try
+        {
+            await AddAuthHeaderAsync();
+            var response = await _httpClient.GetAsync("statistics");
+            var jsonContent = await response.Content.ReadAsStringAsync();
+
+            if (response.IsSuccessStatusCode)
+            {
+                return JsonSerializer.Deserialize(jsonContent, AppJsonContext.Default.UserStatsDto);
+            }
+            
+            // Fallback to legacy if possible
             var learnDataResponse = await GetLearnDataPayloadAsync();
             var learnData = learnDataResponse?.Data;
             if (learnData != null)
             {
-                var totalXp = learnData.TotalXp != 0 ? learnData.TotalXp : learnData.TotalXP;
-                var progress = learnData.ProgressPercentage;
-                if (progress <= 0 && learnData.Lessons.Count > 0)
+                return new UserStatsDto
                 {
-                    progress = learnData.Lessons.Average(l => l.CompletionPercentage) * 100d;
-                }
-
-                return new ApiResponse<UserStatsDto>
-                {
-                    Success = true,
-                    Data = new UserStatsDto
-                    {
-                        TotalProgress = (int)Math.Round(progress),
-                        CurrentStreak = learnData.CurrentStreak,
-                        TotalXP = totalXp
-                    },
-                    Message = learnDataResponse?.Message ?? string.Empty
+                    TotalXP = learnData.TotalXp,
+                    CurrentStreak = learnData.CurrentStreak,
+                    TotalProgress = learnData.Lessons.Count(l => l.CompletionPercentage >= 1)
                 };
             }
 
@@ -581,13 +831,30 @@ public class ApiService : IApiService
         }
     }
 
+    public async Task<bool> SubmitFeedbackAsync(FeedbackRequest feedback)
+    {
+        try
+        {
+            await AddAuthHeaderAsync();
+            var json = JsonSerializer.Serialize(feedback, AppJsonContext.Default.FeedbackRequest);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+            var response = await _httpClient.PostAsync("feedback", content);
+            return response.IsSuccessStatusCode;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"SubmitFeedback error: {ex.Message}");
+            return false;
+        }
+    }
+
     public async Task<ApiResponse<IEnumerable<LessonCategoryDto>>?> GetCategoriesAsync()
     {
         try
         {
             await AddAuthHeaderAsync();
             var response = await _httpClient.GetAsync("learn/categories");
-            var categoriesResponse = await HandleResponse<IEnumerable<LessonCategoryDto>>(response);
+            var categoriesResponse = await HandleResponse(response, AppJsonContext.Default.ApiResponseIEnumerableLessonCategoryDto, AppJsonContext.Default.IEnumerableLessonCategoryDto);
             if (categoriesResponse?.Data?.Any() == true)
             {
                 return new ApiResponse<IEnumerable<LessonCategoryDto>>
@@ -604,8 +871,8 @@ public class ApiService : IApiService
                 return new ApiResponse<IEnumerable<LessonCategoryDto>>
                 {
                     Success = true,
-                    Data = categoriesFromLearnData.Select(NormalizeCategory).ToList(),
-                    Message = learnPayload.Message
+                    Message = learnPayload.Message,
+                    Data = categoriesFromLearnData.Select(NormalizeCategory)
                 };
             }
 
@@ -620,17 +887,8 @@ public class ApiService : IApiService
 
     public async Task<ApiResponse<LessonCategoryDto>?> GetCategoryAsync(int categoryId)
     {
-        try
-        {
-            await AddAuthHeaderAsync();
-            var response = await _httpClient.GetAsync($"learn/categories/{categoryId}");
-            return await HandleResponse<LessonCategoryDto>(response);
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"GetCategory error: {ex.Message}");
-            return null;
-        }
+        var data = await ExecuteSafeWithRetryAsync(async () => await _httpClient.GetAsync($"learn/categories/{categoryId}"), AppJsonContext.Default.ApiResponseLessonCategoryDto);
+        return data != null ? new ApiResponse<LessonCategoryDto> { Success = true, Data = data } : null;
     }
 
     public async Task<ApiResponse<IEnumerable<LessonDetailDto>>?> GetLessonsByCategoryAsync(int categoryId)
@@ -639,7 +897,7 @@ public class ApiService : IApiService
         {
             await AddAuthHeaderAsync();
             var response = await _httpClient.GetAsync($"learn/categories/{categoryId}/lessons");
-            var lessonsResponse = await HandleResponse<IEnumerable<LessonDetailDto>>(response);
+            var lessonsResponse = await HandleResponse(response, AppJsonContext.Default.ApiResponseIEnumerableLessonDetailDto, AppJsonContext.Default.IEnumerableLessonDetailDto);
             if (lessonsResponse?.Data?.Any() == true)
             {
                 foreach (var lesson in lessonsResponse.Data)
@@ -691,19 +949,19 @@ public class ApiService : IApiService
                 return null;
             }
 
-            var wrappedGoal = JsonSerializer.Deserialize<ApiResponse<DailyGoalDto>>(jsonContent, SerializerOptions);
+            var wrappedGoal = JsonSerializer.Deserialize(jsonContent, AppJsonContext.Default.ApiResponseDailyGoalDto);
             if (wrappedGoal?.Data != null)
             {
                 return wrappedGoal;
             }
 
-            var directGoal = JsonSerializer.Deserialize<DailyGoalDto>(jsonContent, SerializerOptions);
+            var directGoal = JsonSerializer.Deserialize(jsonContent, AppJsonContext.Default.DailyGoalDto);
             if (directGoal != null && (directGoal.TotalRequired != 0 || directGoal.CompletedToday != 0))
             {
                 return new ApiResponse<DailyGoalDto> { Success = true, Data = directGoal };
             }
 
-            var apiGoal = JsonSerializer.Deserialize<DailyGoalApiDto>(jsonContent, SerializerOptions);
+            var apiGoal = JsonSerializer.Deserialize(jsonContent, AppJsonContext.Default.DailyGoalApiDto);
             if (apiGoal != null)
             {
                 return new ApiResponse<DailyGoalDto>
@@ -732,7 +990,7 @@ public class ApiService : IApiService
         {
             await AddAuthHeaderAsync();
             var response = await _httpClient.GetAsync("learn/daily-reviews");
-            return await HandleResponse<IEnumerable<SpacedRepetitionLessonDto>>(response);
+            return await HandleResponse(response, AppJsonContext.Default.ApiResponseIEnumerableSpacedRepetitionLessonDto, AppJsonContext.Default.IEnumerableSpacedRepetitionLessonDto);
         }
         catch (Exception ex)
         {
@@ -756,19 +1014,19 @@ public class ApiService : IApiService
                 return null;
             }
 
-            var wrappedUpcoming = JsonSerializer.Deserialize<ApiResponse<UpcomingReviewsDto>>(jsonContent, SerializerOptions);
+            var wrappedUpcoming = JsonSerializer.Deserialize(jsonContent, AppJsonContext.Default.ApiResponseUpcomingReviewsDto);
             if (wrappedUpcoming?.Data != null)
             {
                 return wrappedUpcoming;
             }
 
-            var directUpcoming = JsonSerializer.Deserialize<UpcomingReviewsDto>(jsonContent, SerializerOptions);
+            var directUpcoming = JsonSerializer.Deserialize(jsonContent, AppJsonContext.Default.UpcomingReviewsDto);
             if (directUpcoming != null && (directUpcoming.TomorrowCount != 0 || directUpcoming.ThisWeekCount != 0 || directUpcoming.NextWeekCount != 0))
             {
                 return new ApiResponse<UpcomingReviewsDto> { Success = true, Data = directUpcoming };
             }
 
-            var apiUpcoming = JsonSerializer.Deserialize<UpcomingReviewsApiDto>(jsonContent, SerializerOptions);
+            var apiUpcoming = JsonSerializer.Deserialize(jsonContent, AppJsonContext.Default.UpcomingReviewsApiDto);
             if (apiUpcoming != null)
             {
                 return new ApiResponse<UpcomingReviewsDto>
@@ -798,11 +1056,26 @@ public class ApiService : IApiService
         {
             await AddAuthHeaderAsync();
             var response = await _httpClient.GetAsync("learn/recommendations");
-            return await HandleResponse<PersonalizedRecommendationDto>(response);
+            return await HandleResponse(response, AppJsonContext.Default.ApiResponsePersonalizedRecommendationDto, AppJsonContext.Default.PersonalizedRecommendationDto);
         }
         catch (Exception ex)
         {
             Debug.WriteLine($"GetPersonalizedRecommendation error: {ex.Message}");
+            return null;
+        }
+    }
+
+    public async Task<ApiResponse<InteractiveLessonDto>?> GetInteractiveLessonAsync(int lessonId)
+    {
+        try
+        {
+            await AddAuthHeaderAsync();
+            var response = await _httpClient.GetAsync($"learn/lessons/{lessonId}/interactive");
+            return await HandleResponse(response, AppJsonContext.Default.ApiResponseInteractiveLessonDto, AppJsonContext.Default.InteractiveLessonDto);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"GetInteractiveLesson error: {ex.Message}");
             return null;
         }
     }
@@ -813,7 +1086,7 @@ public class ApiService : IApiService
         {
             await AddAuthHeaderAsync();
             var content = new StringContent(
-                JsonSerializer.Serialize(new { }),
+                "{}",
                 System.Text.Encoding.UTF8,
                 new MediaTypeHeaderValue("application/json"));
 
@@ -825,7 +1098,7 @@ public class ApiService : IApiService
                 return null;
             }
 
-            var wrapped = JsonSerializer.Deserialize<ApiResponse<bool>>(jsonContent, SerializerOptions);
+            var wrapped = JsonSerializer.Deserialize(jsonContent, AppJsonContext.Default.ApiResponseBoolean);
             if (wrapped != null)
             {
                 wrapped.Data = wrapped.Data || response.IsSuccessStatusCode;
@@ -880,7 +1153,7 @@ public class ApiService : IApiService
                 return null;
             }
 
-            var wrapped = JsonSerializer.Deserialize<ApiResponse<bool>>(jsonContent, SerializerOptions);
+            var wrapped = JsonSerializer.Deserialize(jsonContent, AppJsonContext.Default.ApiResponseBoolean);
             if (wrapped != null)
             {
                 wrapped.Data = wrapped.Data || response.IsSuccessStatusCode;
@@ -919,7 +1192,19 @@ public class ApiService : IApiService
         {
             await AddAuthHeaderAsync();
             var response = await _httpClient.GetAsync("videos");
-            return await HandleResponse<IEnumerable<VideoDto>>(response);
+            var result = await HandleResponse(response, AppJsonContext.Default.ApiResponseIEnumerableVideoDto, AppJsonContext.Default.IEnumerableVideoDto);
+            
+            if (result?.Data != null)
+            {
+                var signersVideos = result.Data.Where(v => !string.IsNullOrEmpty(v.Instructor) && v.Instructor.Contains("Signer", StringComparison.OrdinalIgnoreCase)).ToList();
+                foreach (var video in signersVideos)
+                {
+                    video.VideoUrl = EnsureAbsoluteUrl(video.VideoUrl);
+                    video.ThumbnailUrl = EnsureAbsoluteUrl(video.ThumbnailUrl);
+                }
+                result.Data = signersVideos;
+            }
+            return result;
         }
         catch (Exception ex)
         {
@@ -934,7 +1219,7 @@ public class ApiService : IApiService
         {
             await AddAuthHeaderAsync();
             var response = await _httpClient.GetAsync($"videos/{videoId}");
-            return await HandleResponse<VideoDto>(response);
+            return await HandleResponse(response, AppJsonContext.Default.ApiResponseVideoDto, AppJsonContext.Default.VideoDto);
         }
         catch (Exception ex)
         {
@@ -949,7 +1234,7 @@ public class ApiService : IApiService
         {
             await AddAuthHeaderAsync();
             var response = await _httpClient.GetAsync($"videos/category/{Uri.EscapeDataString(category)}");
-            return await HandleResponse<IEnumerable<VideoDto>>(response);
+            return await HandleResponse(response, AppJsonContext.Default.ApiResponseIEnumerableVideoDto, AppJsonContext.Default.IEnumerableVideoDto);
         }
         catch (Exception ex)
         {
@@ -965,9 +1250,9 @@ public class ApiService : IApiService
             await AddAuthHeaderAsync();
             var endpoint = like ? $"videos/{videoId}/like" : $"videos/{videoId}/unlike";
             var content = new StringContent(
-                JsonSerializer.Serialize(new { }),
-                System.Text.Encoding.UTF8,
-                new MediaTypeHeaderValue("application/json"));
+                JsonSerializer.Serialize(new Dictionary<string, string>(), AppJsonContext.Default.DictionaryStringString),
+                Encoding.UTF8,
+                "application/json");
 
             var response = await _httpClient.PostAsync(endpoint, content);
             return response.IsSuccessStatusCode;
@@ -1129,7 +1414,14 @@ public class ApiService : IApiService
         {
             try
             {
-                var bytes = Convert.FromBase64String(text);
+                var base64 = text.Replace('-', '+').Replace('_', '/');
+                var padLength = 4 - (base64.Length % 4);
+                if (padLength < 4)
+                {
+                    base64 = base64.PadRight(base64.Length + padLength, '=');
+                }
+                
+                var bytes = Convert.FromBase64String(base64);
                 var decoded = Encoding.UTF8.GetString(bytes);
                 if (!string.IsNullOrWhiteSpace(decoded))
                 {
@@ -1146,7 +1438,7 @@ public class ApiService : IApiService
 
     private static bool LooksLikeBase64(string input)
     {
-        if (string.IsNullOrWhiteSpace(input) || input.Length < 16 || input.Length % 4 != 0)
+        if (string.IsNullOrWhiteSpace(input) || input.Length < 16)
         {
             return false;
         }
@@ -1262,13 +1554,22 @@ public class ApiService : IApiService
         return char.ToLowerInvariant(value[0]) + value[1..];
     }
 
+    public string EnsureAbsoluteUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return string.Empty;
+        if (url.StartsWith("http", StringComparison.OrdinalIgnoreCase)) return url;
+
+        var baseUrl = _apiConfig.BaseUrl.TrimEnd('/');
+        return $"{baseUrl}/{url.TrimStart('/')}";
+    }
+
     public async Task<bool> WatchVideoAsync(int videoId)
     {
         try
         {
             await AddAuthHeaderAsync();
             var content = new StringContent(
-                JsonSerializer.Serialize(new { }),
+                "{}",
                 System.Text.Encoding.UTF8,
                 new MediaTypeHeaderValue("application/json"));
 
@@ -1284,86 +1585,238 @@ public class ApiService : IApiService
 
     // ============ Camera - Real-Time Gesture Prediction ============
 
-    public async Task<GesturePredictionResponseDto?> PredictGestureFromImageAsync(byte[] imageData, CancellationToken cancellationToken = default)
+    public async Task<GesturePredictionResponseDto?> PredictGestureFromImageAsync(byte[] imageData, string? targetSign = null, CancellationToken cancellationToken = default)
     {
-        try
-        {
-            if (imageData == null || imageData.Length == 0)
-            {
-                Debug.WriteLine("Gesture prediction warning: image payload was empty.");
-                return null;
-            }
+        int retryCount = 0;
+        const int maxRetries = 1;
 
+        while (retryCount <= maxRetries)
+        {
             try
             {
-                await AddAuthHeaderAsync();
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"Gesture auth header warning: {ex.Message}");
-            }
+                var url = "gesture/predict";
+                if (!string.IsNullOrEmpty(targetSign))
+                {
+                    url += $"?targetSign={Uri.EscapeDataString(targetSign)}";
+                }
 
-            Debug.WriteLine($"Sending gesture frame: {imageData.Length} bytes");
+                // Ensure we have a valid absolute URI for the routing handler to process
+                var baseAddr = _httpClient.BaseAddress?.ToString() ?? "http://api.internal/";
+                var finalUrl = new Uri(new Uri(baseAddr), url).ToString();
 
-            using (var content = new MultipartFormDataContent())
-            {
-                // Add image as multipart form data
+                using var request = new HttpRequestMessage(HttpMethod.Post, finalUrl);
+                
+                // Ensure we have the latest token from storage if memory cache is empty
+                if (string.IsNullOrEmpty(_authToken))
+                {
+                    _authToken = await _databaseService.GetAccessTokenAsync();
+                }
+
+                if (!string.IsNullOrEmpty(_authToken))
+                {
+                    request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _authToken);
+                }
+                
+                using var content = new MultipartFormDataContent();
                 var imageContent = new ByteArrayContent(imageData);
                 imageContent.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
                 content.Add(imageContent, "image", "frame.jpg");
+                request.Content = content;
 
-                var response = await _httpClient.PostAsync("gesture/predict", content, cancellationToken);
-
-                if (response.IsSuccessStatusCode)
+                Debug.WriteLine($">>> GESTURE PREDICT: Sending request to {(_httpClient.BaseAddress?.ToString() ?? "null")}{url} (Size: {imageData.Length})");
+                var response = await _httpClient.SendAsync(request, cancellationToken);
+                Debug.WriteLine($">>> GESTURE PREDICT RESPONSE: {response.StatusCode} ({(int)response.StatusCode})");
+                
+                if (response.StatusCode == HttpStatusCode.Unauthorized && retryCount < maxRetries)
                 {
-                    var jsonContent = await response.Content.ReadAsStringAsync(cancellationToken);
-                    var result = JsonSerializer.Deserialize<GesturePredictionResponseDto>(jsonContent, SerializerOptions);
-                    if (result?.Data != null)
+                    Debug.WriteLine(">>> Gesture prediction 401 Unauthorized. Attempting token refresh...");
+                    var refreshToken = await _databaseService.GetRefreshTokenAsync();
+                    if (!string.IsNullOrEmpty(refreshToken))
                     {
-                        return result;
-                    }
-
-                    var wrapped = JsonSerializer.Deserialize<ApiResponse<GesturePredictionDataDto>>(jsonContent, SerializerOptions);
-                    if (wrapped?.Data != null)
-                    {
-                        return new GesturePredictionResponseDto
+                        var refreshed = await RefreshTokenAsync(refreshToken);
+                        if (refreshed)
                         {
-                            Status = wrapped.Success ? "success" : "failed",
-                            Message = wrapped.Message,
-                            Data = wrapped.Data
-                        };
+                            retryCount++;
+                            continue; 
+                        }
                     }
+                }
 
-                    var direct = JsonSerializer.Deserialize<GesturePredictionDataDto>(jsonContent, SerializerOptions);
-                    if (direct != null)
+                if (!response.IsSuccessStatusCode)
+                {
+                    var error = await response.Content.ReadAsStringAsync(cancellationToken);
+                    Debug.WriteLine($">>> Gesture prediction FAILED: {response.StatusCode}. Body: {error}");
+                    
+                    if (retryCount == 0)
                     {
-                        return new GesturePredictionResponseDto
-                        {
-                            Status = "success",
-                            Message = string.Empty,
-                            Data = direct
-                        };
+                        retryCount++;
+                        continue;
                     }
-
-                    Debug.WriteLine($"Gesture prediction parse error: unexpected payload format - {jsonContent}");
                     return null;
                 }
-                else
+
+                var json = await response.Content.ReadAsStringAsync(cancellationToken);
+                return JsonSerializer.Deserialize(json, AppJsonContext.Default.GesturePredictionResponseDto);
+            }
+            catch (OperationCanceledException)
+            {
+                Debug.WriteLine(">>> Gesture prediction CANCELLED (timeout or user action).");
+                return null;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($">>> Gesture prediction EXCEPTION: {ex.GetType().Name} - {ex.Message}");
+                
+                if (retryCount == 0)
                 {
-                    var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
-                    Debug.WriteLine($"Gesture prediction error: {response.StatusCode} - {errorContent}");
-                    return null;
+                    retryCount++;
+                    continue;
                 }
+                
+                return null;
             }
         }
-        catch (OperationCanceledException)
+        return null;
+    }
+
+
+    // ============ User - Profile Management ============
+
+    public async Task<ApiResponse<UserProfileDto>?> GetUserProfileAsync()
+    {
+        try
         {
-            Debug.WriteLine("Gesture prediction request was canceled.");
+            await AddAuthHeaderAsync();
+            var response = await _httpClient.GetAsync("user/profile");
+            return await HandleResponse(response, AppJsonContext.Default.ApiResponseUserProfileDto, AppJsonContext.Default.UserProfileDto);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"GetUserProfile error: {ex.Message}");
+            return null;
+        }
+    }
+
+    public async Task<bool> UpdateNameAsync(string newName)
+    {
+        try
+        {
+            await AddAuthHeaderAsync();
+            var request = new UpdateNameRequest { NewName = newName };
+            var content = new StringContent(
+                JsonSerializer.Serialize(request, AppJsonContext.Default.UpdateNameRequest),
+                Encoding.UTF8,
+                "application/json");
+
+            var response = await _httpClient.PutAsync("user/name", content);
+            return response.IsSuccessStatusCode;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"UpdateName error: {ex.Message}");
+            return false;
+        }
+    }
+
+    public async Task<bool> UpdatePasswordAsync(string oldPassword, string newPassword)
+    {
+        try
+        {
+            await AddAuthHeaderAsync();
+            var request = new UpdatePasswordRequest { OldPassword = oldPassword, NewPassword = newPassword };
+            var content = new StringContent(
+                JsonSerializer.Serialize(request, AppJsonContext.Default.UpdatePasswordRequest),
+                Encoding.UTF8,
+                "application/json");
+
+            var response = await _httpClient.PutAsync("user/password", content);
+            return response.IsSuccessStatusCode;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"UpdatePassword error: {ex.Message}");
+            return false;
+        }
+    }
+
+    public async Task<bool> UpdateAvatarAsync(string avatarUrl)
+    {
+        try
+        {
+            await AddAuthHeaderAsync();
+            var request = new UpdateAvatarRequest { AvatarUrl = avatarUrl };
+            var content = new StringContent(
+                JsonSerializer.Serialize(request, AppJsonContext.Default.UpdateAvatarRequest),
+                Encoding.UTF8,
+                "application/json");
+
+            var response = await _httpClient.PutAsync("user/avatar", content);
+            return response.IsSuccessStatusCode;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"UpdateAvatar error: {ex.Message}");
+            return false;
+        }
+    }
+
+    public async Task<bool> UpdateDescriptionAsync(string description)
+    {
+        try
+        {
+            await AddAuthHeaderAsync();
+            var request = new UpdateDescriptionRequest { Description = description };
+            var content = new StringContent(
+                JsonSerializer.Serialize(request, AppJsonContext.Default.UpdateDescriptionRequest),
+                Encoding.UTF8,
+                "application/json");
+
+            var response = await _httpClient.PutAsync("user/description", content);
+            return response.IsSuccessStatusCode;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"UpdateDescription error: {ex.Message}");
+            return false;
+        }
+    }
+
+    public async Task<LeaderboardDto?> GetLeaderboardAsync(int count = 10)
+    {
+        try
+        {
+            await AddAuthHeaderAsync();
+            var response = await _httpClient.GetAsync($"leaderboard?count={count}");
+            if (response.IsSuccessStatusCode)
+            {
+                var json = await response.Content.ReadAsStringAsync();
+                return JsonSerializer.Deserialize(json, AppJsonContext.Default.LeaderboardDto);
+            }
             return null;
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"Gesture prediction error: {ex.Message}");
+            Debug.WriteLine($"GetLeaderboard error: {ex.Message}");
+            return null;
+        }
+    }
+
+    public async Task<IEnumerable<AchievementBadgeDto>?> GetAchievementsAsync()
+    {
+        try
+        {
+            await AddAuthHeaderAsync();
+            var response = await _httpClient.GetAsync("user/achievements");
+            if (response.IsSuccessStatusCode)
+            {
+                var json = await response.Content.ReadAsStringAsync();
+                return JsonSerializer.Deserialize(json, AppJsonContext.Default.IEnumerableAchievementBadgeDto);
+            }
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"GetAchievements error: {ex.Message}");
             return null;
         }
     }

@@ -15,6 +15,11 @@ public class RegisterRequest
     public string Name { get; set; } = string.Empty;
 }
 
+public class RefreshTokenRequest
+{
+    public string RefreshToken { get; set; } = string.Empty;
+}
+
 public class LoginApiResponse
 {
     [JsonPropertyName("token")]
@@ -60,41 +65,142 @@ public class LessonDto
     public string InstructorName { get; set; } = string.Empty;
     public string Difficulty { get; set; } = "Beginner";
     public int ViewCount { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore] public bool IsDownloaded { get; set; }
 }
 
 public class LoginResponse
 {
+    [JsonPropertyName("token")]
     public string AccessToken { get; set; } = string.Empty;
+
+    [JsonPropertyName("refreshToken")]
     public string RefreshToken { get; set; } = string.Empty;
-    public UserDto? User { get; set; }
-}
 
-public class User
-{
-    public string Id { get; set; } = string.Empty;
-    public string Email { get; set; } = string.Empty;
+    [JsonPropertyName("userId")]
+    public string UserId { get; set; } = string.Empty;
+
+    [JsonPropertyName("name")]
     public string Name { get; set; } = string.Empty;
-    public string? AvatarUrl { get; set; }
-    public int LearningStreak { get; set; }
-    public int TotalXP { get; set; }
+
+    // Computed property for backward compatibility
+    [JsonIgnore]
+    public UserDto User { get; set; } = new UserDto();
 }
 
+
+
+/// <summary>
+/// Learning Progress and Stats DTOs
+/// </summary>
 /// <summary>
 /// Learning Progress and Stats DTOs
 /// </summary>
 public class UserStatsDto
 {
-    [JsonPropertyName("totalProgress")]
-    public int TotalProgress { get; set; }
+    [JsonPropertyName("totalXp")]
+    public int TotalXp { get; set; }
 
-    [JsonPropertyName("currentStreak")]
-    public int CurrentStreak { get; set; }
+    [JsonPropertyName("learningStreak")]
+    public int LearningStreak { get; set; }
 
-    [JsonPropertyName("totalXP")]
-    public int TotalXP { get; set; }
+    [JsonPropertyName("lessonsCompleted")]
+    public int LessonsCompleted { get; set; }
+    [JsonIgnore]
+    public int TotalXP { get => TotalXp; set => TotalXp = value; }
 
-    [JsonPropertyName("globalRanking")]
+    [JsonIgnore]
+    public int CurrentStreak { get => LearningStreak; set => LearningStreak = value; }
+
+    [JsonIgnore]
+    public int TotalProgress { get => LessonsCompleted; set => LessonsCompleted = value; }
     public int GlobalRanking { get; set; }
+
+    [JsonPropertyName("weeklyXp")]
+    public List<DailyXpDto> WeeklyXp { get; set; } = new();
+
+    [JsonPropertyName("categoryProgress")]
+    public List<CategoryProgressDto> CategoryProgress { get; set; } = new();
+}
+
+public class DailyXpDto
+{
+    [JsonPropertyName("date")]
+    public string Date { get; set; } = string.Empty;
+
+    [JsonPropertyName("xp")]
+    public int Xp { get; set; }
+}
+
+public class LeaderboardEntryDto
+{
+    [JsonPropertyName("userId")]
+    public string UserId { get; set; } = string.Empty;
+
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("avatarUrl")]
+    public string? AvatarUrl { get; set; }
+
+    [JsonPropertyName("totalXp")]
+    public int TotalXp { get; set; }
+
+    [JsonPropertyName("rank")]
+    public int Rank { get; set; }
+
+    [JsonPropertyName("isCurrentUser")]
+    public bool IsCurrentUser { get; set; }
+}
+
+public class AchievementBadgeDto
+{
+    [JsonPropertyName("id")]
+    public int Id { get; set; }
+
+    [JsonPropertyName("title")]
+    public string Title { get; set; } = string.Empty;
+
+    [JsonPropertyName("description")]
+    public string Description { get; set; } = string.Empty;
+
+    [JsonPropertyName("icon")]
+    public string Icon { get; set; } = string.Empty;
+
+    [JsonPropertyName("color")]
+    public string Color { get; set; } = "#10B981";
+
+    [JsonPropertyName("isUnlocked")]
+    public bool IsUnlocked { get; set; }
+}
+
+public class LeaderboardDto
+{
+    [JsonPropertyName("topEntries")]
+    public List<LeaderboardEntryDto> TopEntries { get; set; } = new();
+
+    [JsonPropertyName("currentUserEntry")]
+    public LeaderboardEntryDto? CurrentUserEntry { get; set; }
+}
+
+public class CategoryProgressDto
+{
+    [JsonPropertyName("categoryName")]
+    public string CategoryName { get; set; } = string.Empty;
+
+    [JsonPropertyName("progress")]
+    public double Progress { get; set; }
+}
+
+public class FeedbackRequest
+{
+    [JsonPropertyName("subject")]
+    public string Subject { get; set; } = string.Empty;
+
+    [JsonPropertyName("message")]
+    public string Message { get; set; } = string.Empty;
+
+    [JsonPropertyName("rating")]
+    public int Rating { get; set; }
 }
 
 public class LessonCategoryDto
@@ -158,6 +264,49 @@ public class LessonDetailDto
 
     [JsonPropertyName("data")]
     public LessonDetailDataDto? Data { get; set; }
+
+    [JsonPropertyName("videoUrl")]
+    public string? VideoUrl { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore] public bool IsDownloaded { get; set; }
+}
+
+public class LessonStepDto
+{
+    [JsonPropertyName("type")]
+    public LessonStepType Type { get; set; }
+
+    [JsonPropertyName("title")]
+    public string Title { get; set; } = string.Empty;
+
+    [JsonPropertyName("description")]
+    public string Description { get; set; } = string.Empty;
+
+    [JsonPropertyName("imageUrl")]
+    public string? ImageUrl { get; set; }
+
+    [JsonPropertyName("options")]
+    public List<string>? Options { get; set; }
+
+    [JsonPropertyName("correctOption")]
+    public string? CorrectOption { get; set; }
+
+    [JsonPropertyName("targetGesture")]
+    public string? TargetGesture { get; set; }
+    public string? TargetSentence { get; set; }
+    public List<MatchingPairDto>? MatchingPairs { get; set; }
+    public List<string>? SequenceTokens { get; set; }
+}
+
+public class InteractiveLessonDto
+{
+    [JsonPropertyName("id")]
+    public int Id { get; set; }
+
+    [JsonPropertyName("title")]
+    public string Title { get; set; } = string.Empty;
+
+    [JsonPropertyName("steps")]
+    public List<LessonStepDto> Steps { get; set; } = new();
 }
 
 public class LessonDetailDataDto
@@ -179,6 +328,9 @@ public class LessonDetailDataDto
 
     [JsonPropertyName("uiLayout")]
     public LessonUiLayoutDto? UiLayout { get; set; }
+
+    [JsonPropertyName("interactiveLesson")]
+    public InteractiveLessonDto? InteractiveLesson { get; set; }
 }
 
 public class LessonUiLayoutDto
@@ -312,6 +464,9 @@ public class PersonalizedRecommendationDto
 
     [JsonPropertyName("reason")]
     public string Reason { get; set; } = string.Empty;
+
+    [JsonPropertyName("thumbnailUrl")]
+    public string ThumbnailUrl { get; set; } = string.Empty;
 }
 
 public class UpcomingReviewsDto
@@ -324,6 +479,54 @@ public class UpcomingReviewsDto
 
     [JsonPropertyName("nextWeek")]
     public int NextWeekCount { get; set; }
+}
+
+public class UserProfileDto
+{
+    [JsonPropertyName("email")]
+    public string Email { get; set; } = string.Empty;
+
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("avatarUrl")]
+    public string? AvatarUrl { get; set; }
+
+    [JsonPropertyName("profileDescription")]
+    public string? ProfileDescription { get; set; }
+
+    [JsonPropertyName("learningStreak")]
+    public int LearningStreak { get; set; }
+
+    [JsonPropertyName("totalXp")]
+    public int TotalXp { get; set; }
+}
+
+public class UpdateNameRequest
+{
+    [JsonPropertyName("newName")]
+    public string NewName { get; set; } = string.Empty;
+}
+
+public class UpdatePasswordRequest
+{
+    [JsonPropertyName("oldPassword")]
+    public string OldPassword { get; set; } = string.Empty;
+
+    [JsonPropertyName("newPassword")]
+    public string NewPassword { get; set; } = string.Empty;
+}
+
+public class UpdateAvatarRequest
+{
+    [JsonPropertyName("avatarUrl")]
+    public string AvatarUrl { get; set; } = string.Empty;
+}
+
+public class UpdateDescriptionRequest
+{
+    [JsonPropertyName("description")]
+    public string Description { get; set; } = string.Empty;
 }
 
 public class UpcomingReviewsApiDto
@@ -366,6 +569,7 @@ public class VideoDto
 
     [JsonPropertyName("viewCount")]
     public int ViewCount { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore] public bool IsDownloaded { get; set; }
 
     [JsonPropertyName("likeCount")]
     public int LikeCount { get; set; }
@@ -411,6 +615,12 @@ public class GesturePredictionDataDto
 
     [JsonPropertyName("processingTimeMs")]
     public double ProcessingTimeMs { get; set; }
+
+    [JsonPropertyName("sentence")]
+    public string? Sentence { get; set; }
+
+    [JsonPropertyName("isDrawing")]
+    public bool IsDrawing { get; set; }
 }
 
 public class GesturePredictionResponseDto
@@ -423,4 +633,31 @@ public class GesturePredictionResponseDto
 
     [JsonPropertyName("data")]
     public GesturePredictionDataDto? Data { get; set; }
+}
+
+
+public class MediaDto
+{
+    public int Id { get; set; }
+    public string Url { get; set; } = string.Empty;
+}
+
+public class SignerCreditDto
+{
+    public string SignerName { get; set; } = string.Empty;
+    public string AvatarUrl { get; set; } = string.Empty;
+    public string SocialLinks { get; set; } = string.Empty;
+    public string LicenseType { get; set; } = string.Empty;
+    public int ContributedVideosCount { get; set; }
+    public string Bio { get; set; } = string.Empty;
+    public string SourceUrl { get; set; } = string.Empty;
+}
+
+public class MatchingPairDto
+{
+    public int Id { get; set; }
+    public string SignTitle { get; set; } = string.Empty;
+    public string TextTranslation { get; set; } = string.Empty;
+    public string? ImageUrl { get; set; }
+    public string? VideoUrl { get; set; }
 }

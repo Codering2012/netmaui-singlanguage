@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:viewmodels="clr-namespace:SignLanguageApp.ViewModels"
+             xmlns:services="clr-namespace:SignLanguageApp.Services"
+             x:Class="SignLanguageApp.Pages.ProgressReportsPage"
+             x:DataType="viewmodels:ProgressReportsViewModel"
+             Title="Progress Report"
+             BackgroundColor="{DynamicResource PageBackgroundColor}">
+
+    <ScrollView>
+        <VerticalStackLayout x:Name="MainLayout" Padding="20" Spacing="20">
+            <!-- Summary Card -->
+            <Border StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 20" Padding="15">
+                <VerticalStackLayout Spacing="10" Padding="15">
+                    <Label Text="Weekly Overview" FontSize="20" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+                    <Grid ColumnDefinitions="*, *" RowDefinitions="Auto, Auto" ColumnSpacing="20" RowSpacing="10">
+                        <VerticalStackLayout Grid.Column="0" Grid.Row="0">
+                            <Label Text="Total Time" TextColor="{DynamicResource SecondaryTextColor}" FontSize="12" />
+                            <Label Text="{Binding Report.TotalTimeSpentMinutes, StringFormat='{0} min'}" FontSize="18" TextColor="{DynamicResource PrimaryColor}" FontAttributes="Bold" />
+                        </VerticalStackLayout>
+                        <VerticalStackLayout Grid.Column="1" Grid.Row="0">
+                            <Label Text="Avg. Accuracy" TextColor="{DynamicResource SecondaryTextColor}" FontSize="12" />
+                            <Label Text="{Binding Report.AverageAccuracy, StringFormat='{0:P0}'}" FontSize="18" TextColor="{DynamicResource SecondaryColor}" FontAttributes="Bold" />
+                        </VerticalStackLayout>
+                        <VerticalStackLayout Grid.Column="0" Grid.Row="1">
+                            <Label Text="Focus Needed" TextColor="{DynamicResource SecondaryTextColor}" FontSize="12" />
+                            <Label Text="{Binding Report.TopMissedSign}" FontSize="18" TextColor="{DynamicResource WarningColor}" FontAttributes="Bold" />
+                        </VerticalStackLayout>
+                    </Grid>
+                </VerticalStackLayout>
+            </Border>
+
+            <!-- Activity Chart Mockup -->
+            <Label Text="Activity Trends" FontSize="18" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" Margin="0,10,0,0" />
+            <Border StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 20" HeightRequest="200">
+                <Grid Padding="10">
+                    <HorizontalStackLayout x:Name="ChartLayout" HorizontalOptions="Center" Spacing="15" VerticalOptions="End"
+                                           BindableLayout.ItemsSource="{Binding Report.DailyActivity}">
+                        <BindableLayout.ItemTemplate>
+                            <DataTemplate x:DataType="services:DayActivity">
+                                <VerticalStackLayout Spacing="5">
+                                    <BoxView HeightRequest="{Binding MinutesSpent}" 
+                                             WidthRequest="20" 
+                                             CornerRadius="5" 
+                                             BackgroundColor="{DynamicResource PrimaryColor}" />
+                                    <Label Text="{Binding DayName}" FontSize="10" TextColor="{DynamicResource SecondaryTextColor}" HorizontalOptions="Center" />
+                                </VerticalStackLayout>
+                            </DataTemplate>
+                        </BindableLayout.ItemTemplate>
+                    </HorizontalStackLayout>
+                </Grid>
+            </Border>
+
+            <Button Text="Share Report" BackgroundColor="{DynamicResource SecondaryColor}" TextColor="{DynamicResource ButtonTextColor}" CornerRadius="12" Padding="20,10" FontAttributes="Bold" Margin="0,20" />
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

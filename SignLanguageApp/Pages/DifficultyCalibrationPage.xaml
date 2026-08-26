@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:cv="clr-namespace:CommunityToolkit.Maui.Views;assembly=CommunityToolkit.Maui.Camera"
+             xmlns:viewmodels="clr-namespace:SignLanguageApp.ViewModels"
+             xmlns:controls="clr-namespace:SignLanguageApp.Controls"
+             x:Class="SignLanguageApp.Pages.DifficultyCalibrationPage"
+             x:DataType="viewmodels:DifficultyCalibrationViewModel"
+             Shell.NavBarIsVisible="False"
+             BackgroundColor="Transparent">
+
+    <controls:MainLayout>
+        <Grid RowDefinitions="Auto, *, Auto" Padding="20">
+
+            <!-- Header -->
+            <Grid Grid.Row="0" ColumnDefinitions="Auto, *, Auto" Padding="20, 24, 20, 16">
+                <Button Text="✕" 
+                        FontSize="24" 
+                        TextColor="{DynamicResource PrimaryTextColor}" 
+                        BackgroundColor="Transparent"
+                        Command="{Binding SkipCalibrationCommand}"
+                        HeightRequest="44"
+                        WidthRequest="44"
+                        Padding="0"/>
+
+                <VerticalStackLayout Grid.Column="1" VerticalOptions="Center" HorizontalOptions="Center">
+                    <Label Text="Diagnostic Skill Calibration" FontSize="22" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" HorizontalOptions="Center"/>
+                    <Label Text="Testing gesture recognition speed &amp; hand clarity" FontSize="14" TextColor="{DynamicResource SecondaryTextColor}" HorizontalOptions="Center"/>
+                </VerticalStackLayout>
+
+                <ProgressBar Grid.Column="2" 
+                             Progress="{Binding Progress}" 
+                             ProgressColor="{DynamicResource PrimaryColor}" 
+                             BackgroundColor="{DynamicResource BorderBrush}"
+                             WidthRequest="80"
+                             ScaleY="4"
+                             VerticalOptions="Center"/>
+            </Grid>
+
+            <!-- Main Content -->
+            <ScrollView Grid.Row="1" Padding="20, 10, 20, 20">
+                <VerticalStackLayout Spacing="20">
+                    <!-- Calibration Status Card -->
+                    <Border StrokeShape="RoundRectangle 24"
+                            StrokeThickness="1"
+                            Stroke="{DynamicResource BorderBrush}"
+                            BackgroundColor="{DynamicResource CardBackgroundColor}"
+                            Padding="24">
+                        <Border.Shadow>
+                            <Shadow Brush="Black" Offset="0,4" Radius="12" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                        </Border.Shadow>
+                        <Grid ColumnDefinitions="*, Auto">
+                            <VerticalStackLayout Spacing="8">
+                                <Label Text="Calibration Target Gesture" FontSize="14" FontAttributes="Bold" TextColor="{DynamicResource SecondaryTextColor}"/>
+                                <Label Text="{Binding CurrentSignToTest, StringFormat='Sign: {0}'}" FontSize="28" FontAttributes="Bold" TextColor="{DynamicResource PrimaryColor}"/>
+                                <Label Text="{Binding StatusMessage}" FontSize="15" TextColor="{DynamicResource PrimaryTextColor}"/>
+                            </VerticalStackLayout>
+                            <Border Grid.Column="1" BackgroundColor="{DynamicResource SuccessGlassBackgroundColor}" Stroke="{DynamicResource SuccessGlassStrokeColor}" StrokeThickness="1" StrokeShape="RoundRectangle 16" Padding="12,8" VerticalOptions="Start">
+                                <Label Text="Active Scan 📷" FontSize="12" FontAttributes="Bold" TextColor="#10B981"/>
+                            </Border>
+                        </Grid>
+                    </Border>
+
+                    <!-- Camera Preview Container -->
+                    <Border StrokeShape="RoundRectangle 24"
+                            Stroke="{DynamicResource BorderBrush}"
+                            StrokeThickness="1"
+                            BackgroundColor="Black"
+                            HeightRequest="320">
+                        <Border.Shadow>
+                            <Shadow Brush="Black" Offset="0,6" Radius="15" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                        </Border.Shadow>
+                        <Grid>
+                            <cv:CameraView x:Name="CameraView"
+                                           HorizontalOptions="Fill"
+                                           VerticalOptions="Fill" />
+                            <Border VerticalOptions="End" HorizontalOptions="Center" Margin="16" BackgroundColor="#B3000000" Padding="16,8" StrokeShape="RoundRectangle 12">
+                                <Label Text="Center your hand inside the camera frame" TextColor="White" FontSize="14" FontAttributes="Bold"/>
+                            </Border>
+                        </Grid>
+                    </Border>
+
+                    <!-- Diagnostic Meter Card -->
+                    <Border StrokeShape="RoundRectangle 20"
+                            BackgroundColor="{DynamicResource PrimaryGlassBackgroundColor}"
+                            Stroke="{DynamicResource PrimaryGlassStrokeColor}"
+                            StrokeThickness="1"
+                            Padding="20">
+                        <Grid ColumnDefinitions="Auto, *">
+                            <Label Text="⚡" FontSize="32" VerticalOptions="Center" Margin="0,0,16,0"/>
+                            <VerticalStackLayout Grid.Column="1" Spacing="4">
+                                <Label Text="Adaptive Algorithm Tuning" FontSize="15" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}"/>
+                                <Label Text="SignLanguageApp automatically adjusts lesson difficulty, prompt timing, and hints based on your calibration score." 
+                                       FontSize="14" 
+                                       TextColor="{DynamicResource SecondaryTextColor}"/>
+                            </VerticalStackLayout>
+                        </Grid>
+                    </Border>
+                </VerticalStackLayout>
+            </ScrollView>
+
+            <!-- Footer Actions -->
+            <Border Grid.Row="2" Padding="20, 16" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeThickness="0">
+                <Border.Shadow>
+                    <Shadow Brush="Black" Offset="0,-4" Radius="15" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                </Border.Shadow>
+                <Button Text="SKIP DIAGNOSTIC CALIBRATION" 
+                        Command="{Binding SkipCalibrationCommand}"
+                        BackgroundColor="Transparent"
+                        TextColor="{DynamicResource SecondaryTextColor}"
+                        BorderColor="{DynamicResource BorderBrush}"
+                        BorderWidth="1"
+                        CornerRadius="16"
+                        HeightRequest="60"
+                        FontAttributes="Bold"
+                        FontSize="15"/>
+            </Border>
+        </Grid>
+    </controls:MainLayout>
+</ContentPage>

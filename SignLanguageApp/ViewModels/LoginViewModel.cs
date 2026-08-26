@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.ComponentModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -9,7 +9,7 @@ using SignLanguageApp.Services;
 
 namespace SignLanguageApp.ViewModels
 {
-    public class LoginViewModel : INotifyPropertyChanged
+    public partial class LoginViewModel : INotifyPropertyChanged
     {
         private readonly IAuthService _authService;
         private readonly IApiService _apiService;
@@ -63,52 +63,71 @@ namespace SignLanguageApp.ViewModels
 
         private async Task LoginAsync()
         {
-            if (string.IsNullOrWhiteSpace(Email) || string.IsNullOrWhiteSpace(Password))
-            {
-                ShowError("Please enter email and password");
-                return;
-            }
-
-            IsLoading = true;
-            HasError = false;
-            ErrorMessage = string.Empty;
-
             try
             {
-                var response = await _authService.LoginAsync(Email, Password);
-
-                if (response?.AccessToken != null)
+                if (string.IsNullOrWhiteSpace(Email) || string.IsNullOrWhiteSpace(Password))
                 {
-                    _apiService.SetAuthToken(response.AccessToken);
-                    await SecureStorage.Default.SetAsync("access_token", response.AccessToken);
-                    await SecureStorage.Default.SetAsync("jwt_token", response.AccessToken);
+                    ShowError("Please enter email and password");
+                    return;
+                }
 
-                    var window = Application.Current?.Windows?.FirstOrDefault();
-                    if (window?.Page is not null)
+                IsLoading = true;
+                HasError = false;
+                ErrorMessage = string.Empty;
+
+                try
+                {
+                    var response = await _authService.LoginAsync(Email, Password);
+
+                    if (response?.AccessToken != null)
                     {
-                        await window.Page.DisplayAlertAsync("Success", "Login successful", "OK");
-                        window.Page = new AppShell();
+                        _apiService.SetAuthToken(response.AccessToken);
+                        await SecureStorage.Default.SetAsync("access_token", response.AccessToken);
+                        await SecureStorage.Default.SetAsync("jwt_token", response.AccessToken);
+
+                        if (Application.Current != null)
+                        {
+#pragma warning disable CS0618
+                            await Application.Current.MainPage!.DisplayAlert("Success", "Login successful", "OK");
+                            MainThread.BeginInvokeOnMainThread(async () => 
+                            {
+                                await Task.Delay(50);
+                                Application.Current.MainPage = new AppShell();
+                            });
+#pragma warning restore CS0618
+                        }
+                    }
+                    else
+                    {
+                        ShowError("Invalid email or password");
                     }
                 }
-                else
+                catch (Exception ex)
                 {
-                    ShowError("Invalid email or password");
+                    ShowError($"Login failed: {ex.Message}");
+                }
+                finally
+                {
+                    IsLoading = false;
                 }
             }
             catch (Exception ex)
             {
-                ShowError($"Login failed: {ex.Message}");
-            }
-            finally
-            {
-                IsLoading = false;
+                SignLanguageApp.Helpers.GlobalExceptionHandler.HandleException(ex);
             }
         }
 
         private async Task RegisterAsync()
         {
-            // Navigate to register page
-            await Shell.Current.GoToAsync("//register");
+            try
+            {
+                // Navigate to register page
+                await Shell.Current.GoToAsync("//register");
+            }
+            catch (Exception ex)
+            {
+                SignLanguageApp.Helpers.GlobalExceptionHandler.HandleException(ex);
+            }
         }
 
         private void ShowError(string message)

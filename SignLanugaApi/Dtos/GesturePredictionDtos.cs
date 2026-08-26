@@ -27,6 +27,7 @@ namespace SignLanguageApi.Dtos
     public class GesturePredictionDataDto
     {
         public int Count { get; set; }
+        public int Sequence { get; set; }
         public List<CoordinateDto> Coordinates { get; set; } = [];
         public string? Letter { get; set; }
         public float Confidence { get; set; }

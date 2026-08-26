@@ -15,6 +15,17 @@ namespace SignLanguageApp.Pages
         private long _lastOverlayInvalidateTick;
         private bool _isPreviewRunning;
 
+        public CameraTranslationPage()
+        {
+            InitializeComponent();
+            _viewModel = App.Services.GetService<CameraTranslationViewModel>();
+            BindingContext = _viewModel;
+            _viewModel.PropertyChanged += OnViewModelPropertyChanged;
+
+            // Pass camera view reference to view model
+            _viewModel.SetCameraView(CameraView);
+        }
+
         public CameraTranslationPage(CameraTranslationViewModel viewModel)
         {
             InitializeComponent();
@@ -44,21 +55,37 @@ namespace SignLanguageApp.Pages
 
         protected override async void OnAppearing()
         {
-            base.OnAppearing();
             try
             {
-                // Avoid auto-starting camera on page load to prevent startup crashes
-                // on devices/environments where camera handlers are not immediately ready.
-                await EnsureCameraPermissionAsync(showDeniedAlert: false);
-            }
-            catch (OperationCanceledException)
-            {
-                Debug.WriteLine("Camera translation initialization timed out.");
+                base.OnAppearing();
+                this.Opacity = 0;
+                this.TranslationY = 20;
+                MainThread.BeginInvokeOnMainThread(async () => {
+                await Task.Delay(100);
+                await Task.WhenAll(
+                    this.FadeToAsync(1, 400, Easing.CubicOut),
+                    this.TranslateToAsync(0, 0, 400, Easing.CubicOut)
+                );
+            });
+                try
+                {
+                    // Avoid auto-starting camera on page load to prevent startup crashes
+                    // on devices/environments where camera handlers are not immediately ready.
+                    await EnsureCameraPermissionAsync(showDeniedAlert: false);
+                }
+                catch (OperationCanceledException)
+                {
+                    Debug.WriteLine("Camera translation initialization timed out.");
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"Camera appearance error: {ex.Message}");
+                    Debug.WriteLine($"Stack trace: {ex.StackTrace}");
+                }
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"Camera appearance error: {ex.Message}");
-                Debug.WriteLine($"Stack trace: {ex.StackTrace}");
+                SignLanguageApp.Helpers.GlobalExceptionHandler.HandleException(ex);
             }
         }
 

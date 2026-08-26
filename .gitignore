@@ -427,3 +427,40 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# Machine Learning Large Caches, Binary Weights & Checkpoints
+*.pt
+!train_cpu_ultralightweight/asl_cpu_model.pt
+*.pth
+*.h5
+*.onnx
+*.npy
+*.task
+*.7z
+*.rar
+*.mp4
+*.tar.gz
+trace_output.txt
+pylint_report.txt
+# Build and publish packages
+publish_output/
+Dist/
+SignLanguageApi_Executable_Package/
+*.bak
+debug_worker_log.txt
+*.csv
+!train_tpu/dummy.csv
+# Native binaries and compiled App outputs
+SignLanguageSuite/App/
+*.dll
+*.exe
+*.lib
+*.so
+*.dylib
+
+checkpoints/
+checkpoints_*/
+xla_cache/
+dataset_cache/
+__pycache__/
+*.pyc

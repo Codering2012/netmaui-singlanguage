@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
 		<TargetFrameworks>net10.0-android;net10.0-ios;net10.0-maccatalyst</TargetFrameworks>
@@ -10,6 +10,7 @@
 		<SingleProject>true</SingleProject>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
+		<LangVersion>preview</LangVersion>
 
 		<ApplicationTitle>SignLanguageApp</ApplicationTitle>
 		<ApplicationId>com.companyname.signlanguageapp</ApplicationId>
@@ -19,13 +20,16 @@
 		<WindowsPackageType>None</WindowsPackageType>
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<MauiEnableXamlCBindingWithSourceCompilation>true</MauiEnableXamlCBindingWithSourceCompilation>
+		<MobileAggressiveAttributeTrimming>false</MobileAggressiveAttributeTrimming>
+
 
 		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">15.0</SupportedOSPlatformVersion>
 		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst'">15.0</SupportedOSPlatformVersion>
 		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">24.0</SupportedOSPlatformVersion>
 		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</SupportedOSPlatformVersion>
 		<TargetPlatformMinVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</TargetPlatformMinVersion>
-	</PropertyGroup>
+	    <NoWarn>NU1903</NoWarn>
+    </PropertyGroup>
 
 	<ItemGroup>
        <MauiIcon Include="Resources\AppIcon\appicon.svg" ForegroundFile="Resources\AppIcon\appicon.svg" Color="#512BD4" />
@@ -38,14 +42,15 @@
 
 	<ItemGroup>
 		<!-- Core MAUI Framework -->
+		<PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.11" />
 		<PackageReference Include="Microsoft.Maui.Controls" Version="10.0.41" />
 		<PackageReference Include="Microsoft.Maui.Graphics" Version="10.0.41" />
 		<PackageReference Include="Microsoft.Maui.Essentials" Version="10.0.41" />
 
 		<!-- Dependency Injection & Extensions -->
-		<PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.4" />
-		<PackageReference Include="Microsoft.Extensions.Http" Version="10.0.4" />
-		<PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.4" />
+		<PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.11" />
+		<PackageReference Include="Microsoft.Extensions.Http" Version="10.0.11" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.11" />
 
 		<!-- MVVM & Community Toolkit (compatible with MAUI 10.x) -->
 		<PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
@@ -53,8 +58,8 @@
 		<PackageReference Include="CommunityToolkit.Maui.Camera" Version="6.0.0" />
 
 		<!-- Machine Learning & Data -->
-		<PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.24.3" />
 		<PackageReference Include="sqlite-net-pcl" Version="1.9.172" />
+		<PackageReference Include="SQLitePCLRaw.bundle_green" Version="2.1.11" />
 	</ItemGroup>
 	
 	<ItemGroup>

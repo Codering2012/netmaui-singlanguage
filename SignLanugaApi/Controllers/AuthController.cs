@@ -326,8 +326,8 @@ namespace SignLanguageApi.Controllers
 
                 return Ok(new AuthTokenResponseDto
                 {
-                    token = token,
-                    refreshToken = refreshToken,
+                    token = token ?? string.Empty,
+                    refreshToken = refreshToken ?? string.Empty,
                     userId = user.Id,
                     name = user.Name
                 });

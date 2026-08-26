@@ -1,0 +1,1187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ASL 3D Hand Landmark Engine</title>
+    
+    <!-- Google Fonts for premium typography -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    
+    <!-- Three.js and OrbitControls CDNs -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --panel-bg: rgba(15, 23, 42, 0.45);
+            --panel-border: rgba(255, 255, 255, 0.08);
+            --accent-primary: #6366f1; /* Indigo */
+            --accent-glow: rgba(99, 102, 241, 0.4);
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --success: #10b981;
+            --danger: #ef4444;
+            --x-axis: #ef4444;
+            --y-axis: #10b981;
+            --z-axis: #3b82f6;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+        }
+
+        /* Glassmorphic Panel Layout */
+        .app-container {
+            display: flex;
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+        }
+
+        .side-panel {
+            width: 420px;
+            height: 100%;
+            background: var(--panel-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-right: 1px solid var(--panel-border);
+            padding: 2.5rem 2rem;
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+            z-index: 10;
+            overflow-y: auto;
+            box-shadow: 10px 0 30px rgba(0, 0, 0, 0.5);
+        }
+
+        .main-viewport {
+            flex: 1;
+            height: 100%;
+            position: relative;
+        }
+
+        #canvas-container {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        /* Typography & Headings */
+        h1 {
+            font-size: 1.8rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #fff 30%, #a5b4fc 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -0.5px;
+        }
+
+        h2 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text-main);
+            margin-bottom: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        p {
+            font-size: 0.95rem;
+            line-height: 1.5;
+            color: var(--text-muted);
+        }
+
+        /* Custom Interactive Components */
+        .card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--panel-border);
+            border-radius: 16px;
+            padding: 1.25rem;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .card:hover {
+            border-color: rgba(99, 102, 241, 0.3);
+            background: rgba(255, 255, 255, 0.05);
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        /* Buttons and Selectors */
+        .btn-group {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.75rem;
+        }
+
+        .btn {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--panel-border);
+            color: var(--text-main);
+            padding: 0.75rem 1rem;
+            border-radius: 12px;
+            cursor: pointer;
+            font-family: 'Outfit', sans-serif;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            text-align: center;
+        }
+
+        .btn:hover {
+            background: var(--accent-primary);
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 15px var(--accent-glow);
+            transform: translateY(-2px);
+        }
+
+        .btn.active {
+            background: var(--accent-primary);
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 20px var(--accent-glow);
+        }
+
+        /* Slider Controls */
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .control-label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        input[type="range"] {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 6px;
+            border-radius: 3px;
+            background: rgba(255, 255, 255, 0.1);
+            outline: none;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: var(--accent-primary);
+            cursor: pointer;
+            transition: transform 0.1s ease;
+        }
+
+        input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.3);
+        }
+
+        /* Toggle Switches */
+        .toggle-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 44px;
+            height: 24px;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(255, 255, 255, 0.1);
+            transition: .3s;
+            border-radius: 24px;
+            border: 1px solid var(--panel-border);
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 16px;
+            width: 16px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .3s;
+            border-radius: 50%;
+        }
+
+        input:checked + .slider {
+            background-color: var(--accent-primary);
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(20px);
+        }
+
+        /* Drag and Drop Zone */
+        .dropzone {
+            border: 2px dashed rgba(99, 102, 241, 0.3);
+            background: rgba(99, 102, 241, 0.03);
+            border-radius: 16px;
+            padding: 1.5rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .dropzone:hover, .dropzone.dragover {
+            border-color: var(--accent-primary);
+            background: rgba(99, 102, 241, 0.08);
+            box-shadow: inset 0 0 15px rgba(99, 102, 241, 0.1);
+        }
+
+        .dropzone svg {
+            width: 32px;
+            height: 32px;
+            fill: var(--accent-primary);
+        }
+
+        /* HUD overlay inside viewport */
+        .viewport-hud {
+            position: absolute;
+            bottom: 2rem;
+            right: 2rem;
+            background: rgba(15, 23, 42, 0.7);
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--panel-border);
+            border-radius: 12px;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            pointer-events: none;
+        }
+
+        .hud-item {
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .hud-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+
+        /* Code Snippet Box */
+        .code-container {
+            font-family: 'Fira Code', monospace;
+            font-size: 0.75rem;
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid var(--panel-border);
+            border-radius: 8px;
+            padding: 0.8rem;
+            color: #a5b4fc;
+            overflow-x: auto;
+            white-space: pre;
+            margin-top: 0.5rem;
+        }
+
+        /* Scrollbar styles */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .badge {
+            background: rgba(99, 102, 241, 0.15);
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            color: #a5b4fc;
+            font-size: 0.75rem;
+            padding: 0.2rem 0.6rem;
+            border-radius: 99px;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="app-container">
+        
+        <!-- Left Sidebar Controls -->
+        <div class="side-panel">
+            <div>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                    <h1>ASL 3D Rig Engine</h1>
+                    <span class="badge">WebGL</span>
+                </div>
+                <p>Drive, visualize, and align rigged low-poly hands directly from 3D MediaPipe coordinates.</p>
+            </div>
+
+            <!-- Gesture presets (driving 3D hand landmarks) -->
+            <div class="card">
+                <h2>
+                    <svg style="width:18px;height:18px;fill:currentColor" viewBox="0 0 24 24"><path d="M7,2v1h10V2c0-0.55-0.45-1-1-1H8C7.45,1,7,1.45,7,2z M19,7h-2.17l-0.8-1.6C15.68,4.71,14.99,4.25,14.22,4H9.78C9.01,4.25,8.32,4.71,7.97,5.4L7.17,7H5C3.34,7,2,8.34,2,10v7c0,2.76,2.24,5,5,5h10c2.76,0,5-2.24,5-5v-7C22,8.34,20.66,7,19,7z M12,18c-2.21,0-4-1.79-4-4s1.79-4,4-4s4,1.79,4,4S14.21,18,12,18z M12,12c-1.1,0-2,0.9-2,2s0.9,2,2,2s2-0.9,2-2S13.1,12,12,12z"/></svg>
+                    ASL Gesture Presets
+                </h2>
+                <p style="margin-bottom:1rem; font-size:0.85rem;">Real 3D coordinates extracted from validation images via MediaPipe world landmarks.</p>
+                <div class="btn-group" id="preset-buttons">
+                    <!-- Buttons generated dynamically from validation_presets.json -->
+                </div>
+            </div>
+
+            <!-- Interactive Rig controls -->
+            <div class="card" style="display:flex; flex-direction:column; gap:1.2rem;">
+                <h2>
+                    <svg style="width:18px;height:18px;fill:currentColor" viewBox="0 0 24 24"><path d="M12,22c5.52,0,10-4.48,10-10S17.52,2,12,2S2,6.48,2,12S6.48,22,12,22z M12,4c4.41,0,8,3.59,8,8s-3.59,8-8,8s-8-3.59-8-8S7.59,4,12,4z M16.5,12c0.83,0,1.5-0.67,1.5-1.5S17.33,9,16.5,9S15,9.67,15,10.5S15.67,12,16.5,12z M7.5,12C8.33,12,9,11.33,9,10.5S8.33,9,7.5,9S6,9.67,6,10.5S6.67,12,7.5,12z M12,17.5c2.33,0,4.31-1.46,5.11-3.5H6.89C7.69,16.04,9.67,17.5,12,17.5z"/></svg>
+                    Rig Controls
+                </h2>
+                
+                <div class="toggle-container">
+                    <span style="font-size:0.9rem;">Canonical Math Alignment</span>
+                    <label class="switch">
+                        <input type="checkbox" id="alignment-toggle" checked onchange="toggleAlignment(this.checked)">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+
+                <div class="toggle-container">
+                    <span style="font-size:0.9rem;">Show Coordinate Axes</span>
+                    <label class="switch">
+                        <input type="checkbox" id="axes-toggle" checked onchange="toggleAxes(this.checked)">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+
+                <div class="toggle-container">
+                    <span style="font-size:0.9rem;">Show Skeleton Bones</span>
+                    <label class="switch">
+                        <input type="checkbox" id="skeleton-toggle" onchange="toggleSkeleton(this.checked)">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+
+                <div class="toggle-container">
+                    <span style="font-size:0.9rem;">Show Joint Nodes</span>
+                    <label class="switch">
+                        <input type="checkbox" id="nodes-toggle" onchange="toggleNodes(this.checked)">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+
+
+                <div class="control-group">
+                    <div class="control-label">
+                        <span>Joint Node Size</span>
+                        <span id="node-size-val">0.02m</span>
+                    </div>
+                    <input type="range" min="0.005" max="0.05" step="0.005" value="0.015" oninput="updateNodeSize(this.value)">
+                </div>
+
+                <div class="control-group">
+                    <div class="control-label">
+                        <span>Mesh Opacity</span>
+                        <span id="opacity-val">0.65</span>
+                    </div>
+                    <input type="range" min="0.1" max="1.0" step="0.05" value="0.65" oninput="updateMeshOpacity(this.value)">
+                </div>
+            </div>
+
+            <!-- Drag & Drop JSON Extracted from still images -->
+            <div class="card">
+                <h2>
+                    <svg style="width:18px;height:18px;fill:currentColor" viewBox="0 0 24 24"><path d="M19.35,10.04C18.67,6.59,15.64,4,12,4C9.11,4,6.6,5.64,5.35,8.04C2.34,8.36,0,10.91,0,14c0,3.31,2.69,6,6,6h13c2.76,0,5-2.24,5-5C24,12.36,21.95,10.22,19.35,10.04z M19,18H6c-2.21,0-4-1.79-4-4c0-2.05,1.53-3.76,3.56-3.97l1.07-0.11l0.5-0.95C8.08,7.14,9.94,6,12,6c2.62,0,4.88,1.86,5.39,4.43l0.3,1.5l1.53,0.11c1.56,0.1,2.78,1.41,2.78,2.96C22,16.69,20.65,18,19,18z M8,13h3v4h2v-4h3l-4-4L8,13z"/></svg>
+                    Drop Extracted JSON
+                </h2>
+                <div id="dropzone" class="dropzone">
+                    <p style="font-size: 0.85rem; font-weight: 600;">Drag & Drop JSON file here</p>
+                    <p style="font-size: 0.75rem; color: var(--text-muted);">Drop a .json exported from your extract_world_landmarks.py script to render it instantly.</p>
+                </div>
+            </div>
+
+            <!-- Code Integration Info -->
+            <div class="card">
+                <h2>Code Integration</h2>
+                <p style="font-size:0.8rem; margin-bottom: 0.4rem;">Mapping coordinates to Three.js meshes:</p>
+                <div class="code-container" id="code-snippet">
+// Update sphere positions in Three.js
+landmarks.forEach((pt, i) => {
+    spheres[i].position.set(pt[0], pt[1], pt[2]);
+});
+
+// Update bone cylinders programmatically
+updateBones();</div>
+            </div>
+        </div>
+
+        <!-- 3D Canvas and Viewport HUD -->
+        <div class="main-viewport">
+            <div id="canvas-container"></div>
+            
+            <!-- Viewport HUD Overlay -->
+            <div class="viewport-hud">
+                <div class="hud-item">
+                    <div class="hud-indicator" style="background: var(--x-axis)"></div>
+                    <span>Lateral (X Axis)</span>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-indicator" style="background: var(--y-axis)"></div>
+                    <span>Wrist-to-Middle (Y Axis)</span>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-indicator" style="background: var(--z-axis)"></div>
+                    <span>Palm Normal (Z Axis)</span>
+                </div>
+                <div class="hud-item" style="margin-top: 0.5rem;">
+                    <span style="color:var(--text-muted)">FPS:</span>
+                    <span id="fps-counter" style="color:var(--success); font-weight: 600;">60</span>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // Presets are loaded dynamically from validation_presets.json
+        // (real MediaPipe 3D world landmark data extracted from the validation dataset)
+        let presets = {};
+
+        // MediaPipe connections / topology
+        const bonesTopology = [
+            [0, 1], [1, 2], [2, 3], [3, 4],       // Thumb
+            [0, 5], [5, 6], [6, 7], [7, 8],       // Index
+            [0, 9], [9, 10], [10, 11], [11, 12],  // Middle
+            [0, 13], [13, 14], [14, 15], [15, 16], // Ring
+            [0, 17], [17, 18], [18, 19], [19, 20], // Pinky
+            [5, 9], [9, 13], [13, 17]              // Knuckle connections
+        ];
+
+        // Core variables
+        let scene, camera, renderer, controls;
+        let jointSpheres = [];
+        let boneCylinders = [];
+        let meshShell = null;
+        let gridHelper, axesHelper;
+        
+        let currentLandmarks = JSON.parse(JSON.stringify(presets.shaka));
+        let targetLandmarks = JSON.parse(JSON.stringify(presets.shaka));
+        let isTransitioning = false;
+        let transitionProgress = 0;
+        const transitionSpeed = 0.08; // Interpolation speed per frame
+        
+        let showSkeleton = false; // Default skeletal lines to OFF
+        let showNodes = false;    // Default joint spheres to OFF
+        let showAxes = true;
+        let canonicalAlignment = true;
+        let lastFrameTime = performance.now();
+        let frameCount = 0;
+        let activeScale = 0.25;   // Scale for Three.js rendering size conversion
+
+        // Initialize Three.js Scene
+        function initScene() {
+            const container = document.getElementById('canvas-container');
+            
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x0b0f19);
+            
+            // Fog for premium depth effect
+            scene.fog = new THREE.FogExp2(0x0b0f19, 0.4);
+
+            camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.01, 100);
+            camera.position.set(0.2, 0.25, 0.55);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            container.appendChild(renderer.domElement);
+
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.maxPolarAngle = Math.PI / 1.8;
+            controls.minDistance = 0.1;
+            controls.maxDistance = 2.0;
+
+            // Lighting Setup (Premium Cyber Aesthetic)
+            const ambientLight = new THREE.AmbientLight(0x1e293b, 1.8);
+            scene.add(ambientLight);
+
+            // Key Light (Indigo)
+            const keyLight = new THREE.DirectionalLight(0x818cf8, 2.5);
+            keyLight.position.set(1, 2, 1);
+            keyLight.castShadow = true;
+            keyLight.shadow.mapSize.width = 1024;
+            keyLight.shadow.mapSize.height = 1024;
+            scene.add(keyLight);
+
+            // Fill Light (Teal)
+            const fillLight = new THREE.DirectionalLight(0x2dd4bf, 1.2);
+            fillLight.position.set(-1, 0.5, 0.5);
+            scene.add(fillLight);
+
+            // Rim Light (Magenta/Pink glow from back)
+            const rimLight = new THREE.DirectionalLight(0xf472b6, 2.0);
+            rimLight.position.set(0, -1, -2);
+            scene.add(rimLight);
+
+            // Helpers
+            gridHelper = new THREE.GridHelper(1, 20, 0x334155, 0x1e293b);
+            gridHelper.position.y = -0.15;
+            scene.add(gridHelper);
+
+            axesHelper = new THREE.AxesHelper(0.15);
+            axesHelper.position.set(-0.15, -0.14, -0.15);
+            scene.add(axesHelper);
+
+            // Build the skeletal elements
+            createRigHand();
+
+            // Handle Resize
+            window.addEventListener('resize', onWindowResize);
+            
+            // Start Loop
+            animate();
+        }
+
+        // Create Hand Rig components (Spheres and bone connections)
+        function createRigHand() {
+            const sphereGeom = new THREE.SphereGeometry(1, 12, 12);
+            
+            // Cyber glowing node material
+            const nodeMat = new THREE.MeshPhysicalMaterial({
+                color: 0x6366f1,
+                emissive: 0x4f46e5,
+                emissiveIntensity: 0.8,
+                roughness: 0.1,
+                metalness: 0.1,
+                clearcoat: 1.0
+            });
+
+            // 1. Create spheres for all 21 joints
+            for (let i = 0; i < 21; i++) {
+                const sphere = new THREE.Mesh(sphereGeom, nodeMat);
+                sphere.castShadow = true;
+                sphere.receiveShadow = true;
+                
+                // Adjust scale for each sphere based on standard joint size
+                const size = getJointWeight(i) * 0.015;
+                sphere.scale.set(size, size, size);
+                sphere.visible = showNodes; // Hide by default
+                
+                scene.add(sphere);
+                jointSpheres.push(sphere);
+            }
+
+            // 2. Create bone cylinders connecting joints
+            const boneMat = new THREE.MeshPhysicalMaterial({
+                color: 0x38bdf8,
+                roughness: 0.4,
+                metalness: 0.8,
+                clearcoat: 0.5,
+                transmission: 0.2,
+                opacity: 0.8,
+                transparent: true
+            });
+
+            bonesTopology.forEach(() => {
+                const boneGeom = new THREE.CylinderGeometry(0.002, 0.002, 1, 6);
+                const bone = new THREE.Mesh(boneGeom, boneMat);
+                bone.visible = showSkeleton; // Hide by default
+                scene.add(bone);
+                boneCylinders.push(bone);
+            });
+
+            // 3. Create procedural continuous volumetric mesh shell
+            createHandShellMesh();
+
+            // Position components initially
+            updateRigPositions();
+        }
+
+        // Create the beautiful mesh shell (low-poly skin) that wraps around the key joints
+        function createHandShellMesh() {
+            if (meshShell) scene.remove(meshShell);
+
+            const shellGeom = new THREE.BufferGeometry();
+            
+            // Premium Volumetric Mesh Material
+            const shellMat = new THREE.MeshPhysicalMaterial({
+                color: 0x6366f1,
+                emissive: 0x312e81,
+                emissiveIntensity: 0.18,
+                roughness: 0.15,
+                metalness: 0.25,
+                transmission: 0.35, // Glassmorphic cybernetic shell!
+                opacity: 0.85,
+                transparent: true,
+                side: THREE.DoubleSide,
+                flatShading: true, // Key for solid low-poly polygon aesthetic
+                clearcoat: 1.0,
+                clearcoatRoughness: 0.1
+            });
+
+            meshShell = new THREE.Mesh(shellGeom, shellMat);
+            meshShell.castShadow = true;
+            meshShell.receiveShadow = true;
+            scene.add(meshShell);
+        }
+
+        // Relative thickness weighting for nodes (knuckles are larger than fingertips)
+        function getJointWeight(i) {
+            if (i === 0) return 1.4; // Wrist
+            if ([1, 5, 9, 13, 17].includes(i)) return 1.1; // MCP / Knuckles
+            if ([2, 6, 10, 14, 18].includes(i)) return 0.9; // PIP
+            if ([3, 7, 11, 15, 19].includes(i)) return 0.75; // DIP
+            return 0.6; // Tips
+        }
+
+        // Procedural Volumetric Hand Skinned Mesh Weaver
+        // Weaves solid low-poly cylinders along the fingers and a thick 3D polyhedron for the palm
+        function rebuildVolumetricHandMesh() {
+            const vertices = [];
+            const indices = [];
+            
+            // Convert current coordinate scale to world-space vectors
+            const pts = currentLandmarks.map(pt => new THREE.Vector3(
+                pt[0] * activeScale,
+                pt[1] * activeScale,
+                pt[2] * activeScale
+            ));
+            
+            // Helper to push a vertex and return its buffer index
+            function addVertex(v) {
+                vertices.push(v.x, v.y, v.z);
+                return (vertices.length / 3) - 1;
+            }
+            
+            // 1. Weave 3D Volumetric Fingers (Thumb, Index, Middle, Ring, Pinky)
+            const fingerPaths = [
+                [1, 2, 3, 4],       // Thumb
+                [5, 6, 7, 8],       // Index
+                [9, 10, 11, 12],    // Middle
+                [13, 14, 15, 16],   // Ring
+                [17, 18, 19, 20]    // Pinky
+            ];
+            
+            // Relative thickness radii for each joint along the paths
+            const jointRadii = {
+                1: 0.045, 2: 0.040, 3: 0.035, 4: 0.030, // Thumb (slightly thicker)
+                5: 0.042, 6: 0.036, 7: 0.032, 8: 0.026, // Index
+                9: 0.044, 10: 0.038, 11: 0.033, 12: 0.026, // Middle
+                13: 0.042, 14: 0.036, 15: 0.031, 16: 0.025, // Ring
+                17: 0.038, 18: 0.032, 19: 0.028, 20: 0.022  // Pinky
+            };
+            
+            const N = 6; // 6-sided hexagonal low-poly tube
+            
+            fingerPaths.forEach(path => {
+                const ringIndices = []; // Holds index of vertices in each joint's ring
+                
+                for (let j = 0; j < path.length; j++) {
+                    const currentIdx = path[j];
+                    const pCurrent = pts[currentIdx];
+                    
+                    // Compute local bone direction vector
+                    let vDir = new THREE.Vector3();
+                    if (j === 0) {
+                        vDir.subVectors(pts[path[1]], pCurrent);
+                    } else if (j === path.length - 1) {
+                        vDir.subVectors(pCurrent, pts[path[j - 1]]);
+                    } else {
+                        const d1 = new THREE.Vector3().subVectors(pCurrent, pts[path[j - 1]]);
+                        const d2 = new THREE.Vector3().subVectors(pts[path[j + 1]], pCurrent);
+                        vDir.addVectors(d1.normalize(), d2.normalize());
+                    }
+                    vDir.normalize();
+                    
+                    // Find perpendicular orthonormal vector basis
+                    const vA = Math.abs(vDir.x) < 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+                    const vU = new THREE.Vector3().crossVectors(vDir, vA).normalize();
+                    const vV = new THREE.Vector3().crossVectors(vDir, vU).normalize();
+                    
+                    const r = jointRadii[currentIdx] * activeScale;
+                    
+                    // Generate 6 ring vertices around the joint
+                    const currentRing = [];
+                    for (let k = 0; k < N; k++) {
+                        const theta = (2 * Math.PI * k) / N;
+                        const offset = new THREE.Vector3()
+                            .addScaledVector(vU, Math.cos(theta))
+                            .addScaledVector(vV, Math.sin(theta))
+                            .multiplyScalar(r);
+                        const vPos = new THREE.Vector3().addVectors(pCurrent, offset);
+                        
+                        currentRing.push(addVertex(vPos));
+                    }
+                    ringIndices.push(currentRing);
+                }
+                
+                // Connect joint rings with faces (quads)
+                for (let j = 0; j < path.length - 1; j++) {
+                    const r1 = ringIndices[j];
+                    const r2 = ringIndices[j + 1];
+                    
+                    for (let k = 0; k < N; k++) {
+                        const kNext = (k + 1) % N;
+                        const a = r1[k];
+                        const b = r1[kNext];
+                        const c = r2[kNext];
+                        const d = r2[k];
+                        
+                        indices.push(a, b, c);
+                        indices.push(a, c, d);
+                    }
+                }
+                
+                // Close finger tip cap with a dome
+                const lastIdx = path[path.length - 1];
+                const pLast = pts[lastIdx];
+                const vLastDir = new THREE.Vector3().subVectors(pLast, pts[path[path.length - 2]]).normalize();
+                const rLast = jointRadii[lastIdx] * activeScale;
+                const pTip = new THREE.Vector3().addScaledVector(vLastDir, rLast).add(pLast);
+                
+                const tipIdx = addVertex(pTip);
+                const lastRing = ringIndices[ringIndices.length - 1];
+                for (let k = 0; k < N; k++) {
+                    const kNext = (k + 1) % N;
+                    indices.push(lastRing[k], lastRing[kNext], tipIdx);
+                }
+                
+                // Close finger base cap
+                const pBase = pts[path[0]];
+                const vBaseDir = new THREE.Vector3().subVectors(pts[path[1]], pBase).normalize();
+                const rBase = jointRadii[path[0]] * activeScale;
+                const pBaseCap = new THREE.Vector3().addScaledVector(vBaseDir, -rBase * 0.5).add(pBase);
+                
+                const baseCapIdx = addVertex(pBaseCap);
+                const firstRing = ringIndices[0];
+                for (let k = 0; k < N; k++) {
+                    const kNext = (k + 1) % N;
+                    indices.push(firstRing[kNext], firstRing[k], baseCapIdx);
+                }
+            });
+            
+            // 2. Weave 3D Volumetric Palm (Wrist 0, Thumb 1, Knuckles 5, 9, 13, 17)
+            const palmJoints = [0, 1, 5, 9, 13, 17];
+            
+            // Calculate robust palm normal vector
+            const vUp = new THREE.Vector3().subVectors(pts[9], pts[0]).normalize();
+            const vSide = new THREE.Vector3().subVectors(pts[5], pts[0]).normalize();
+            const vNormal = new THREE.Vector3().crossVectors(vUp, vSide).normalize();
+            
+            // Palm physical depth thickness
+            const palmHalfThickness = 0.05 * activeScale;
+            
+            const frontIndices = [];
+            const backIndices = [];
+            
+            palmJoints.forEach(jIdx => {
+                const pJ = pts[jIdx];
+                
+                // Shift forward to create front face of palm
+                const pFront = new THREE.Vector3().addScaledVector(vNormal, palmHalfThickness).add(pJ);
+                frontIndices.push(addVertex(pFront));
+                
+                // Shift backward to create back face of palm
+                const pBack = new THREE.Vector3().addScaledVector(vNormal, -palmHalfThickness).add(pJ);
+                backIndices.push(addVertex(pBack));
+            });
+            
+            // Connect front palm face (triangulated polygon mesh)
+            indices.push(frontIndices[0], frontIndices[1], frontIndices[2]);
+            indices.push(frontIndices[0], frontIndices[2], frontIndices[3]);
+            indices.push(frontIndices[0], frontIndices[3], frontIndices[4]);
+            indices.push(frontIndices[0], frontIndices[4], frontIndices[5]);
+            
+            // Connect back palm face (reversed winding for correct outer normals)
+            indices.push(backIndices[0], backIndices[2], backIndices[1]);
+            indices.push(backIndices[0], backIndices[3], backIndices[2]);
+            indices.push(backIndices[0], backIndices[4], backIndices[3]);
+            indices.push(backIndices[0], backIndices[5], backIndices[4]);
+            
+            // Connect front and back boundaries with side wall quads
+            const pLen = palmJoints.length;
+            for (let i = 0; i < pLen; i++) {
+                const next = (i + 1) % pLen;
+                
+                const fCurrent = frontIndices[i];
+                const fNext = frontIndices[next];
+                const bCurrent = backIndices[i];
+                const bNext = backIndices[next];
+                
+                indices.push(fCurrent, bCurrent, bNext);
+                indices.push(fCurrent, bNext, fNext);
+            }
+            
+            return { vertices, indices };
+        }
+
+        // Update positions of cylinders & shell triangles based on the current landmark array
+        function updateRigPositions() {
+            // 1. Update sphere positions (knuckles)
+            currentLandmarks.forEach((pt, i) => {
+                const scaledX = pt[0] * activeScale;
+                const scaledY = pt[1] * activeScale;
+                const scaledZ = pt[2] * activeScale;
+                
+                jointSpheres[i].position.set(scaledX, scaledY, scaledZ);
+                jointSpheres[i].visible = showNodes;
+            });
+
+            // 2. Update bone cylinder scales, orientations, and positions
+            bonesTopology.forEach((pair, idx) => {
+                const p1 = jointSpheres[pair[0]].position;
+                const p2 = jointSpheres[pair[1]].position;
+
+                const distance = p1.distanceTo(p2);
+                const cylinder = boneCylinders[idx];
+
+                // Position cylinder midway between joints
+                cylinder.position.copy(p1).add(p2).multiplyScalar(0.5);
+
+                // Point cylinder from p1 to p2
+                const direction = new THREE.Vector3().subVectors(p2, p1).normalize();
+
+                // Rotate cylinder to align with direction vector
+                const alignAxis = new THREE.Vector3(0, 1, 0); // Standard cylinder points up Y
+                const quaternion = new THREE.Quaternion().setFromUnitVectors(alignAxis, direction);
+                cylinder.quaternion.copy(quaternion);
+
+                // Set cylinder height dynamically based on joint distance
+                cylinder.scale.set(1, distance, 1);
+                cylinder.visible = showSkeleton;
+            });
+
+            // 3. Procedural skinning: rebuild and update the solid 3D volumetric skinned hand mesh
+            if (meshShell) {
+                const { vertices, indices } = rebuildVolumetricHandMesh();
+                
+                // Clear old geometry structure from memory to prevent leaks
+                meshShell.geometry.dispose();
+                
+                const newGeom = new THREE.BufferGeometry();
+                newGeom.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+                newGeom.setIndex(indices);
+                newGeom.computeVertexNormals();
+                
+                meshShell.geometry = newGeom;
+            }
+        }
+
+        // Loop animation: interpolate current landmarks toward target landmarks
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Dynamic FPS Counter
+            const time = performance.now();
+            frameCount++;
+            if (time > lastFrameTime + 1000) {
+                document.getElementById('fps-counter').innerText = Math.round((frameCount * 1000) / (time - lastFrameTime));
+                frameCount = 0;
+                lastFrameTime = time;
+            }
+
+            // Interpolation between presets
+            if (isTransitioning) {
+                let differences = 0;
+                for (let i = 0; i < 21; i++) {
+                    for (let c = 0; c < 3; c++) {
+                        const delta = targetLandmarks[i][c] - currentLandmarks[i][c];
+                        currentLandmarks[i][c] += delta * transitionSpeed;
+                        differences += Math.abs(delta);
+                    }
+                }
+                
+                updateRigPositions();
+
+                // Stop transitioning once very close
+                if (differences < 0.005) {
+                    isTransitioning = false;
+                    // Snap exactly to target
+                    currentLandmarks = JSON.parse(JSON.stringify(targetLandmarks));
+                    updateRigPositions();
+                }
+            }
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        // Trigger transition to a new gesture preset
+        function loadPreset(key) {
+            // Update button styles in side panel
+            const btns = document.querySelectorAll('.btn-group .btn');
+            btns.forEach(btn => {
+                btn.classList.remove('active');
+                if (btn.innerText.toLowerCase().includes(key.replace('_', ' ')) || 
+                    (key === 'shaka' && btn.innerText.includes('Y')) ||
+                    (key === 'fist_a' && btn.innerText.includes('A')) ||
+                    (key === 'flat_b' && btn.innerText.includes('B')) ||
+                    (key === 'curve_c' && btn.innerText.includes('C')) ||
+                    (key === 'pointer_d' && btn.innerText.includes('D'))
+                ) {
+                    btn.classList.add('active');
+                }
+            });
+
+            const originalPreset = presets[key];
+            if (!originalPreset) return;
+
+            if (canonicalAlignment) {
+                targetLandmarks = JSON.parse(JSON.stringify(originalPreset));
+            } else {
+                // Apply a mock arbitrary camera rotation to show "unaligned" state
+                targetLandmarks = deAlignLandmarks(originalPreset);
+            }
+
+            isTransitioning = true;
+        }
+
+        // De-align standard coordinates using a mock camera perspective (simulates a tilted raw capture)
+        function deAlignLandmarks(standardPts) {
+            // Rotate 45deg on X and -30deg on Y, add random wrist translation
+            const rx = Math.PI / 4;
+            const ry = -Math.PI / 6;
+            
+            const cosX = Math.cos(rx), sinX = Math.sin(rx);
+            const cosY = Math.cos(ry), sinY = Math.sin(ry);
+            
+            // Tilted rotation matrices
+            const Rx = [[1, 0, 0], [0, cosX, -sinX], [0, sinX, cosX]];
+            const Ry = [[cosY, 0, sinY], [0, 1, 0], [-sinY, 0, cosY]];
+
+            return standardPts.map(pt => {
+                // Shift wrist away from origin to simulate distance
+                const shifted = [pt[0] - 0.1, pt[1] - 0.15, pt[2] + 0.35];
+                
+                // Rotate pt by Rx * Ry
+                let yRot = [
+                    Ry[0][0]*shifted[0] + Ry[0][1]*shifted[1] + Ry[0][2]*shifted[2],
+                    Ry[1][0]*shifted[0] + Ry[1][1]*shifted[1] + Ry[1][2]*shifted[2],
+                    Ry[2][0]*shifted[0] + Ry[2][1]*shifted[1] + Ry[2][2]*shifted[2]
+                ];
+                
+                let xRot = [
+                    Rx[0][0]*yRot[0] + Rx[0][1]*yRot[1] + Rx[0][2]*yRot[2],
+                    Rx[1][0]*yRot[0] + Rx[1][1]*yRot[1] + Rx[1][2]*yRot[2],
+                    Rx[2][0]*yRot[0] + Rx[2][1]*yRot[1] + Rx[2][2]*yRot[2]
+                ];
+                
+                return xRot;
+            });
+        }
+
+        // Interactive Toggle Alignment
+        function toggleAlignment(checked) {
+            canonicalAlignment = checked;
+            // Reload current active preset to re-render
+            const activeBtn = document.querySelector('.btn-group .btn.active');
+            if (activeBtn) {
+                let name = activeBtn.innerText.toLowerCase();
+                if (name.includes('y')) name = 'shaka';
+                else if (name.includes('i love you')) name = 'i_love_you';
+                else if (name.includes('a')) name = 'fist_a';
+                else if (name.includes('b')) name = 'flat_b';
+                else if (name.includes('c')) name = 'curve_c';
+                else if (name.includes('d')) name = 'pointer_d';
+                loadPreset(name);
+            }
+        }
+
+        function toggleAxes(checked) {
+            axesHelper.visible = checked;
+            gridHelper.visible = checked;
+        }
+
+        function toggleSkeleton(checked) {
+            showSkeleton = checked;
+            boneCylinders.forEach(b => b.visible = checked);
+        }
+
+        function toggleNodes(checked) {
+            showNodes = checked;
+            jointSpheres.forEach(s => s.visible = checked);
+        }
+
+        function updateNodeSize(val) {
+            document.getElementById('node-size-val').innerText = val + 'm';
+            jointSpheres.forEach((sphere, i) => {
+                const baseWeight = getJointWeight(i);
+                const standardScale = baseWeight * val * (1 / 0.015);
+                sphere.scale.set(standardScale, standardScale, standardScale);
+            });
+        }
+
+        function updateMeshOpacity(val) {
+            document.getElementById('opacity-val').innerText = val;
+            if (meshShell) {
+                meshShell.material.opacity = val;
+                meshShell.material.needsUpdate = true;
+            }
+        }
+
+
+        // Handle Drag & Drop files
+        const dropzone = document.getElementById('dropzone');
+
+        dropzone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropzone.classList.add('dragover');
+        });
+
+        dropzone.addEventListener('dragleave', () => {
+            dropzone.classList.remove('dragover');
+        });
+
+        dropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropzone.classList.remove('dragover');
+            
+            const file = e.dataTransfer.files[0];
+            if (file && file.name.endsWith('.json')) {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    try {
+                        const data = JSON.parse(event.target.result);
+                        let coords = null;
+                        
+                        // Parse coordinates generated from extract_world_landmarks.py
+                        if (data.normalized_landmarks) {
+                            coords = data.normalized_landmarks;
+                        } else if (data.landmarks) {
+                            // Extract landmarks if it is a flat list
+                            coords = [];
+                            for(let i=0; i<data.landmarks.length; i+=5) {
+                                coords.push([data.landmarks[i], data.landmarks[i+1], data.landmarks[i+2]]);
+                            }
+                        } else if (Array.isArray(data)) {
+                            coords = data;
+                        }
+                        
+                        if (coords && coords.length === 21) {
+                            targetLandmarks = coords;
+                            isTransitioning = true;
+                            
+                            // Highlight custom import
+                            const btns = document.querySelectorAll('.btn-group .btn');
+                            btns.forEach(btn => btn.classList.remove('active'));
+                            
+                            dropzone.querySelector('p').innerText = "Loaded: " + file.name;
+                            dropzone.style.borderColor = "var(--success)";
+                        } else {
+                            alert("Invalid JSON: Must contain a list of 21 3D coordinates.");
+                        }
+                    } catch (err) {
+                        alert("Error parsing JSON file: " + err.message);
+                    }
+                };
+                reader.readAsText(file);
+            } else {
+                alert("Please drop a valid .json file.");
+            }
+        });
+
+        function onWindowResize() {
+            const container = document.getElementById('canvas-container');
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        }
+
+        // Populate sidebar buttons dynamically from the loaded presets
+        function buildPresetButtons() {
+            const container = document.getElementById('preset-buttons');
+            container.innerHTML = '';
+            
+            // Sort keys alphabetically (single letters first, then multi-char)
+            const keys = Object.keys(presets).sort((a, b) => {
+                if (a.length === 1 && b.length > 1) return -1;
+                if (a.length > 1 && b.length === 1) return 1;
+                return a.localeCompare(b);
+            });
+            
+            keys.forEach((key, idx) => {
+                const btn = document.createElement('button');
+                btn.className = 'btn' + (idx === 0 ? ' active' : '');
+                btn.textContent = key;
+                btn.onclick = () => loadPreset(key);
+                container.appendChild(btn);
+            });
+            
+            return keys;
+        }
+
+        // Initialize on load: fetch real data, then build scene
+        window.onload = async () => {
+            try {
+                const resp = await fetch('validation_presets.json');
+                if (resp.ok) {
+                    presets = await resp.json();
+                    console.log(`Loaded ${Object.keys(presets).length} real MediaPipe presets from validation_presets.json`);
+                } else {
+                    console.warn('Could not load validation_presets.json, using empty presets');
+                }
+            } catch (e) {
+                console.warn('Failed to fetch validation_presets.json:', e);
+            }
+            
+            // Build dynamic buttons from whatever presets we have
+            const keys = buildPresetButtons();
+            
+            // Set initial landmark state from the first available preset
+            if (keys.length > 0) {
+                currentLandmarks = JSON.parse(JSON.stringify(presets[keys[0]]));
+                targetLandmarks = JSON.parse(JSON.stringify(presets[keys[0]]));
+            }
+            
+            initScene();
+            
+            if (keys.length > 0) {
+                loadPreset(keys[0]);
+            }
+        };
+    </script>
+</body>
+</html>

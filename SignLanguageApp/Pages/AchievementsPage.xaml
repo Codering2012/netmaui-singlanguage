@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:SignLanguageApp.ViewModels"
+             xmlns:model="clr-namespace:SignLanguageApp.Model"
+             x:Class="SignLanguageApp.Pages.AchievementsPage"
+             x:DataType="vm:AchievementsViewModel"
+             Title="Trophy Room"
+             Background="{DynamicResource PageGradient}">
+
+    <Grid RowDefinitions="Auto, *">
+        <!-- Header & Progress -->
+        <VerticalStackLayout Grid.Row="0">
+            <HorizontalStackLayout Padding="20,25,20,10" Spacing="15" VerticalOptions="Center">
+                <ImageButton Source="back_arrow.png" 
+                             Command="{Binding GoBackCommand}" 
+                             HeightRequest="44" WidthRequest="44"
+                             BackgroundColor="Transparent"
+                             VerticalOptions="Center"/>
+                <Label Text="Your Achievements" FontSize="28" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" VerticalOptions="Center"/>
+            </HorizontalStackLayout>
+                
+            <Border StrokeThickness="0" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 20" Padding="20" Margin="20,0,20,10">
+                <Grid ColumnDefinitions="*, Auto" RowDefinitions="Auto, Auto" RowSpacing="10">
+                    <Label Text="{Binding UnlockedCount, StringFormat='{0} Badges Unlocked'}" FontSize="18" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+                    <Label Grid.Column="1" Text="{Binding Progress, StringFormat='{0:P0}'}" FontSize="18" FontAttributes="Bold" TextColor="{DynamicResource PrimaryColor}" />
+                    
+                    <ProgressBar Grid.Row="1" Grid.ColumnSpan="2" Progress="{Binding Progress}" ProgressColor="{DynamicResource PrimaryColor}" HeightRequest="10" />
+                </Grid>
+            </Border>
+        </VerticalStackLayout>
+
+        <!-- Achievements Grid -->
+        <ScrollView Grid.Row="1" Margin="10,10,10,20">
+            <FlexLayout BindableLayout.ItemsSource="{Binding Achievements}" 
+                        Wrap="Wrap" 
+                        JustifyContent="SpaceAround" 
+                        AlignContent="Start" 
+                        AlignItems="Start">
+                <BindableLayout.ItemTemplate>
+                    <DataTemplate x:DataType="model:AchievementBadgeDto">
+                        <VerticalStackLayout WidthRequest="110" Margin="10" Spacing="8" Opacity="{Binding IsUnlocked, Converter={StaticResource BooleanToOpacityConverter}}">
+                            <Border WidthRequest="100" 
+                                    HeightRequest="100" 
+                                    StrokeShape="RoundRectangle 50" 
+                                    StrokeThickness="4" 
+                                    Stroke="{Binding ColorBrush}" 
+                                    BackgroundColor="White">
+                                <Label Text="{Binding Icon}" FontSize="48" HorizontalOptions="Center" VerticalOptions="Center" />
+                            </Border>
+                            <Label Text="{Binding Title}" FontSize="14" FontAttributes="Bold" HorizontalTextAlignment="Center" TextColor="{DynamicResource PrimaryTextColor}" MaxLines="2" />
+                            <Label Text="{Binding Description}" FontSize="10" HorizontalTextAlignment="Center" TextColor="{DynamicResource SecondaryTextColor}" MaxLines="2" />
+                        </VerticalStackLayout>
+                    </DataTemplate>
+                </BindableLayout.ItemTemplate>
+            </FlexLayout>
+        </ScrollView>
+
+        <ActivityIndicator Grid.RowSpan="2" IsVisible="{Binding IsBusy}" IsRunning="{Binding IsBusy}" Color="{DynamicResource PrimaryColor}" HorizontalOptions="Center" VerticalOptions="Center" />
+    </Grid>
+</ContentPage>

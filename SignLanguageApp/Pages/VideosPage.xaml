@@ -3,11 +3,12 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              xmlns:vm="clr-namespace:SignLanguageApp.ViewModels"
              xmlns:helpers="clr-namespace:SignLanguageApp.Helpers"
+             xmlns:controls="clr-namespace:SignLanguageApp.Controls"
              x:Class="SignLanguageApp.Pages.VideosPage"
              x:DataType="vm:VideoViewModel"
              Shell.NavBarIsVisible="False"
              Title="Videos"
-             BackgroundColor="{StaticResource ColorBackgroundDark}">
+             BackgroundColor="Transparent">
 
     <ContentPage.Resources>
         <helpers:StringIsNullOrEmptyConverter x:Key="StringIsNullOrEmptyConverter" />
@@ -17,138 +18,184 @@
         <helpers:CountToVisibilityConverter x:Key="CountToVisibilityConverter" />
     </ContentPage.Resources>
 
-    <Grid>
-        <ScrollView>
-            <VerticalStackLayout Spacing="16" Padding="16,10,16,24">
+    <controls:MainLayout>
+        <Grid>
+            <ScrollView>
+                <VerticalStackLayout Spacing="20" Padding="20,20,20,120">
 
-                <Border StrokeThickness="0" Background="#123247" StrokeShape="RoundRectangle 20" Padding="18">
-                    <VerticalStackLayout Spacing="8">
-                        <Label Text="Video library" FontSize="28" FontAttributes="Bold" TextColor="White" />
-                        <Label Text="Watch short explainers and full lesson walkthroughs" FontSize="13" TextColor="#BBD5E8" />
+                    <Border StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 24" Padding="24">
+                        <Border.Shadow>
+                            <Shadow Brush="Black" Offset="0,6" Radius="15" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                        </Border.Shadow>
+                        <VerticalStackLayout Spacing="8">
+                            <Label Text="Video library" FontSize="32" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+                            <Label Text="Watch short explainers and full lesson walkthroughs" FontSize="14" TextColor="{DynamicResource SecondaryTextColor}" />
+                        </VerticalStackLayout>
+                    </Border>
+
+                    <Border StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 16" Padding="15">
+                        <Border.Shadow>
+                            <Shadow Brush="Black" Offset="0,4" Radius="10" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                        </Border.Shadow>
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                            <Entry Grid.Column="0"
+                                   Text="{Binding SearchQuery}"
+                                   Placeholder="Search by title or description"
+                                   PlaceholderColor="{DynamicResource InputPlaceholderColor}"
+                                   TextColor="{DynamicResource PrimaryTextColor}"
+                                   BackgroundColor="Transparent"
+                                   ReturnType="Search" />
+                            <Button Grid.Column="1"
+                                    Text="Search"
+                                    Command="{Binding SearchVideosCommand}"
+                                    BackgroundColor="{DynamicResource PrimaryColor}"
+                                    TextColor="{DynamicResource ButtonTextColor}"
+                                    FontAttributes="Bold"
+                                    FontSize="14"
+                                    CornerRadius="12"
+                                    Padding="16,10" />
+                        </Grid>
+                    </Border>
+
+                    <VerticalStackLayout Spacing="12">
+                        <Label Text="Categories" FontSize="18" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+                        <CollectionView ItemsSource="{Binding Categories}" SelectionMode="Single" SelectedItem="{Binding SelectedCategory}" HeightRequest="60">
+                            <CollectionView.ItemsLayout>
+                                <LinearItemsLayout Orientation="Horizontal" ItemSpacing="10" />
+                            </CollectionView.ItemsLayout>
+                            <CollectionView.ItemTemplate>
+                                <DataTemplate x:DataType="x:String">
+                                    <Border StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource SecondaryBackgroundColor}" StrokeShape="RoundRectangle 999" Padding="16,10">
+                                        <HorizontalStackLayout Spacing="8">
+                                            <Label Text="{Binding ., Converter={StaticResource CategoryToEmojiConverter}}" FontSize="14" TextColor="{DynamicResource SecondaryTextColor}" VerticalOptions="Center" />
+                                            <Label Text="{Binding .}" FontSize="14" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" VerticalOptions="Center" />
+                                        </HorizontalStackLayout>
+                                    </Border>
+                                </DataTemplate>
+                            </CollectionView.ItemTemplate>
+                        </CollectionView>
                     </VerticalStackLayout>
-                </Border>
 
-                <Border StrokeThickness="0" Background="#10283B" StrokeShape="RoundRectangle 14" Padding="12">
-                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
-                        <Entry Grid.Column="0"
-                               Text="{Binding SearchQuery}"
-                               Placeholder="Search by title or description"
-                               PlaceholderColor="#87A7BE"
-                               TextColor="White"
-                               BackgroundColor="Transparent"
-                               ReturnType="Search" />
-                        <Button Grid.Column="1"
-                                Text="Search"
-                                Command="{Binding SearchVideosCommand}"
-                                BackgroundColor="{StaticResource Primary}"
-                                TextColor="White"
-                                FontAttributes="Bold"
-                                FontSize="12"
-                                Padding="14,8" />
-                    </Grid>
-                </Border>
+                    <Label Text="{Binding TotalVideos, StringFormat='Results: {0}'}" FontSize="14" FontAttributes="Bold" TextColor="{DynamicResource SecondaryTextColor}" />
 
-                <VerticalStackLayout Spacing="8">
-                    <Label Text="Categories" FontSize="14" FontAttributes="Bold" TextColor="White" />
-                    <CollectionView ItemsSource="{Binding Categories}" SelectionMode="Single" SelectedItem="{Binding SelectedCategory}">
-                        <CollectionView.ItemsLayout>
-                            <LinearItemsLayout Orientation="Horizontal" ItemSpacing="8" />
-                        </CollectionView.ItemsLayout>
+                    <CollectionView ItemsSource="{Binding Videos}" SelectionMode="None" HeightRequest="500">
                         <CollectionView.ItemTemplate>
-                            <DataTemplate x:DataType="x:String">
-                                <Border StrokeThickness="0" Background="#0D2133" StrokeShape="RoundRectangle 999" Padding="12,7">
-                                    <HorizontalStackLayout Spacing="6">
-                                        <Label Text="{Binding ., Converter={StaticResource CategoryToEmojiConverter}}" FontSize="10" TextColor="#A1C1D6" VerticalOptions="Center" />
-                                        <Label Text="{Binding .}" FontSize="12" FontAttributes="Bold" TextColor="White" VerticalOptions="Center" />
-                                    </HorizontalStackLayout>
-                                </Border>
-                            </DataTemplate>
-                        </CollectionView.ItemTemplate>
-                    </CollectionView>
-                </VerticalStackLayout>
-
-                <Label Text="{Binding TotalVideos, StringFormat='Results: {0}'}" FontSize="12" TextColor="#8FAEC4" />
-
-                <CollectionView ItemsSource="{Binding Videos}" SelectionMode="None">
-                    <CollectionView.ItemTemplate>
-                        <DataTemplate x:DataType="vm:VideoItem">
-                            <Border StrokeThickness="0" Background="#0E2133" StrokeShape="RoundRectangle 14" Padding="12" Margin="0,0,0,10">
-                                <VerticalStackLayout Spacing="10">
-                                    <Border StrokeThickness="0" Background="#17324B" StrokeShape="RoundRectangle 10" HeightRequest="170">
+                                <DataTemplate x:DataType="vm:VideoItem">
+                                    <Border x:Name="VideoBorder" StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 20" Margin="0,0,0,16">
+                                        <Border.Shadow>
+                                            <Shadow Brush="Black" Offset="0,4" Radius="12" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                                        </Border.Shadow>
+                                        <Border.GestureRecognizers>
+                                            <PointerGestureRecognizer />
+                                            <TapGestureRecognizer Tapped="OnVideoTapped" Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.WatchVideoCommand}" CommandParameter="{Binding .}" />
+                                        </Border.GestureRecognizers>
                                         <Grid>
-                                            <Image Source="{Binding ThumbnailUrl}" Aspect="AspectFill" />
-                                            <BoxView BackgroundColor="#60000000" />
-                                            <Label Text="PLAY" HorizontalOptions="Center" VerticalOptions="Center" FontAttributes="Bold" FontSize="14" TextColor="White" />
-                                            <Border HorizontalOptions="End" VerticalOptions="End" Margin="8" Padding="8,4" StrokeThickness="0" Background="#AA000000" StrokeShape="RoundRectangle 6">
-                                                <Label Text="{Binding DurationSeconds, StringFormat='{0:F0}s'}" FontSize="10" TextColor="White" />
-                                            </Border>
+                                            <VerticalStackLayout Spacing="12" Padding="16">
+                                                <Border StrokeThickness="0" BackgroundColor="{DynamicResource SecondaryBackgroundColor}" StrokeShape="RoundRectangle 14" HeightRequest="180">
+                                                    <Grid>
+                                                        <Image Source="{Binding ThumbnailUrl}" Aspect="AspectFill" />
+                                                        <BoxView BackgroundColor="#30000000" />
+                                                        <Label Text="PLAY" HorizontalOptions="Center" VerticalOptions="Center" FontAttributes="Bold" FontSize="16" TextColor="White" />
+                                                        <Border HorizontalOptions="End" VerticalOptions="End" Margin="10" Padding="8,4" StrokeThickness="0" BackgroundColor="#AA000000" StrokeShape="RoundRectangle 8">
+                                                            <Label Text="{Binding DurationSeconds, StringFormat='{0:F0}s'}" FontSize="11" FontAttributes="Bold" TextColor="White" />
+                                                        </Border>
+                                                    </Grid>
+                                                </Border>
+
+                                                <VerticalStackLayout Spacing="4">
+                                                    <Label Text="{Binding Title}" FontSize="16" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" MaxLines="2" LineBreakMode="TailTruncation" />
+                                                    <Label Text="{Binding Description}" FontSize="14" TextColor="{DynamicResource SecondaryTextColor}" MaxLines="2" LineBreakMode="TailTruncation" />
+                                                    <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="10" Margin="0,4,0,0">
+                                                        <Label Grid.Column="0" Text="{Binding Category}" FontSize="12" FontAttributes="Bold" TextColor="{DynamicResource SecondaryColor}" VerticalOptions="Center"/>
+                                                        <Label Grid.Column="1" Text="|" FontSize="12" TextColor="{DynamicResource SecondaryTextColor}" VerticalOptions="Center"/>
+                                                        <Label Grid.Column="2" Text="{Binding ViewCount, StringFormat='{0:N0} views'}" FontSize="12" TextColor="{DynamicResource SecondaryTextColor}" VerticalOptions="Center"/>
+                                                    </Grid>
+                                                </VerticalStackLayout>
+
+                                                <Grid ColumnDefinitions="*,*,*" ColumnSpacing="12" Margin="0,6,0,0">
+                                                    <Button Grid.Column="0"
+                                                            Text="Watch"
+                                                            Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.WatchVideoCommand}"
+                                                            CommandParameter="{Binding .}"
+                                                            BackgroundColor="{DynamicResource PrimaryColor}"
+                                                            TextColor="{DynamicResource ButtonTextColor}"
+                                                            FontSize="12"
+                                                            CornerRadius="10"
+                                                            FontAttributes="Bold"
+                                                            Padding="12,8" />
+                                                    <Button Grid.Column="1"
+                                                            Text="Like"
+                                                            Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.LikeVideoCommand}"
+                                                            CommandParameter="{Binding .}"
+                                                            BackgroundColor="{Binding IsLiked, Converter={StaticResource BoolToColorConverter}}"
+                                                            TextColor="White"
+                                                            FontSize="12"
+                                                            CornerRadius="10"
+                                                            FontAttributes="Bold"
+                                                            Padding="12,8" />
+                                                    <Button Grid.Column="2"
+                                                            Text="Share"
+                                                            Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.ShareVideoCommand}"
+                                                            CommandParameter="{Binding .}"
+                                                            BackgroundColor="{DynamicResource SecondaryBackgroundColor}"
+                                                            TextColor="{DynamicResource PrimaryTextColor}"
+                                                            FontSize="12"
+                                                            CornerRadius="10"
+                                                            FontAttributes="Bold"
+                                                            Padding="12,8" />
+                                                </Grid>
+                                            </VerticalStackLayout>
+                                            
+                                            <!-- Interactive Download Button -->
+                                            <Button Text="⬇️ Download" 
+                                                    Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.DownloadVideoCommand}"
+                                                    CommandParameter="{Binding .}"
+                                                    Opacity="0.6"
+                                                    BackgroundColor="#80000000"
+                                                    TextColor="White"
+                                                    FontSize="12"
+                                                    HeightRequest="32"
+                                                    Padding="12,0"
+                                                    CornerRadius="16"
+                                                    HorizontalOptions="End"
+                                                    VerticalOptions="Start"
+                                                    Margin="12">
+                                                <Button.Triggers>
+                                                    <DataTrigger TargetType="Button" Binding="{Binding IsDownloaded}" Value="True">
+                                                        <Setter Property="IsVisible" Value="False" />
+                                                    </DataTrigger>
+                                                </Button.Triggers>
+                                            </Button>
                                         </Grid>
                                     </Border>
+                                </DataTemplate>
+                        </CollectionView.ItemTemplate>
+                    </CollectionView>
 
-                                    <VerticalStackLayout Spacing="3">
-                                        <Label Text="{Binding Title}" FontSize="14" FontAttributes="Bold" TextColor="White" MaxLines="2" LineBreakMode="TailTruncation" />
-                                        <Label Text="{Binding Description}" FontSize="12" TextColor="#8EAFc5" MaxLines="2" LineBreakMode="TailTruncation" />
-                                        <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="8">
-                                            <Label Grid.Column="0" Text="{Binding Category}" FontSize="11" TextColor="{StaticResource Secondary}" />
-                                            <Label Grid.Column="1" Text="|" FontSize="11" TextColor="#799BB3" />
-                                            <Label Grid.Column="2" Text="{Binding ViewCount, StringFormat='{0:N0} views'}" FontSize="11" TextColor="#799BB3" />
-                                        </Grid>
-                                    </VerticalStackLayout>
+                    <Border IsVisible="{Binding TotalVideos, Converter={StaticResource CountToVisibilityConverter}}"
+                            StrokeThickness="1"
+                            Stroke="{DynamicResource BorderBrush}"
+                            BackgroundColor="{DynamicResource CardBackgroundColor}"
+                            StrokeShape="RoundRectangle 20"
+                            Padding="24">
+                        <Border.Shadow>
+                            <Shadow Brush="Black" Offset="0,4" Radius="10" Opacity="{DynamicResource GlassShadowOpacity}"/>
+                        </Border.Shadow>
+                        <VerticalStackLayout Spacing="8" HorizontalOptions="Center">
+                            <Label Text="No videos found" FontSize="18" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" HorizontalOptions="Center" />
+                            <Label Text="Try another search or category" FontSize="14" TextColor="{DynamicResource SecondaryTextColor}" HorizontalOptions="Center" />
+                        </VerticalStackLayout>
+                    </Border>
 
-                                    <Grid ColumnDefinitions="*,*,*" ColumnSpacing="8">
-                                        <Button Grid.Column="0"
-                                                Text="Watch"
-                                                Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.WatchVideoCommand}"
-                                                CommandParameter="{Binding .}"
-                                                BackgroundColor="{StaticResource Primary}"
-                                                TextColor="White"
-                                                FontSize="11"
-                                                FontAttributes="Bold"
-                                                Padding="10,6" />
-                                        <Button Grid.Column="1"
-                                                Text="Like"
-                                                Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.LikeVideoCommand}"
-                                                CommandParameter="{Binding .}"
-                                                BackgroundColor="{Binding IsLiked, Converter={StaticResource BoolToColorConverter}}"
-                                                TextColor="White"
-                                                FontSize="11"
-                                                FontAttributes="Bold"
-                                                Padding="10,6" />
-                                        <Button Grid.Column="2"
-                                                Text="Share"
-                                                Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.ShareVideoCommand}"
-                                                CommandParameter="{Binding .}"
-                                                BackgroundColor="#1E3A53"
-                                                TextColor="White"
-                                                FontSize="11"
-                                                FontAttributes="Bold"
-                                                Padding="10,6" />
-                                    </Grid>
-                                </VerticalStackLayout>
-                            </Border>
-                        </DataTemplate>
-                    </CollectionView.ItemTemplate>
-                </CollectionView>
+                </VerticalStackLayout>
+            </ScrollView>
 
-                <Border IsVisible="{Binding TotalVideos, Converter={StaticResource CountToVisibilityConverter}}"
-                        StrokeThickness="0"
-                        Background="#0F2031"
-                        StrokeShape="RoundRectangle 14"
-                        Padding="18">
-                    <VerticalStackLayout Spacing="6" HorizontalOptions="Center">
-                        <Label Text="No videos found" FontSize="16" FontAttributes="Bold" TextColor="White" HorizontalOptions="Center" />
-                        <Label Text="Try another search or category" FontSize="12" TextColor="#8DAEC4" HorizontalOptions="Center" />
-                    </VerticalStackLayout>
-                </Border>
-
-            </VerticalStackLayout>
-        </ScrollView>
-
-        <ActivityIndicator IsRunning="{Binding IsLoading}"
-                           IsVisible="{Binding IsLoading}"
-                           HorizontalOptions="Center"
-                           VerticalOptions="Center"
-                           Color="{StaticResource Primary}"
-                           Scale="1.3" />
-    </Grid>
+            <ActivityIndicator IsRunning="{Binding IsLoading}"
+                               IsVisible="{Binding IsLoading}"
+                               HorizontalOptions="Center"
+                               VerticalOptions="Center"
+                               Color="{DynamicResource PrimaryColor}"
+                               Scale="1.5" />
+        </Grid>
+    </controls:MainLayout>
 </ContentPage>

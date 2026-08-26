@@ -1849,7 +1849,7 @@ class CrossModalInfoNCE(nn.Module):
         if _XLA_AVAILABLE and "xla" in str(device).lower():
             import torch_xla.core.xla_model as xm
             try:
-                world_size = xm.xrt_world_size()
+                world_size = xr.world_size()
             except AttributeError:
                 try:
                     import torch_xla.runtime as xr
@@ -2432,7 +2432,7 @@ def train_epoch_tpu(
     if is_xla:
         import torch_xla.core.xla_model as xm
         import torch_xla.distributed.parallel_loader as pl
-    is_master = xm.is_master_ordinal() if is_xla else True
+    is_master = xr.is_master_ordinal() if is_xla else True
     device_type = "cuda" if "cuda" in str(device).lower() else "cpu"
     use_autocast = (
         not is_xla and "cuda" in str(device).lower() and prec_dtype != torch.float32
@@ -2485,7 +2485,7 @@ def train_epoch_tpu(
         # Prevent deadlocks by ensuring all workers run the exact same number of batches
         min_batches = int(xm.mesh_reduce("min_batches", total_batches, lambda x: min(x)))
         try:
-            ord_val = xm.get_ordinal()
+            ord_val = xr.global_ordinal()
         except AttributeError:
             try:
                 import torch_xla.runtime as xr

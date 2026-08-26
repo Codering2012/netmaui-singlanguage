@@ -1,0 +1,20 @@
+# .gitignore for .NET
+[Bb]in/
+[Oo]bj/
+.vs/
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# MAUI specific
+Platforms/Android/obj/
+Platforms/iOS/obj/
+Platforms/MacCatalyst/obj/
+Platforms/Windows/obj/
+
+# Logs
+*.log
+*.txt
+!README.txt

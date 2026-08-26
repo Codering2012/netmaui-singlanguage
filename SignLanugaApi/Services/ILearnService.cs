@@ -114,10 +114,10 @@ namespace SignLanguageApi.Services
                 return new AchievementBadgeDto
                 {
                     Id = a.Id,
-                    Title = a.Title,
-                    Color = a.BadgeColor,
-                    IconChar = a.IconChar,
-                    Unlocked = userUnlocked != null,
+                    Name = a.Title,
+                    Description = a.Description,
+                    ImageUrl = a.IconChar,
+                    IsUnlocked = userUnlocked != null,
                     UnlockedAt = userUnlocked?.UnlockedAt
                 };
             }).ToList();

@@ -1,0 +1,977 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cỗ Máy Nền Tảng: Kiến Trúc Đa Nhiệm Lõi Kép (Phân Tích Toán Học)</title>
+    <!-- Công cụ MathJax để hiển thị công thức toán học -->
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <!-- Công cụ Mermaid để vẽ sơ đồ -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <script>mermaid.initialize({startOnLoad:true});</script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.8;
+            color: #333;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+            background-color: #f8f9fa;
+        }
+        h1 {
+            font-size: 2.8rem;
+            color: #2c3e50;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 0.5rem;
+            margin-top: 2rem;
+        }
+        h2 {
+            font-size: 2.2rem;
+            color: #2980b9;
+            border-bottom: 2px solid #bdc3c7;
+            padding-bottom: 0.3rem;
+            margin-top: 2.5rem;
+        }
+        h3 {
+            font-size: 1.6rem;
+            color: #34495e;
+            margin-top: 2rem;
+        }
+        h4 {
+            font-size: 1.2rem;
+            color: #e67e22;
+            margin-top: 1.5rem;
+            text-transform: uppercase;
+        }
+        p {
+            font-size: 1.15rem;
+            margin-bottom: 1.2rem;
+            text-align: justify;
+        }
+        .math-block {
+            background-color: #ffffff;
+            padding: 1.5rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            margin: 1.5rem 0;
+            overflow-x: auto;
+            font-size: 1.2rem;
+            text-align: center;
+        }
+        .q-box {
+            background-color: #ffffff;
+            border-left: 5px solid #2ecc71;
+            padding: 1rem 1.5rem;
+            margin: 1rem 0;
+            border-radius: 0 8px 8px 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .q-title {
+            font-weight: bold;
+            color: #27ae60;
+            margin-bottom: 0.5rem;
+            display: block;
+            font-size: 1.2rem;
+        }
+        .simple-box {
+            background-color: #f4f6f7;
+            border-left: 5px solid #7f8c8d;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+            border-radius: 0 8px 8px 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .simple-title {
+            font-weight: bold;
+            color: #34495e;
+            margin-bottom: 0.5rem;
+            display: block;
+            font-size: 1.2rem;
+        }
+        code {
+            background-color: #f1f2f6;
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+            font-family: Consolas, monospace;
+            color: #e74c3c;
+        }
+        .conclusion-box {
+            background-color: #eaf2f8;
+            border: 2px solid #5dade2;
+            padding: 2.5rem;
+            margin-top: 3rem;
+            border-radius: 12px;
+            box-shadow: 0 6px 12px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Kiến Trúc Nền Tảng Đa Nhiệm Lõi Kép Cho Nhận Dạng Ngôn Ngữ Ký Hiệu</h1>
+
+    <h2>Tóm Tắt Tổng Quan</h2>
+    <p>Tài liệu này cung cấp một phân tích cấu trúc chuyên sâu, mở rộng và toàn diện về chuỗi quy trình Nhận dạng Ngôn ngữ Ký hiệu. Báo cáo này không chỉ giải thích quy trình một cách khái quát mà còn bóc tách <strong>toàn bộ cơ sở toán học sâu sắc nhất</strong> đằng sau mỗi lớp chức năng trong cấu trúc ba mươi mốt triệu tham số, giúp các nhà khoa học dữ liệu và kỹ sư học máy hiểu thấu đáo từng phương trình điều khiển hệ thống.</p>
+
+    <!-- ========================================== -->
+    <!-- MỤC 1: TIỀN XỬ LÝ & TRÍCH XUẤT XLA -->
+    <!-- ========================================== -->
+    
+
+    <h1 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-top: 50px;">CHƯƠNG 1: TIỀN XỬ LÝ VÀ TĂNG CƯỜNG DỮ LIỆU (Data Preprocessing & Augmentation)</h1>
+
+
+    <h1 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-top: 50px;">CHƯƠNG 1: TIỀN XỬ LÝ VÀ TĂNG CƯỜNG DỮ LIỆU (Data Preprocessing & Augmentation)</h1>
+
+
+    <h1 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-top: 50px;">CHƯƠNG 1: TIỀN XỬ LÝ VÀ TĂNG CƯỜNG DỮ LIỆU (Data Preprocessing & Augmentation)</h1>
+<h2>1. Tiền Xử Lý Dữ Liệu & Phương Trình Chuẩn Hóa Bất Biến</h2>
+
+    <div class="q-box">
+        <span class="q-title">Cơ sở toán học của sự bất biến hình học (Riemannian SE(3))</span>
+        <p>Để đảm bảo rằng góc nhìn và khoảng cách từ ống kính máy quay không làm sai lệch bộ dữ liệu tọa độ, chúng ta chiếu mọi điểm ảnh \( P_i \) lên một không gian chuẩn hóa \( P''_i \). Tâm của hệ trục được định nghĩa là trung điểm của ma trận hai bờ vai.</p>
+        <div class="math-block">
+            \[ C_{x, y} = \frac{\text{VaiTrái}_{x, y} + \text{VaiPhải}_{x, y}}{2} \]
+            \[ P'_{i} = P_i - C \]
+            \[ D_{vai} = \| \text{VaiTrái} - \text{VaiPhải} \|_2 \]
+            \[ P''_{i} = \frac{P'_{i}}{D_{vai} + \epsilon} \]
+        </div>
+        <p>Phương trình này sử dụng chuẩn L2 norm (bình phương khoảng cách Euclide) để tính độ dài, biến không gian pixel thuần túy thành không gian tỷ lệ metric, nơi mọi cá thể con người đều có chung một hệ số kích thước.</p>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Phương trình sai phân động lực học</span>
+        <p>Thay vì để hệ thống tự xấp xỉ đạo hàm thông qua các thuật toán xấp xỉ (Universal Approximation), chúng ta áp đặt thẳng đạo hàm bậc nhất (vận tốc) và bậc hai (gia tốc) theo thời gian \( t \) thông qua sai phân rời rạc:</p>
+        <div class="math-block">
+            \[ V_t = \frac{\partial P}{\partial t} \approx P_t - P_{t-1} \]
+            \[ A_t = \frac{\partial^2 P}{\partial t^2} \approx V_t - V_{t-1} \]
+        </div>
+        <p>Kết quả đầu ra là một ma trận kết nối dọc \( \mathbf{X}_{in} \in \mathbb{R}^{T \times 60 \times 9} \), cung cấp cho mạng nơ-ron cả vị trí tĩnh lẫn động lượng vật lý.</p>
+    </div>
+
+    <div class="simple-box">
+        <span class="simple-title">Góc Nhìn Khái Quát: "Đồng Nhất Hóa & Động Lực Học"</span>
+        Việc đồng nhất hóa hệ quy chiếu giúp loại bỏ quang sai, tương tự như việc vẽ một bản đồ địa lý theo một tỷ lệ xích thống nhất. Việc cung cấp phương trình sai phân tương đương với việc cung cấp cho phi công cả vị trí hiện tại lẫn đồng hồ đo tốc độ/gia tốc, giúp hệ thống cắt giảm gánh nặng tự suy luận.
+    </div>
+
+
+    <!-- ========================================== -->
+    <!-- MỤC 2: KIẾN TRÚC MẠNG & TOÁN HỌC TRẠNG THÁI -->
+    <!-- ========================================== -->
+    <h2>2. Tăng Cường Dữ Liệu Giáo Trình & Bộ Lọc Gia Tốc (Curriculum Augmentation & Jerk Filtering)</h2>
+    <p>Hai quyết định toán học quan trọng cuối cùng quyết định sự thành bại của hệ thống nằm ở cách rèn luyện mô hình (Curriculum Learning) và cách màng lọc loại bỏ lỗi theo dõi điểm ảnh (Tracking Glitches).</p>
+
+    <div class="q-box">
+        <span class="q-title">Ma Trận Đột Biến Không Gian Tịnh Tiến (Affine Transformation)</span>
+        <p>Để ngăn mô hình học vẹt (Overfitting) các góc máy quay cố định, hệ thống áp dụng các phép biến đổi hình học độc lập (Scaling, Translation, Rotation) lên toàn bộ 60 điểm ảnh. Ma trận xoay \(R(\theta)\) được tính toán trên tâm hình học \(\mu_{xy}\) của các điểm hợp lệ:</p>
+        <div class="math-block">
+            \[ R(\theta) = \begin{bmatrix} \cos(\theta) & -\sin(\theta) \\ \sin(\theta) & \cos(\theta) \end{bmatrix} \]
+            \[ X_{new} = (X - \mu_{xy}) \cdot R(\theta)^T + \mu_{xy} + \Delta x \]
+        </div>
+        <p>Bên cạnh biến đổi Affine, hệ thống còn thêm Nhiễu Trắng (Gaussian Jitter) \(\epsilon \sim \mathcal{N}(0, \sigma^2)\) để giả lập sự rung lắc của camera điện thoại trong thực tế.</p>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Học Tập Theo Giáo Trình (Curriculum Learning Noise Level)</span>
+        <p>Nếu áp dụng mức độ đột biến tối đa ngay từ Epoch đầu tiên, hàm suy hao của hệ thống sẽ phát nổ (Loss Explosion) do dữ liệu quá biến dạng. Do đó, cường độ nhiễu \(\gamma\) được thiết kế để tăng tuyến tính (Linear Ramp) theo thời gian học:</p>
+        <div class="math-block">
+            \[ \gamma = \frac{\text{Current Epoch}}{\max(1, \text{Total Epochs})} \]
+        </div>
+        <p>Giá trị \(\gamma\) kiểm soát bán kính của góc xoay \(\theta\), tỷ lệ thu phóng \(s\), và xác suất rơi rụng (Dropout) của cả khung hình (Temporal Masking). Mô hình sẽ học trên dữ liệu sạch (Clean Data) ở giai đoạn đầu và bị ép học trong môi trường khắc nghiệt nhất (Hard Negatives) ở giai đoạn cuối.</p>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Tiền Xử Lý: Bộ Lọc Đạo Hàm Bậc Ba (Jerk Temporal Smoothness)</span>
+        <p>Trong quá trình xử lý thô, mô hình thị giác RTMW đôi khi bị ảo giác (Glitch) khiến tọa độ bàn tay bị "dịch chuyển tức thời" (Teleport) từ điểm này sang điểm khác chỉ trong 1 khung hình. Để loại bỏ hoàn toàn các video chứa lỗi này, hàm <code>_assess_quality_video</code> sử dụng phép đạo hàm bậc ba của vị trí, hay còn gọi là <strong>Độ Giật (Jerk)</strong>:</p>
+        <div class="math-block">
+            \[ V_{t} = X_{t} - X_{t-1} \]
+            \[ A_{t} = V_{t} - V_{t-1} \]
+            \[ \text{Jerk}_{max} = \max_{t} \| A_{t} \|_2 \]
+        </div>
+        <p>Nếu \(\text{Jerk}_{max} > 1500.0\), điểm ảnh đã vi phạm các định luật vật lý về động học con người (Human Kinematic Constraints) và hệ thống sẽ tự động vứt bỏ toàn bộ đoạn video để bảo vệ sự tinh khiết của tập dữ liệu huấn luyện.</p>
+    </div>
+
+
+    <!-- ========================================== -->
+    <!-- MỤC 19: CÁC MẢNH GHÉP TOÁN HỌC CUỐI CÙNG -->
+    <!-- ========================================== -->
+    
+
+    <h1 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-top: 50px;">CHƯƠNG 2: LÕI TRÍCH XUẤT ĐẶC TRƯNG (Backbone Architecture)</h1>
+
+
+    <h1 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-top: 50px;">CHƯƠNG 2: LÕI TRÍCH XUẤT ĐẶC TRƯNG (Backbone Architecture)</h1>
+
+
+    <h1 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-top: 50px;">CHƯƠNG 2: LÕI TRÍCH XUẤT ĐẶC TRƯNG (Backbone Architecture)</h1>
+<h2>3. Cấu Trúc Mạng Nơ-ron & Toán Học Nội Tại</h2>
+    <p>Kiến trúc 31M tham số không sử dụng các khối đa thức bình thường. Nó bao gồm nhiều phương trình chuẩn hóa và phi tuyến tính phức tạp để tối đa hóa dung lượng biểu diễn.</p>
+
+    <div class="q-box">
+        <span class="q-title">Chuẩn Hóa RMSNorm (Root Mean Square Normalization)</span>
+        <p>Thay vì sử dụng LayerNorm thông thường (cần tính giá trị trung bình độ lệch), hệ thống sử dụng RMSNorm. Phương trình này loại bỏ phép trừ trung bình, chỉ chia cho Căn Bậc Hai của Tổng Bình Phương (Root Mean Square), giúp tăng tốc độ xử lý trên vi mạch ma trận:</p>
+        <div class="math-block">
+            \[ \text{RMS}(x) = \sqrt{\frac{1}{d} \sum_{i=1}^{d} x_i^2 + \epsilon} \]
+            \[ \bar{x} = \frac{x}{\text{RMS}(x)} \odot \gamma \]
+        </div>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Hàm Phi Tuyến Tính SwiGLU (Swish Gated Linear Unit)</span>
+        <p>Khối truyền thẳng (Feed-Forward Network) sử dụng phương trình kích hoạt <code>SwiGLUFFN</code>. Nó nhân chéo hai nhánh tuyến tính, trong đó một nhánh bị bóp méo bởi hàm Swish (phương trình SiLU), tạo ra bề mặt thất thoát mượt mà hơn hàm ReLU:</p>
+        <div class="math-block">
+            \[ \text{Swish}(x) = x \cdot \sigma(\beta x) \]
+            \[ \text{SwiGLU}(x, W_1, W_2, W_3) = \left( (x W_1) \odot \text{Swish}(x W_2) \right) W_3 \]
+        </div>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Nhúng Vị Trí Xoay Chiều (Rotary Positional Encoding - RoPE)</span>
+        <p>Để nhận thức thời gian, thay vì cộng một vector tĩnh vào tín hiệu (Absolute Encoding), phương trình <code>RoPEEmbedding</code> nhân các vector Tầm Nhìn (Query/Key) với một ma trận xoay góc trong không gian phức. Góc xoay \( m\theta \) tỷ lệ thuận với vị trí thời gian \( m \) của khung hình:</p>
+        <div class="math-block">
+            \[ R_{\Theta, m} = \begin{pmatrix} \cos m\theta & -\sin m\theta \\ \sin m\theta & \cos m\theta \end{pmatrix} \]
+            \[ \tilde{q}_m = R_{\Theta, m} q_m \]
+        </div>
+        <p>Thuộc tính tuyệt vời của ma trận xoay là sự tương quan tích vô hướng giữa vị trí \( m \) và \( n \) chỉ phụ thuộc vào khoảng cách thời gian tuyệt đối \( m - n \), giúp mô hình ngoại suy xuất sắc qua các đoạn phim cực dài.</p>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Sự Ép Nén - Kích Thích (SpatialTemporalSE)</span>
+        <p>Bên trong khối chập (ConvBlock), mô hình áp dụng hàm Squeeze-and-Excitation để tái cân bằng trọng số giữa các chiều không gian. Hàm này tính toán giá trị trung bình toàn cục (Global Average Pooling) và nén qua hàm Sigmoid để sinh ra hệ số khuếch đại \(\alpha\):</p>
+        <div class="math-block">
+            \[ \alpha = \sigma\left( W_2 \cdot \text{ReLU}\left( W_1 \cdot \frac{1}{T} \sum_{t=1}^{T} X_t \right) \right) \]
+            \[ \tilde{X} = X \odot \alpha \]
+        </div>
+    </div>
+
+    <div class="simple-box">
+        <span class="simple-title">Góc Nhìn Khái Quát: "Tối Ưu Hóa Toán Học Nội Bộ"</span>
+        Mọi phương trình này đóng vai trò như việc nâng cấp động cơ cốt lõi của một hệ thống xử lý. Thay vì dùng các vòng bi ma sát lớn (như ReLU hay LayerNorm truyền thống), hệ thống sử dụng các vòng bi từ tính siêu dẫn (SwiGLU, RMSNorm, RoPE) giúp giảm thiểu hao tổn nhiệt năng (gradients biến mất) và cho phép dòng điện (thông tin) chảy qua hệ thống một cách trơn tru và mạnh mẽ nhất.
+    </div>
+
+
+    <!-- ========================================== -->
+    <!-- MỤC 3: HỆ THỐNG PHƯƠNG TRÌNH SUY HAO (LOSS FUNCTIONS) -->
+    <!-- ========================================== -->
+    <h2>4. Kiến Trúc Macaron (Conformer) & Chuẩn Hóa Mục Tiêu</h2>
+    <p>Thay vì xếp chồng các khối phân tích một cách tuyến tính đơn điệu, mô hình sử dụng cấu trúc "Bánh Macaron" (Macaron-like structure) xen kẽ giữa các khối Tuyến tính và Tích chập để tối ưu hóa việc phân tích cục bộ và toàn cục.</p>
+
+    <div class="q-box">
+        <span class="q-title">Toán Học Kiến Trúc MobileConformer (Macaron Structure)</span>
+        <p>Kiến trúc <code>MobileConformerBlock</code> kẹp khối Sự Chú Ý (Global) và khối Tích Chập (Local) vào giữa hai khối mạng nơ-ron Truyền Thẳng (Feed-Forward Networks) có hệ số giảm một nửa (Half-Step). Cấu trúc toán học đệ quy diễn ra như sau:</p>
+        <div class="math-block">
+            \[ \text{Bán Khối FFN Đầu:} \quad x_1 = x_0 + \frac{1}{2} \text{FFN}_1(x_0) \]
+            \[ \text{Khối Tương Quan Toàn Cục:} \quad x_2 = x_1 + \text{GQA}(x_1) \]
+            \[ \text{Khối Tích Chập Cục Bộ:} \quad x_3 = x_2 + \text{ConvNeXt}(x_2) \]
+            \[ \text{Bán Khối FFN Cuối:} \quad y = \text{LayerNorm}\left(x_3 + \frac{1}{2} \text{FFN}_2(x_3)\right) \]
+        </div>
+        <p>Việc sử dụng \(\frac{1}{2} \text{FFN}\) ở hai đầu giống như việc kẹp phần nhân bánh vào giữa hai lớp vỏ Macaron. Về mặt toán học, điều này cung cấp một dạng tích hợp số học (Numerical Integration) mượt mà hơn nhiều so với kiến trúc Transformer nguyên thủy, giúp hệ thống không bị mất thông tin khi đi qua hàng chục lớp layer.</p>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Cơ Chế Làm Mịn Nhãn (Label Smoothing & Confidence Penalty)</span>
+        <p>Để ngăn chặn hiện tượng Overfitting (Học vẹt) ở Hàm Suy Hao Tiêu Điểm, mô hình định nghĩa lại khái niệm của "Sự thật tuyệt đối". Thay vì ép ma trận xác suất mục tiêu (Target Probability) phải bằng 100%, hệ thống phân bổ một phần \(\alpha\) xác suất cho tất cả các từ vựng khác trong bộ từ điển kích thước \(V\):</p>
+        <div class="math-block">
+            \[ P_{smooth} = \begin{cases} 
+            1 - \alpha + \frac{\alpha}{V} & \text{nếu đúng nhãn} \\ 
+            \frac{\alpha}{V} & \text{nếu sai nhãn} 
+            \end{cases} \]
+        </div>
+        <p>Phương trình này cấm mô hình đạt đến trạng thái tự tin vô hạn (Infinite Logit), ép các vector quyết định phải dừng lại ở một khoảng cách an toàn. Điều này giữ cho mạng nơ-ron luôn duy trì sự "khiêm tốn toán học" và duy trì khả năng học hỏi các dấu hiệu hiếm.</p>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Suy Hao Ngữ Nghĩa Mật Độ Cao (Dense Sentence Semantic Loss)</span>
+        <p>Ngoài việc bắt lỗi từng từ riêng lẻ, mô hình còn tính toán một hàm khoảng cách Cosine trên toàn bộ bề mặt biểu diễn vector của câu (Sentence Embeddings) so với mục tiêu lý tưởng. Nếu \( y_{pred} \) là vector ngữ nghĩa của mô hình dự đoán và \( y_{true} \) là vector chuẩn mực:</p>
+        <div class="math-block">
+            \[ \text{Cosine}(y_{pred}, y_{true}) = \frac{y_{pred} \cdot y_{true}}{\|y_{pred}\| \|y_{true}\|} \]
+            \[ \mathcal{L}_{semantic} = 1 - \text{Cosine}(y_{pred}, y_{true}) \]
+        </div>
+        <p>Hàm suy hao này ép cấu trúc không gian hình học của chuỗi dự đoán phải hoàn toàn song song với chuỗi mục tiêu, bất kể độ dài thực tế của câu nói có thể chênh lệch.</p>
+    </div>
+
+    <div class="simple-box">
+        <span class="simple-title">Góc Nhìn Khái Quát: "Hội Tụ & Xây Dựng Khối Kiến Trúc"</span>
+        Kiến trúc Macaron (Conformer) đóng vai trò giống như kỹ thuật xây tường gạch: Thay vì trét toàn bộ xi măng (FFN) vào một mặt của viên gạch (Attention/Conv), người thợ xây chia lượng xi măng ra làm đôi, trét một nửa dưới đáy viên gạch và một nửa trên đỉnh. Điều này giúp toàn bộ kết cấu dính chặt và liên tục hơn. Trong khi đó, Làm mịn nhãn đóng vai trò như một bài tập kiểm soát bản ngã cho trí tuệ nhân tạo: Không cho phép nó nói "Tôi đúng 100%", mà chỉ được phép nói "Tôi chắc chắn 90%, 10% còn lại tôi vẫn để ngỏ cho những biến số bất ngờ".
+    </div>
+
+
+    <!-- ========================================== -->
+    <!-- MỤC 8: TOÁN HỌC BỔ TRỢ & ĐIỀU CHUẨN SÂU -->
+    <!-- ========================================== -->
+    <h2>5. Phương Trình Không Gian Trạng Thái (State Space Model) & Sự Chú Ý Nhóm</h2>
+    <p>Thay vì chỉ dựa dẫm vào cơ chế Sự chú ý thông thường, mạng lưới tích hợp các khối State Space Model (BiMamba2) và Sự chú ý nhóm (Grouped Query Attention) để tối ưu hóa việc phân tích chuỗi thời gian.</p>
+
+    <div class="q-box">
+        <span class="q-title">Hệ Phương Trình Vi Phân Không Gian Trạng Thái (BiMamba2)</span>
+        <p>Mô hình Mamba-2 ánh xạ chuỗi đầu vào thông qua hệ phương trình vi phân tuyến tính liên tục theo thời gian, với các tham số \(A, B, C\) và đầu vào \(x(t)\):</p>
+        <div class="math-block">
+            \[ h'(t) = A h(t) + B x(t) \]
+            \[ y(t) = C h(t) \]
+        </div>
+        <p>Để máy tính có thể xử lý, hệ thống thực hiện rời rạc hóa (Discretization) bằng bước nhảy thời gian \(\Delta_t\), ứng dụng phép biến đổi Zero-Order Hold để tạo ra các ma trận rời rạc \(\bar{A}\) và \(\bar{B}\):</p>
+        <div class="math-block">
+            \[ \bar{A} = \exp(\Delta_t A) \]
+            \[ \bar{B} = (\Delta_t A)^{-1} (\exp(\Delta_t A) - I) \cdot \Delta_t B \approx \Delta_t B \]
+        </div>
+        <p>Lúc này, phương trình đệ quy trở thành \(h_t = \bar{A} h_{t-1} + \bar{B} x_t\). Bằng cách thiết lập \(\Delta_t, B, C\) phụ thuộc vào dữ liệu đầu vào (Data-dependent), Mamba có khả năng bỏ qua các khoảng thời gian trống và chỉ tập trung vào các tín hiệu chuyển động, tạo ra cơ chế ghi nhớ chọn lọc siêu việt.</p>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Sự Chú Ý Truy Vấn Nhóm (Grouped Query Attention - GQA)</span>
+        <p>Thay vì mỗi Truy vấn (Query) có một khóa (Key) và giá trị (Value) riêng biệt như trong Multi-Head Attention, GQA nhóm nhiều Query lại để dùng chung một Key-Value nhằm giảm thiểu bộ nhớ đệm (KV Cache). Công thức cốt lõi của sự chú ý vẫn là phép nhân ma trận tỷ lệ:</p>
+        <div class="math-block">
+            \[ \text{Attention}(Q, K, V) = \text{Softmax}\left(\frac{Q K^T}{\sqrt{d_k}} \right) V \]
+        </div>
+        <p>Tuy nhiên, cấu trúc liên kết ma trận tuân theo quy tắc tỷ lệ \( H_Q = k \cdot H_{KV} \), trong đó \(k\) là số lượng đầu truy vấn chia sẻ chung một khóa. Điều này giúp bộ mã hóa biến áp giảm băng thông đọc ghi của phần cứng xuống 4 đến 8 lần.</p>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Khối Tích Chập Chiều Sâu (ConvNeXt Temporal Block)</span>
+        <p>Kết hợp với sự chú ý, mô hình dùng mạng tích chập chiều sâu (Depthwise Convolution) một chiều theo thời gian để tóm gọn thông tin cục bộ trước khi kích hoạt hàm điểm-điểm (Point-wise):</p>
+        <div class="math-block">
+            \[ X' = \text{Conv1D}_{depth}(X, \text{Kernel}) \]
+            \[ Y = W_2 \cdot \sigma_{GELU}\left( W_1 \cdot X' \right) \]
+        </div>
+    </div>
+
+    <div class="simple-box">
+        <span class="simple-title">Góc Nhìn Khái Quát: "Hệ Sinh Thái Xử Lý Thông Tin"</span>
+        Nếu xem cấu trúc mạng lưới này như một bộ não, thì Khối Tích chập (ConvNeXt) là những nơ-ron thần kinh cảm giác cục bộ, có nhiệm vụ phát hiện các dao động nhỏ lướt qua. Khối Sự chú ý (GQA) đóng vai trò như trí nhớ ngắn hạn, có thể quét qua toàn bộ quá khứ để tìm sự liên kết. Còn Khối Trạng thái (Mamba) hoạt động như một hệ thống phản xạ chọn lọc liên tục, tự động ghi nhớ hoặc lãng quên các dòng thời gian vô tận mà không bị quá tải bộ nhớ.
+    </div>
+
+
+    <!-- ========================================== -->
+    <!-- MỤC 5: HỆ THỐNG KIỂM SOÁT ĐỘ LỆCH CHUẨN & PHƯƠNG SAI -->
+    <!-- ========================================== -->
+    <h2>6. Mạng Lưới Đa Chuyên Gia (MoE) & Nghịch Đảo Trọng Số</h2>
+    <p>Ở giai đoạn sâu nhất của hệ thống phân tích, mô hình cần quyết định phân bổ luồng dữ liệu cho các phân hệ mạng nơ-ron khác nhau tùy thuộc vào độ phức tạp của từng khung hình, đồng thời phải duy trì khả năng miễn nhiễm đối với các nhiễu loạn ngoại cảnh.</p>
+
+    <div class="q-box">
+        <span class="q-title">Phân Bổ Định Tuyến Chuyên Gia Thưa Thớt (Sparse Mixture of Experts - MoE)</span>
+        <p>Kiến trúc <code>XLASparseMoE</code> không yêu cầu toàn bộ 31M tham số phải kích hoạt cùng một lúc. Nó sử dụng một bộ định tuyến (Router) để tính toán xác suất phân bổ tín hiệu \( x \) cho chuyên gia thứ \( i \) thông qua hàm Softmax:</p>
+        <div class="math-block">
+            \[ P_i(x) = \text{Softmax}(x \cdot W_{router})_i = \frac{\exp(x \cdot W_{router, i})}{\sum_{j=1}^{E} \exp(x \cdot W_{router, j})} \]
+        </div>
+        <p>Hệ thống sau đó sẽ chỉ kích hoạt một vài chuyên gia hàng đầu (Top-K) thay vì toàn bộ mạng lưới. Tín hiệu đầu ra được tính bằng tổng hợp tuyến tính theo trọng số xác suất của các chuyên gia được chọn:</p>
+        <div class="math-block">
+            \[ y = \sum_{i \in \text{TopK}} P_i(x) \cdot \text{Expert}_i(x) \]
+        </div>
+        <p>Phương pháp này tối ưu hóa việc phân nhánh phần cứng, cho phép mô hình mở rộng dung lượng kiến thức lên hàng chục lần mà tốc độ tính toán và mức tiêu thụ điện năng vẫn chỉ tương đương với một mô hình nhỏ.</p>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Đảo Ngược Đạo Hàm Đối Kháng (Gradient Reversal Layer)</span>
+        <p>Trong các bài toán học máy mà người dùng có các phông nền hoặc cấu trúc cơ thể khác nhau, mô hình rất dễ bị "thiên vị" (bias). Lớp <code>GradientReversalFunction</code> thực thi kỹ thuật Huấn luyện Đối kháng Vùng (Domain Adversarial Training). Trong quá trình tính toán xuôi (Forward Pass), hàm này đóng vai trò như một hàm đồng nhất:</p>
+        <div class="math-block">
+            \[ \text{Forward: } \mathcal{R}(x) = x \]
+        </div>
+        <p>Tuy nhiên, sự kỳ diệu toán học xảy ra trong quá trình Lan truyền Ngược (Backward Pass). Hàm này chủ động nhân đạo hàm với một hệ số âm \(\lambda\) nhằm <strong>phá hủy</strong> khả năng nhận diện phông nền của mô hình:</p>
+        <div class="math-block">
+            \[ \text{Backward: } \frac{\partial \mathcal{R}}{\partial x} = - \lambda \frac{\partial \mathcal{L}_{domain}}{\partial \mathcal{R}} \]
+        </div>
+        <p>Bằng cách truyền ngược đạo hàm âm, mô hình bị ép buộc phải "quên" đi các đặc trưng định dạng không cần thiết (như quần áo, giới tính, hay màu da của người ký hiệu) và chỉ được phép giữ lại thuần túy đặc trưng chuyển động cơ thể.</p>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Nhúng Vị Trí Lượng Giác Tuyệt Đối (Sinusoidal Positional Encoding)</span>
+        <p>Trong khi RoPE được dùng cho khối Sự chú ý, ở một số phân hệ giải mã tĩnh <code>PositionalEncoding1D</code>, mô hình tiêm trực tiếp tín hiệu thời gian vào dữ liệu thông qua sóng lượng giác xen kẽ các chu kỳ chẵn lẻ. Ở vị trí \( pos \) và chiều sâu \( i \):</p>
+        <div class="math-block">
+            \[ PE_{(pos, 2i)} = \sin\left( \frac{pos}{10000^{2i / d_{model}}} \right) \]
+            \[ PE_{(pos, 2i+1)} = \cos\left( \frac{pos}{10000^{2i / d_{model}}} \right) \]
+        </div>
+        <p>Sự xen kẽ giữa Hàm Sin và Hàm Cos tạo ra một phổ tần số liên tục, giúp mô hình nội suy bất kỳ khoảng cách thời gian nào thông qua ma trận chuyển đổi tuyến tính, một tuyệt tác toán học từ 논문 "Attention Is All You Need".</p>
+    </div>
+
+    <div class="simple-box">
+        <span class="simple-title">Góc Nhìn Khái Quát: "Định Tuyến & Phản Biện Tư Duy"</span>
+        Hệ thống MoE giống như một Bệnh viện Đa khoa: Bộ định tuyến đóng vai trò làm y tá phân loại bệnh nhân. Thay vì bắt tất cả bác sĩ khám cho một bệnh nhân, y tá chỉ điều hướng ca gãy xương cho bác sĩ chấn thương chỉnh hình (Top-1 Expert), tiết kiệm tài nguyên triệt để. Trong khi đó, Lớp Đảo ngược Đạo hàm đóng vai trò như một <strong>Cố vấn Phản biện (Devil's Advocate)</strong>: Mỗi khi mô hình não bộ cố gắng đưa ra quyết định dựa trên định kiến (ví dụ: "Người mặc áo đỏ thường đánh vần chữ A"), Cố vấn này lập tức truyền một tín hiệu phủ quyết (Đạo hàm âm) để xóa bỏ sự thiên vị đó, ép mô hình phải trở nên khách quan tuyệt đối.
+    </div>
+
+
+    <!-- ========================================== -->
+    <!-- MỤC 7: CẤU TRÚC BÁNH MACARON & LÀM MỊN KHÔNG GIAN HỌC -->
+    <!-- ========================================== -->
+    <h2>7. Toán Học Bổ Trợ & Điều Chuẩn Kiến Trúc Sâu</h2>
+    <p>Để đảm bảo khối lượng 31M tham số không bị sụp đổ khi truyền qua hàng trăm lớp mạng, kiến trúc kết hợp thêm các phương trình điều chuẩn rủi ro (Stochastic) và quy mô (Scaling).</p>
+
+    <div class="q-box">
+        <span class="q-title">Phân Phối Bernoulli Trong Lược Bỏ Nhánh (Stochastic Depth / DropPath)</span>
+        <p>Lớp <code>DropPath</code> không lược bỏ từng nơ-ron riêng lẻ như Dropout, mà nó sử dụng phân phối Bernoulli để đánh sập toàn bộ một nhánh kiến trúc với xác suất \( p \). Để bảo toàn giá trị kỳ vọng của tín hiệu trong quá trình huấn luyện, đầu ra sẽ được khuếch đại lên theo tỷ lệ \(\frac{1}{1-p}\) nếu nhánh đó không bị đánh sập:</p>
+        <div class="math-block">
+            \[ \text{Mask} \sim \text{Bernoulli}(1 - p) \]
+            \[ x_{out} = x_{in} + \text{Mask} \cdot \frac{1}{1 - p} \cdot \text{Layer}(x_{in}) \]
+        </div>
+        <p>Điều này biến một mạng nơ-ron siêu sâu thành một tập hợp khổng lồ các mạng nơ-ron nông hơn, giảm thiểu nguy cơ đạo hàm biến mất (Vanishing Gradient).</p>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Quy Mô Lớp Động Học (Layer Scale / Gamma Parameters)</span>
+        <p>Trong các kiến trúc <code>MobileConformerBlock</code> và <code>BiMamba2SSMBlock</code>, mỗi đầu ra của lớp con đều được nhân với một tham số \(\gamma\) (Gamma) có thể học được, được khởi tạo ở mức cực nhỏ (ví dụ: \(10^{-4}\)):</p>
+        <div class="math-block">
+            \[ x_{out} = x_{in} + \gamma \cdot \text{Layer}(x_{in}) \quad \text{với } \gamma_{init} = 10^{-4} \]
+        </div>
+        <p>Về mặt toán học, điều này ép mạng nơ-ron sâu trong những chu kỳ huấn luyện đầu tiên hoạt động gần như một hàm đồng nhất tuyệt đối (Identity function). Mạng sẽ chỉ từ từ "bật" các lớp phức tạp lên khi đạo hàm đã trở nên ổn định.</p>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Suy Hao Đối Chiếu Có Giám Sát (Supervised Contrastive Loss)</span>
+        <p>Lớp <code>SupervisedContrastiveLoss</code> mở rộng phương trình InfoNCE để hỗ trợ nhiều mục tiêu tích cực (nhiều video cùng biểu đạt một từ vựng). Nếu \( P(i) \) là tập hợp tất cả các video cùng lớp với video \( i \), và \( |P(i)| \) là số lượng của chúng:</p>
+        <div class="math-block">
+            \[ \mathcal{L}_{sup} = \sum_{i} \frac{-1}{|P(i)|} \sum_{p \in P(i)} \log \frac{\exp(z_i \cdot z_p / \tau)}{\sum_{a \in A(i)} \exp(z_i \cdot z_a / \tau)} \]
+        </div>
+        <p>Phương trình này cưỡng ép tất cả các video có cùng nhãn từ vựng phải co cụm lại với nhau thành một điểm siêu đặc trong không gian đa chiều, đồng thời đẩy tất cả các video khác nhãn ra xa tạo thành các dải phân cách tuyến tính.</p>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Ma Trận Nhúng Từ Vựng Phức Hợp (Rich ASL Lexical Embeddings)</span>
+        <p>Trong lớp <code>RichASLLexEmbeddingTable</code>, thay vì biểu diễn một từ vựng chỉ bằng một vector duy nhất, hệ thống thực hiện phép nối ma trận (Concatenation) của nhiều trường thông tin ngôn ngữ học:</p>
+        <div class="math-block">
+            \[ E_{total} = E_{word\_id} \oplus E_{pos\_tag} \oplus E_{lexical\_class} \]
+        </div>
+        <p>Phép cộng không gian vector trực giao này giúp mô hình hiểu được rằng từ "Chạy" (Động từ) và từ "Nhanh" (Tính từ) có những vai trò ngữ pháp khác nhau, ngay cả khi chưa phân tích đến chuyển động của video.</p>
+    </div>
+
+    <div class="simple-box">
+        <span class="simple-title">Góc Nhìn Khái Quát: "Hệ Thống Bảo Hiểm Rủi Ro"</span>
+        Nếu coi việc huấn luyện mô hình giống như việc xây một tòa tháp cao 100 tầng, thì <strong>DropPath</strong> giống như việc thỉnh thoảng cố tình rút một vài viên gạch ra để đảm bảo tòa tháp đủ khả năng tự chịu lực mà không bị phụ thuộc vào một viên gạch duy nhất. <strong>Layer Scale</strong> là các thiết bị giảm xóc động đất: lúc mới xây, chúng khóa chặt tòa tháp (Identity), nhưng khi tháp đã vững, chúng từ từ nới lỏng để tháp có thể đung đưa linh hoạt. <strong>Suy Hao Có Giám Sát</strong> đóng vai trò như lực hấp dẫn từ tính: ép tất cả những người cùng chung sở thích (cùng từ vựng) vào chung một căn phòng, và đẩy những người khác sở thích ra xa.
+    </div>
+
+
+    <!-- ========================================== -->
+    <!-- MỤC 9: KỸ THUẬT HUẤN LUYỆN LÕI & ĐIỀU TỐC ĐẠO HÀM -->
+    <!-- ========================================== -->
+    
+
+    <h1 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-top: 50px;">CHƯƠNG 3: HỆ THỐNG ĐA NHIỆM VÀ HÀM SUY HAO (Multi-Task Learning & Losses)</h1>
+
+
+    <h1 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-top: 50px;">CHƯƠNG 3: HỆ THỐNG ĐA NHIỆM VÀ HÀM SUY HAO (Multi-Task Learning & Losses)</h1>
+
+
+    <h1 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-top: 50px;">CHƯƠNG 3: HỆ THỐNG ĐA NHIỆM VÀ HÀM SUY HAO (Multi-Task Learning & Losses)</h1>
+<h2>8. Hệ Thống Đa Phương Trình Điều Chuẩn & Suy Hao</h2>
+    <p>Sức mạnh cốt lõi của kiến trúc nằm ở việc tổ hợp hàng loạt phương trình phạt lỗi đa mục tiêu nhằm rèn giũa các trọng số của hệ thống.</p>
+
+    <div class="q-box">
+        <span class="q-title">Biến Điệu Mục Tiêu Hàm Đa Thức (Poly1 Focal Loss)</span>
+        <p>Dựa trên khai triển chuỗi Taylor của hàm Logarit, hàm suy hao mục tiêu chéo (Cross-Entropy) được tinh chỉnh để áp chế sự bành trướng của các kết quả có độ chính xác cao. Cấu trúc hàm là:</p>
+        <div class="math-block">
+            \[ P_t = \exp(-\text{CrossEntropy}) \]
+            \[ \mathcal{L}_{Poly1} = (1 - P_t)^\gamma \cdot \text{CE} + \epsilon_1 \cdot (1 - P_t) \]
+        </div>
+        <p>Thuật ngữ \( \epsilon_1 \cdot (1 - P_t) \) chính là phần dư bậc một (First-order polynomial) của khai triển Taylor, giúp đạo hàm không bị biến mất khi mô hình quá tự tin.</p>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Suy Hao Đối Chiếu Chéo Đa Phương Thức (CrossModalInfoNCE)</span>
+        <p>Sử dụng phương trình Noise Contrastive Estimation (NCE), <code>CrossModalInfoNCE</code> cưỡng ép không gian toán học của Hình Ảnh (Video) và Văn Bản (Text) hội tụ. Với nhiệt độ \( \tau \):</p>
+        <div class="math-block">
+            \[ \text{sim}(v_i, t_j) = \frac{v_i \cdot t_j}{\|v_i\| \|t_j\|} \]
+            \[ \mathcal{L}_{NCE} = -\log \frac{\exp(\text{sim}(v_i, t_i) / \tau)}{\sum_{j} \exp(\text{sim}(v_i, t_j) / \tau)} \]
+        </div>
+        <p>Tương tự như vậy, <code>CosineLinear</code> chuẩn hóa trọng số và dữ liệu đầu vào bằng chuẩn L2 norm trước khi thực hiện phép nhân, biến không gian quyết định thành bề mặt của một hình cầu đa chiều (Unit Hypersphere).</p>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Suy Hao Phân Loại Thời Gian Kết Nối (CTC Loss)</span>
+        <p>Để giải quyết bài toán chuỗi thời gian không đồng bộ (asynchronous sequence alignment), <code>CTCHead</code> tính toán xác suất tích lũy của toàn bộ các đường dẫn căn chỉnh \( \pi \) (bao gồm cả trạng thái trống - blank):</p>
+        <div class="math-block">
+            \[ \mathcal{L}_{CTC} = - \ln \sum_{\pi \in \Phi(Y)} \prod_{t=1}^{T} P(\pi_t | X) \]
+        </div>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Cân Bằng Trọng Số Tự Động (Homoscedastic Loss Wrapper)</span>
+        <p>Khi tích hợp quá nhiều phương trình phạt (CTC, InfoNCE, SemanticLoss), các mức đạo hàm (gradient scales) sẽ xung đột. Hàm <code>HomoscedasticLossWrapper</code> sử dụng học máy Bayesian để tự động tìm ra trọng số tối ưu dựa trên phương sai sai số không đồng đều (Homoscedastic uncertainty) của từng nhiệm vụ:</p>
+        <div class="math-block">
+            \[ \mathcal{L}_{Tổng} = \sum_{i=1}^{N} \left( e^{-s_i} \cdot \mathcal{L}_i + \frac{1}{2} s_i \right) \]
+        </div>
+        <p>Trong đó \( s_i = \log(\sigma_i^2) \). Việc học \( s_i \) giúp hệ thống tự động giảm tỷ trọng của những nhiệm vụ quá ồn ào (nhiễu cao) để ưu tiên tối ưu hóa các mục tiêu hội tụ vững chắc.</p>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Trung Bình Di Động Lũy Thừa (Model EMA)</span>
+        <p>Để tăng cường độ bền vững của mô hình và tránh sụp đổ trong bước cập nhật cục bộ, các trọng số tham số \( \theta \) được sao chép và cập nhật chậm rãi qua hàm Exponential Moving Average:</p>
+        <div class="math-block">
+            \[ \theta_{EMA}^{(t)} = \alpha \theta_{EMA}^{(t-1)} + (1 - \alpha) \theta_{current}^{(t)} \]
+        </div>
+    </div>
+
+    <div class="simple-box">
+        <span class="simple-title">Góc Nhìn Khái Quát: "Quản Trị Chiến Lược Đa Mục Tiêu"</span>
+        Bạn có thể coi nhóm hàm đa phương trình này như một ban quản trị dự án. InfoNCE đóng vai trò như bộ phận liên lạc chéo, kéo gần các mục tiêu hình ảnh và văn bản. CTC đóng vai trò như bộ phận nhân sự tự sắp xếp lịch trình không cần thời gian biểu cố định. Đặc biệt nhất là Homoscedastic Wrapper hoạt động như Giám đốc Điều hành (CEO): thay vì chia ngân sách (trọng số) 50-50 một cách máy móc, vị CEO này tính toán rủi ro biến động của từng dự án (\(s_i\)) và tự động cắt giảm vốn cho các dự án nhiễu loạn để dồn vốn cho các bộ phận đang có lợi suất cao và ổn định.
+    </div>
+
+
+    <!-- ========================================== -->
+    <!-- MỤC 4: CƠ SỞ TOÁN HỌC KHỐI KHÔNG GIAN TRẠNG THÁI (MAMBA) & SỰ CHÚ Ý -->
+    <!-- ========================================== -->
+    <h2>9. Phân Loại Tạm Thời Kết Nối (Connectionist Temporal Classification - CTC)</h2>
+    <p>Một trong những thách thức lớn nhất của nhận dạng ngôn ngữ ký hiệu là người nói có thể thực hiện ký hiệu rất nhanh hoặc rất chậm. Trục thời gian của video (Video Frames) và trục độ dài của câu văn bản (Text Tokens) hoàn toàn không khớp nhau. Hệ thống sử dụng thuật toán CTC Loss để giải quyết bài toán lệch pha thời gian này một cách vi diệu.</p>
+
+    <div class="q-box">
+        <span class="q-title">Toán Học Khử Khoảng Trống (Blank Token Marginalization)</span>
+        <p>Thuật toán <code>_compute_ctc_loss_safe</code> đưa thêm một ký tự đặc biệt gọi là "Blank Token" (Ký tự trống, quy ước là PAD_ID = 0) vào từ điển. Nếu biểu diễn video là \( X \) độ dài \( T \), và câu văn bản chuẩn là \( Y \) độ dài \( U \) (với \( T > U \)), hệ thống sẽ tính tổng xác suất của <strong>tất cả</strong> các con đường hợp lệ (Paths - \(\pi\)) có thể đi từ \( X \) tới \( Y \):</p>
+        <div class="math-block">
+            \[ P(Y|X) = \sum_{\pi \in \Phi(Y)} \prod_{t=1}^{T} y_{\pi_t}^t \]
+            \[ \mathcal{L}_{CTC} = - \ln P(Y|X) \]
+        </div>
+        <p>Hàm ánh xạ \( \Phi(Y) \) cho phép các từ vựng được lặp lại liên tiếp và cho phép chèn ký tự Blank ở giữa. Ví dụ: Chuỗi "C-A-A-T", "C-Blank-A-T", hay "C-A-T-Blank" đều được hợp nhất lại (Marginalized) thành một chữ "CAT".</p>
+    </div>
+    
+    <div class="q-box">
+        <span class="q-title">An Toàn Phân Tán (Distributed Padding Safety)</span>
+        <p>Bởi vì thiết bị phần cứng TPU yêu cầu kích thước ma trận phải tĩnh (Static Graph), độ dài của các câu được nhồi (Pad) lên độ dài tối đa. Trong quá trình tính toán CTC, mạng nơ-ron phải áp dụng một tấm khiên toán học (Padding Mask) để vô hiệu hóa các Ký tự trống dư thừa ở phần đuôi:</p>
+        <div class="math-block">
+            \[ \text{ValidMask}_i = \mathbb{I}(L_{encode\_i} \geq L_{target\_i} \times 2 + 1) \]
+            \[ \mathcal{L}_{final} = \frac{\sum_{i=1}^{B} \mathcal{L}_{CTC}^{(i)} \cdot \text{ValidMask}_i \cdot W_{sample}^{(i)}}{\sum_{i=1}^{B} \text{ValidMask}_i} \]
+        </div>
+        <p>Nếu độ dài video giải mã (\(L_{encode}\)) ngắn hơn độ dài văn bản tối thiểu (\(2 \times L_{target} + 1\)), thuật toán tự động gắn mác <code>ctc_dropped</code> và loại bỏ phép tính đó (nhân với ValidMask = 0) để ngăn chặn lõi TPU bị sập do hiện tượng chia cho số không (NaN / Inf) hoặc lỗi ngoại lệ toán học.</p>
+    </div>
+
+    <div class="simple-box">
+        <span class="simple-title">Góc Nhìn Khái Quát: "Đọc Chữ Braille Bằng Xe Đua"</span>
+        Hãy tưởng tượng bạn đang lái xe đua và phải đọc một dòng chữ Braille (chữ nổi) dưới lòng đường. Vì xe chạy nhanh chậm thất thường, đôi khi lốp xe của bạn chạm vào chữ "A" tận 3 lần liên tiếp, và thỉnh thoảng xe chạy qua một đoạn đường trống. Thuật toán <strong>CTC Loss</strong> giống như một phần mềm dịch thuật thông minh trong xe: Nó tự động hiểu rằng chuỗi tín hiệu "A-A-A-(Trống)-(Trống)-B-C-C" thực chất chỉ là chữ "ABC". Hơn thế nữa, <strong>Hệ thống An Toàn Phân Tán (Masking)</strong> sẽ lập tức phanh khẩn cấp nếu phát hiện xe bạn chạy quá nhanh đến mức bỏ sót các chữ cái bắt buộc phải có trên đường, ngăn không cho phần mềm dịch thuật bị đứng hình.
+    </div>
+
+
+    <!-- ========================================== -->
+    <!-- MỤC 12: ĐỒNG BỘ HÓA ĐA PHƯƠNG THỨC & TÁI TẠO KHÔNG GIAN -->
+    <!-- ========================================== -->
+    <h2>10. Phân Tích Ký Tự Độc Lập (ChicagoFSWild) & Tiên Đoán Độ Dài</h2>
+    <p>Cuối cùng, kiến trúc này không chỉ dịch toàn bộ câu (Sentence-level translation) mà còn tích hợp một khối xử lý đặc biệt dành riêng cho việc đánh vần từng chữ cái bằng ngón tay (Fingerspelling) - dựa trên tập dữ liệu ChicagoFSWild.</p>
+
+    <div class="q-box">
+        <span class="q-title">Toán Học Tiên Đoán Độ Dài Khung Hình (Length Prediction Smooth L1 Loss)</span>
+        <p>Trước khi bắt đầu giải mã từng ký tự, mạng nơ-ron phải "đoán" xem từ này dài bao nhiêu ký tự. Việc này giúp cắt đứt các chuỗi vô tận. Hàm suy hao Smooth L1 (Huber Loss) được sử dụng để trừng phạt dự đoán sai lệch:</p>
+        <div class="math-block">
+            \[ \mathcal{L}_{len} = \begin{cases} 
+            0.5 (\hat{L} - L_{true})^2 & \text{nếu } |\hat{L} - L_{true}| < 1 \\ 
+            |\hat{L} - L_{true}| - 0.5 & \text{nếu } |\hat{L} - L_{true}| \geq 1 
+            \end{cases} \]
+        </div>
+        <p>Hàm Smooth L1 là sự kết hợp hoàn hảo: Nó cong nhẹ ở đáy như hàm L2 (để hội tụ mượt mà khi dự đoán gần đúng) nhưng lại thẳng tắp như hàm L1 ở những vùng sai lệch lớn (để đạo hàm không bị bùng nổ khi dự đoán sai hoàn toàn).</p>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Phân Rã Tổ Hợp Cú Pháp (Chicago EOS & Seq Loss)</span>
+        <p>Đối với việc đánh vần từng ngón tay, mỗi khung hình vi mô chứa một chữ cái độc lập (A-Z). Hệ thống tính toán hai hàm Cross-Entropy riêng biệt:</p>
+        <div class="math-block">
+            \[ \mathcal{L}_{chicago\_seq} = - \sum_{t=1}^{T} \log P(\hat{y}_t = y_t | X) \cdot \text{Mask}_t \]
+            \[ \mathcal{L}_{chicago\_eos} = - \log P(\hat{y}_{T+1} = \text{EOS} | X) \]
+        </div>
+        <p>Trong khi \(\mathcal{L}_{seq}\) ép mô hình phải nhận diện đúng từng chữ cái lướt qua cực nhanh, thì \(\mathcal{L}_{eos}\) đóng vai trò là "Nhát cắt Tử thần": Nó buộc mạng nơ-ron phải biết chính xác lúc nào người nói đã khép ngón tay lại để kết thúc từ, tránh hiện tượng sinh ra các chữ cái rác dư thừa.</p>
+    </div>
+
+    <div class="simple-box">
+        <span class="simple-title">Góc Nhìn Khái Quát: "Đồng Hồ Cát & Lưỡi Hái Tử Thần"</span>
+        <strong>Hàm Tiên đoán Độ dài (Smooth L1)</strong> hoạt động như việc bạn nhìn một người đang hít một hơi thật sâu trước khi nói: Bạn có thể "đoán" được câu họ sắp nói dài hay ngắn dựa vào lượng không khí họ hít vào. Nếu bạn đoán sai một chút (sai 1 chữ), bạn sẽ không bị phạt nặng, nhưng nếu bạn đoán sai hoàn toàn, bạn sẽ bị phạt thích đáng nhưng không đến mức tử hình (Smooth L1). Cuối cùng, <strong>EOS Loss (Lưỡi hái Tử thần)</strong> đứng ở cuối câu nói: Nhiệm vụ duy nhất của nó là chờ đợi người nói chốt lại vấn đề, và lập tức "cắt đứt" dòng suy nghĩ của mô hình, không cho phép nó tiếp tục ảo tưởng thêm bất kỳ chữ cái nào nữa.
+    </div>
+
+
+    <!-- ========================================== -->
+    <!-- MỤC 15: THƯỚC ĐO ĐÁNH GIÁ & ÉP KIỂU PHẦN CỨNG -->
+    <!-- ========================================== -->
+    <h2>11. Giải Mã Tự Hồi Quy (Autoregressive) & Tái Tạo Không Gian 3D</h2>
+    <p>Ở tầng cao nhất của kiến trúc, sau khi đã trích xuất được toàn bộ đặc trưng toán học của video, mô hình cần thực hiện hai nhiệm vụ cuối cùng: Dịch ra câu tiếng Anh hoàn chỉnh (Dịch thuật) và Tưởng tượng lại hình dáng của người ký hiệu (Tái tạo 3D).</p>
+
+    <div class="q-box">
+        <span class="q-title">Sự Chú Ý Chéo Đa Phương Thức (Cross-Attention Mechanism)</span>
+        <p>Lớp <code>ASLDecoderLayer</code> sử dụng cơ chế Sự chú ý chéo, nơi các vector Truy vấn (Query) xuất phát từ văn bản, trong khi Khóa (Key) và Giá trị (Value) xuất phát từ biểu diễn video. Thuật toán tiến hành phép nhân vô hướng để tìm ra sự tương quan giữa "từ vựng hiện tại đang dịch" và "khung hình video chứa từ vựng đó":</p>
+        <div class="math-block">
+            \[ \text{CrossAttention}(X_{text}, H_{video}) = \text{Softmax}\left(\frac{(X_{text} W_Q)(H_{video} W_K)^T}{\sqrt{d_k}} \right) (H_{video} W_V) \]
+        </div>
+        <p>Phép toán này tạo ra một "Cây cầu nối" (Bridge) trực tiếp giữa thế giới ngôn ngữ (Text) và thế giới hình ảnh chuyển động (Video).</p>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Mặt Nạ Nhân Quả Tự Hồi Quy (Autoregressive Causal Masking)</span>
+        <p>Khi sinh ra từng từ một (dịch thuật), mô hình không được phép nhìn lén các từ trong tương lai. Lớp <code>_generate_causal_mask</code> tạo ra một ma trận tam giác trên \( M \), lấp đầy bằng âm vô cực \(-\infty\) ở các phần tử phía trên đường chéo chính:</p>
+        <div class="math-block">
+            \[ M_{i, j} = \begin{cases} 
+            0 & \text{nếu } j \leq i \\ 
+            -\infty & \text{nếu } j > i 
+            \end{cases} \]
+        </div>
+        <p>Khi cộng ma trận \( M \) này vào trước hàm Softmax, \(\exp(-\infty) = 0\), toán học đã triệt tiêu hoàn toàn xác suất của tương lai, ép mô hình phải suy luận thuần túy dựa trên quá khứ (Causal inference).</p>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Hàm Tái Tạo Hình Học 3D (Landmark Reconstruction Head)</span>
+        <p>Để đảm bảo rằng không gian biểu diễn ẩn (Latent Space) không đánh mất các thông tin vật lý quan trọng của bàn tay và khuôn mặt, lớp <code>LandmarkReconstructionHead</code> hoạt động như một Bộ giải mã tự động (Auto-encoder). Nó nhận vector ẩn \( h_t \) và cố gắng phóng chiếu ngược (Reverse Projection) lại thành tọa độ 3D ban đầu của người nói:</p>
+        <div class="math-block">
+            \[ \hat{Y}_{3D} = W_{recon} \cdot \sigma_{GELU}(W_{proj} \cdot h_t) \]
+            \[ \mathcal{L}_{recon} = \frac{1}{N} \sum_{i=1}^{N} \| \hat{Y}_{3D, i} - Y_{3D, i} \|_2^2 \]
+        </div>
+        <p>Nếu mô hình lỡ "quên" mất ngón tay cái của người nói đang ở đâu, hàm suy hao L2 (Mean Squared Error) sẽ lập tức trừng phạt nó, ép mạng nơ-ron phải luôn giữ ý niệm về không gian hình học 3D trong đầu.</p>
+    </div>
+
+    <div class="simple-box">
+        <span class="simple-title">Góc Nhìn Khái Quát: "Người Phiên Dịch Bịt Mắt & Máy Ảnh Tưởng Tượng"</span>
+        <strong>Sự chú ý chéo</strong> giống như một người phiên dịch đang nhìn chằm chằm vào đôi môi của bạn: Tai họ nghe tiếng Anh, nhưng mắt họ phải khóa chặt vào khẩu hình miệng (Video) để khớp từ vựng. Tuy nhiên, họ bị đeo một chiếc <strong>Mặt Nạ Nhân Quả</strong>: Họ chỉ được nhớ những từ bạn đã nói, và hoàn toàn không thể biết trước từ tiếp theo bạn định nói là gì. Cuối cùng, <strong>Tái tạo 3D</strong> giống như việc kiểm tra trí nhớ hình ảnh của mạng nơ-ron: Bắt nó nhắm mắt lại và vẽ lại chính xác tọa độ của 540 khớp xương bàn tay trong không gian 3 chiều. Nếu nó vẽ sai, nó sẽ bị phạt. Điều này chứng minh nó không chỉ học vẹt từ vựng mà thực sự hiểu được cơ thể con người.
+    </div>
+
+
+    <!-- ========================================== -->
+    <!-- MỤC 13: CÂN BẰNG ĐA NHIỆM & KIỂM SOÁT TÍN HIỆU ĐỊA PHƯƠNG -->
+    <!-- ========================================== -->
+    <h2>12. Toán Học Kiểm Soát Mượt Biểu Diễn & Giới Hạn Sụp Đổ</h2>
+
+    <div class="q-box">
+        <span class="q-title">Điều Chuẩn Mượt Tiên Đoán Tuyến Tính (LPC Smoothness Loss)</span>
+        <p>Trong nhận dạng hình ảnh liên tục, mạng nơ-ron thường xuyên gặp lỗi dao động (Jitter) khi phân tích biểu diễn ẩn. Hàm Suy Hao Độ Mượt giải quyết bài toán này bằng cách đo lường chuẩn L2 Norm của vận tốc thay đổi biểu diễn \( h \):</p>
+        <div class="math-block">
+            \[ \Delta h_t = h_{t+1} - h_t \]
+            \[ \mathcal{L}_{smooth} = \frac{1}{T-1} \sum_{t=1}^{T-1} \| \Delta h_t \|^2_2 \]
+        </div>
+        <p>Tuy nhiên, hệ phương trình này đối mặt với rủi ro cực đại: <strong>Sụp Đổ Biểu Diễn (Representation Collapse)</strong>. Nếu mô hình cố tình xuất ra một vector hằng số (\( h_t = \text{const} \)), đạo hàm của khoảng cách sẽ bằng không và mô hình "gian lận" thành công hàm phạt.</p>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Cơ Chế Phạt Sụp Đổ Phương Sai (Variance Collapse Penalty)</span>
+        <p>Để ngăn chặn sự lười biếng toán học này, hệ thống tích hợp thêm một hàm kiểm soát độ lệch chuẩn \(\sigma\). Nếu độ phân tán của ma trận biểu diễn \( \sigma(h) \) nhỏ hơn 1.0 (tức là tín hiệu đang tiến về trạng thái đường thẳng đi ngang), hàm phạt Hinge Loss sẽ lập tức trừng phạt mạnh tay:</p>
+        <div class="math-block">
+            \[ \sigma_{t}(h) = \sqrt{ \frac{1}{d} \sum_{i=1}^{d} (h_{t, i} - \bar{h}_t)^2 } \]
+            \[ \bar{\sigma} = \frac{1}{T} \sum_{t=1}^{T} \sigma_t(h) \]
+            \[ \mathcal{L}_{penalty} = \lambda \cdot \max(0, 1.0 - \bar{\sigma}) \]
+        </div>
+    </div>
+
+    <div class="simple-box">
+        <span class="simple-title">Góc Nhìn Khái Quát: "Thanh Tra Chống Lách Luật Dữ Liệu"</span>
+        Hãy tưởng tượng thuật toán tối ưu hóa như một nhân viên luôn muốn hoàn thành bài kiểm tra bằng cách dễ nhất. Khi bị yêu cầu vẽ một đường cong mượt mà, cách "gian lận" dễ nhất là chấm một dấu chấm đứng yên. Tuy nhiên, hàm phạt Phương Sai đóng vai trò như một thanh tra dữ liệu: Nó ép buộc tín hiệu phải liên tục thay đổi phong phú, nếu dao động nhịp tim của tín hiệu bị tụt xuống quá thấp, thanh tra sẽ kích hoạt hệ thống báo động để tái khởi động tính đa dạng của mạng lưới.
+    </div>
+
+
+    <!-- ========================================== -->
+    <!-- MỤC 6: ĐIỀU PHỐI ĐA CHUYÊN GIA & BẢO MẬT ĐẠO HÀM -->
+    <!-- ========================================== -->
+    <h2>13. Trọng Số Dựa Trên Bất Định & Nén Tín Hiệu (Squeeze-and-Excitation)</h2>
+    <p>Để hoàn thiện hệ thống, mô hình giải quyết bài toán phức tạp cuối cùng: Làm sao để tối ưu hóa cùng lúc 7 hàm Suy hao khác nhau mà không để một hàm nào lấn át các hàm còn lại? Và làm sao để lọc bỏ tiếng ồn cục bộ trong khung hình?</p>
+
+    <div class="q-box">
+        <span class="q-title">Cân Bằng Hàm Suy Hao Bất Định Đồng Phương Sai (Homoscedastic Uncertainty Weighting)</span>
+        <p>Thay vì tự tay mò mẫm chỉnh sửa các trọng số \(\lambda_i\) cho từng hàm suy hao, lớp <code>HomoscedasticLossWrapper</code> coi mỗi hàm suy hao như một nguồn phát sinh tiếng ồn. Thuật toán của Kendall & Gal (CVPR 2018) gán cho mỗi hàm một tham số học được là \(\log \sigma_i^2\) (phương sai của nhiệm vụ), và kết hợp chúng bằng phương trình cực đại hóa khả năng (Maximum Likelihood):</p>
+        <div class="math-block">
+            \[ \mathcal{L}_{total} = \sum_{i} \left( e^{-\log \sigma_i^2} \cdot \mathcal{L}_i + \frac{1}{2} \log \sigma_i^2 \right) \]
+        </div>
+        <p>Phương trình này có tính tự cân bằng tuyệt hảo: Nếu một hàm suy hao \(\mathcal{L}_i\) quá lớn và có độ bất định cao, mạng sẽ tự động đẩy \(\sigma_i\) lên cao, làm giảm trọng số \(e^{-\log \sigma_i^2}\) của hàm đó xuống. Nhưng nó không thể tăng \(\sigma_i\) lên vô hạn để ăn gian, vì số hạng thứ hai \(\frac{1}{2} \log \sigma_i^2\) sẽ hoạt động như một khoản tiền phạt lũy tiến. Kết quả là 7 nhiệm vụ huấn luyện được hòa quyện hoàn hảo mà không cần con người can thiệp.</p>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Hệ Thống Nén Và Kích Thích Không Gian-Thời Gian (Spatial-Temporal Squeeze-and-Excitation)</span>
+        <p>Lớp <code>SpatialTemporalSE</code> hoạt động như một hệ thống chống ồn kênh. Đầu tiên, nó dùng hàm Nén (Squeeze - Global Average Pooling) để ép toàn bộ chiều không gian và thời gian của một kênh đặc trưng thành một con số duy nhất \( z \):</p>
+        <div class="math-block">
+            \[ z = \frac{1}{T \times H \times W} \sum_{t} \sum_{h} \sum_{w} x_{t, h, w} \]
+        </div>
+        <p>Sau đó, hàm Kích thích (Excitation) đưa \( z \) qua hai lớp mạng để sinh ra một vector trọng số \( s \) từ 0 đến 1. Cuối cùng, vector này được nhân ngược lại vào khối dữ liệu ban đầu:</p>
+        <div class="math-block">
+            \[ s = \sigma\left(W_2 \cdot \text{ReLU}(W_1 \cdot z)\right) \]
+            \[ X_{out} = X_{in} \odot s \]
+        </div>
+        <p>Toán học này cho phép mạng nơ-ron tự động dập tắt (nhân với 0) các kênh thông tin vô dụng (như nhiễu hạt) và khuếch đại (nhân với 1) các kênh thông tin mang tính sống còn đối với nhận dạng ngôn ngữ ký hiệu.</p>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Đồng Bộ Gradient Đám Toán Phân Tán (XLA All-Reduce Distributed Math)</span>
+        <p>Khi mô hình 31M tham số được chia ra huấn luyện trên nhiều lõi TPU khác nhau, đạo hàm của chúng sẽ bị phân mảnh. Hệ thống tự động kích hoạt phép toán `xm.all_reduce`, trong đó bộ Gradient toàn cục \(\nabla \theta_{global}\) được tính bằng trung bình cộng toán học của các Gradient cục bộ từ \(K\) lõi TPU:</p>
+        <div class="math-block">
+            \[ \nabla \theta_{global} = \frac{1}{K} \sum_{k=1}^{K} \nabla \theta_{local}^{(k)} \]
+        </div>
+        <p>Toán học này đảm bảo rằng tất cả 8 lõi TPU (khi ghép lại) sẽ cư xử hệt như một bộ não duy nhất khổng lồ, hội tụ chính xác về một điểm cực tiểu chung.</p>
+    </div>
+
+    <div class="simple-box">
+        <span class="simple-title">Góc Nhìn Khái Quát: "Bộ EQ Âm Thanh & Quản Lý Dự Án"</span>
+        <strong>Cân bằng Bất định</strong> giống như một vị quản lý dự án thông minh: Nếu một nhân viên (hàm suy hao) báo cáo công việc quá nhiễu loạn và thiếu ổn định, quản lý sẽ bớt tin tưởng báo cáo đó đi (\(e^{-\log \sigma^2}\) giảm), nhưng nếu quản lý bỏ qua tất cả nhân viên để tự quyết định thì sẽ bị công ty phạt (\(\frac{1}{2}\log \sigma^2\)). <strong>Squeeze-and-Excitation</strong> thì giống hệt như một bộ điều chỉnh âm thanh (EQ): Nó lắng nghe toàn bộ bài hát (Squeeze) để nhận ra rằng tiếng Bass đang quá to và vô ích, sau đó tự động kéo cần gạt Bass xuống và tăng dải Mid (âm giọng nói) lên (Excitation), giúp tín hiệu luôn sắc nét và trong trẻo.
+    </div>
+
+
+    <!-- ========================================== -->
+    <!-- MỤC 14: TOÁN HỌC DÀNH RIÊNG CHO ĐÁNH VẦN NGÓN TAY (FINGERSPELLING) -->
+    <!-- ========================================== -->
+    
+
+    <h1 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-top: 50px;">CHƯƠNG 4: TỐI ƯU HÓA VÀ RÈN LUYỆN (Optimization & Training)</h1>
+
+
+    <h1 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-top: 50px;">CHƯƠNG 4: TỐI ƯU HÓA VÀ RÈN LUYỆN (Optimization & Training)</h1>
+
+
+    <h1 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-top: 50px;">CHƯƠNG 4: TỐI ƯU HÓA VÀ RÈN LUYỆN (Optimization & Training)</h1>
+<h2>14. Điều Tốc Chu Kỳ Tiêu Chuẩn (OneCycleLR) & Cắt Cúp Đạo Hàm</h2>
+    <p>Thuật toán tối ưu hóa AdamW đóng vai trò như động cơ của mô hình, nhưng nếu không có hệ thống phanh và vô lăng điều tốc (Scheduler), cỗ máy 31M tham số này sẽ nhanh chóng lao ra khỏi quỹ đạo huấn luyện.</p>
+
+    <div class="q-box">
+        <span class="q-title">Điều Tốc Động Học Hình Sin Chu Kỳ Đơn (One Cycle Learning Rate)</span>
+        <p>Thay vì giữ nguyên tốc độ học (Learning Rate - $\eta$) hoặc giảm dần đều đặn, mô hình sử dụng hàm điều tốc <code>OneCycleLR</code>. Trong giai đoạn khởi động (Warm-up), tốc độ học tăng vọt từ từ lên mức tối đa để mô hình thoát khỏi các hố sâu cục bộ (Local Minima), sau đó giảm theo hình sin lùi về 0:</p>
+        <div class="math-block">
+            \[ \eta(t) = 
+            \begin{cases} 
+            \eta_{min} + \frac{1}{2}(\eta_{max} - \eta_{min})\left(1 - \cos\left(\frac{t}{T_{warmup}} \pi \right)\right) & \text{khi } t < T_{warmup} \\
+            \eta_{min} + \frac{1}{2}(\eta_{max} - \eta_{min})\left(1 + \cos\left(\frac{t - T_{warmup}}{T_{total} - T_{warmup}} \pi \right)\right) & \text{khi } t \geq T_{warmup}
+            \end{cases}
+            \]
+        </div>
+        <p>Kỹ thuật "Siêu Hội Tụ" (Super-Convergence) này cho phép TPU huấn luyện mô hình ở tốc độ cực cao, ép mạng nơ-ron phải tìm ra các giải pháp tổng quát nhất thay vì học vẹt những đặc trưng nhỏ lẻ.</p>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Cắt Cúp Chuẩn Đạo Hàm L2 (Gradient Norm Clipping)</span>
+        <p>Để ngăn chặn hiện tượng Bùng nổ Đạo hàm (Exploding Gradients) khi TPU xử lý các video có nhiễu quá lớn, mô hình sử dụng hàm <code>clip_grad_norm_</code> để giới hạn bán kính cực đại của vector đạo hàm \( \mathbf{g} \). Nếu chuẩn L2 của đạo hàm vượt qua ngưỡng an toàn \( c \), hệ thống sẽ gọt giũa nó xuống:</p>
+        <div class="math-block">
+            \[ \mathbf{g} \leftarrow \begin{cases} 
+            \mathbf{g} & \text{nếu } \|\mathbf{g}\|_2 \leq c \\ 
+            \frac{c}{\|\mathbf{g}\|_2} \mathbf{g} & \text{nếu } \|\mathbf{g}\|_2 > c 
+            \end{cases} \]
+        </div>
+        <p>Bằng cách ép độ dài vector không bao giờ vượt qua \( c \) (thường là 1.0) nhưng vẫn giữ nguyên phương hướng trong không gian đa chiều, mô hình có thể từ từ bước xuống đáy của hàm mục tiêu mà không bao giờ bị vấp ngã.</p>
+    </div>
+
+    <div class="simple-box">
+        <span class="simple-title">Góc Nhìn Khái Quát: "Đạp Ga Ô Tô & Hệ Thống Phanh L2"</span>
+        Hệ thống <strong>OneCycleLR</strong> giống như cách bạn lái xe lên một đỉnh dốc cao. Ban đầu bạn đạp ga từ từ (Warm-up) để xe không bị trượt bánh, sau đó nhấn lút ga (Max LR) để lấy đà vượt qua đỉnh dốc (thoát khỏi Local Minima), và cuối cùng nhả ga từ từ để xe trôi êm ái xuống chân đồi phía bên kia (Hội tụ). Trong quá trình lái đó, <strong>Cắt cúp Đạo hàm</strong> hoạt động như Hệ thống Chống bó cứng phanh (ABS): Dù dữ liệu có đẩy bánh xe trượt nhanh đến đâu (Exploding Gradient), hệ thống phanh L2 sẽ gọt bớt lực quán tính, ép bánh xe quay đúng tốc độ giới hạn 1.0, giúp chiếc xe 31 triệu linh kiện không bao giờ bị lật.
+    </div>
+
+
+    <!-- ========================================== -->
+    <!-- MỤC 10: TỔNG HỢP KIẾN THỨC THEO THỜI GIAN -->
+    <!-- ========================================== -->
+    <h2>15. Trung Bình Trọng Số Mũ (Exponential Moving Average - EMA)</h2>
+    <p>Thay vì sử dụng trạng thái cuối cùng của mạng nơ-ron sau bước huấn luyện cuối cùng—vốn có thể bị ảnh hưởng bởi những nhiễu loạn ngẫu nhiên của các lô dữ liệu (batches) cuối—hệ thống duy trì một "Bản sao Bóng tối" (Shadow Copy) của toàn bộ 31 triệu tham số.</p>
+
+    <div class="q-box">
+        <span class="q-title">Cập Nhật Trạng Thái Bóng Tối (Shadow Update Rule)</span>
+        <p>Lớp <code>ModelEMA</code> cập nhật các tham số bóng tối \(\theta_{EMA}\) bằng cách lấy trung bình có trọng số giữa trạng thái bóng tối hiện tại và trạng thái tham số thực tế \(\theta_{model}\) ở mỗi bước huấn luyện, với hệ số phân rã \(\beta\) (Decay Rate) tiến rất sát đến 1.0 (ví dụ: 0.9999):</p>
+        <div class="math-block">
+            \[ \theta_{EMA}^{(t)} = \beta \cdot \theta_{EMA}^{(t-1)} + (1 - \beta) \cdot \theta_{model}^{(t)} \]
+        </div>
+        <p>Phương trình này có nghĩa là bản sao EMA ghi nhớ một phần ký ức của hàng vạn bước huấn luyện trước đó, tạo ra một ma trận trọng số cực kỳ ổn định, mượt mà và miễn nhiễm hoàn toàn với các cú sốc gradient (Gradient Shocks) nhất thời.</p>
+    </div>
+    
+    <div class="q-box">
+        <span class="q-title">Động Lực Học Phân Rã Khởi Động (Warm-up Decay Dynamics)</span>
+        <p>Để ngăn Bản sao Bóng tối bị tụt lại quá xa so với mô hình gốc trong những kỷ nguyên (epochs) đầu tiên khi tốc độ học còn cao và đạo hàm thay đổi liên tục, thuật toán tự động tính toán một \(\beta\) biến thiên, tăng dần theo thời gian huấn luyện:</p>
+        <div class="math-block">
+            \[ \beta(t) = \min\left( \beta_{max}, \frac{1 + t}{10 + t} \right) \]
+        </div>
+        <p>Chỉ khi kết thúc quá trình huấn luyện, Bản sao Bóng tối này mới được hoán đổi để trở thành mô hình chính thức để chạy đánh giá trên tập Kiểm thử (Validation), mang lại độ chính xác tổng quát hóa (Generalization) vượt trội so với mô hình thô.</p>
+    </div>
+
+    <div class="simple-box">
+        <span class="simple-title">Góc Nhìn Khái Quát: "Hội Đồng Trí Tuệ Tích Lũy"</span>
+        Nếu mô hình gốc (\(\theta_{model}\)) là một vị giám đốc trẻ tuổi, thay đổi quyết định liên tục dựa vào doanh thu của ngày hôm qua (độ dốc gradient tức thời), thì Bản sao Bóng tối (EMA) đóng vai trò như một Hội đồng Quản trị lão làng. Thay vì chạy theo cảm xúc của ngày hôm qua, Hội đồng Quản trị đưa ra quyết định bằng cách lấy trung bình cộng trí tuệ và kinh nghiệm của hàng vạn ngày làm việc trước đó (\(\beta = 0.9999\)). Vào cuối dự án, thay vì nộp bản báo cáo do vị giám đốc trẻ viết lúc nửa đêm, bạn nộp bản báo cáo đã được mài giũa cẩn thận bởi Hội đồng Quản trị.
+    </div>
+
+
+    <!-- ========================================== -->
+    <!-- MỤC 11: GIẢI MÃ CHUỖI THỜI GIAN KHÔNG ĐỒNG BỘ -->
+    <!-- ========================================== -->
+    <h2>16. Các Mảnh Ghép Toán Học Cuối Cùng (The Final Mathematical Decisions)</h2>
+    <p>Sau khi phân tích kỹ lưỡng, các phương trình toán học lý tưởng ở trên sẽ sụp đổ (Fail) trong thực tế nếu không có các chốt chặn an toàn (Robustness Safeguards). Dưới đây là những quyết định toán học sống còn cuối cùng để bảo vệ toàn bộ 파ipeline:</p>
+
+    <div class="q-box">
+        <span class="q-title">C++ Interface: Toán Học Giải Mã Đầu Cơ & Suy Vong Entropy (Speculative & Entropy Decoding)</span>
+        <p>Bên cạnh CIF, môi trường C++ triển khai thuật toán <strong>Speculative Decoding</strong> bằng cách so sánh xác suất của Draft Decoder và Target Decoder. Tuy nhiên, nếu Draft Decoder tự tin vào một từ vựng sai (\( P_{draft} \approx 0 \)), phép chia sẽ nổ tung (Division by Zero). Do đó, mã nguồn C++ bắt buộc phải cộng thêm hệ số \(\epsilon = 10^{-9}\):</p>
+        <div class="math-block">
+            \[ \text{Accept Ratio} = \min\left(1.0, \frac{P_{target}(x)}{P_{draft}(x) + 10^{-9}} \right) \]
+        </div>
+        <p>Hệ thống C++ cũng trang bị kiến trúc <strong>Hybrid CIF-Entropy</strong> để dừng sớm quá trình dự đoán (Early Stopping). Nó tính toán độ hỗn loạn bằng công thức Shannon Entropy: \( H = - \sum p \log(p) \). Nếu \( H < 0.2 \), hệ thống đủ "tự tin" để khóa (Commit) từ vựng và tự động bỏ qua các vòng lặp tính toán thừa thãi.</p>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Train Pipeline: Chuẩn Hóa Điền Khuyết & Nhịp Hô Hấp OneCycleLR</span>
+        <p>Thứ nhất, để xử lý hàng triệu giá trị số Không (Zero Padding) do XLA TPU tĩnh hóa đồ thị, mô hình áp dụng mặt nạ nhị phân (Binary Mask) để bảo vệ hàm suy hao: \( \mathcal{L}_{final} = \frac{\sum \mathcal{L}_i \cdot \text{Mask}_i}{\sum \text{Mask}_i} \).</p>
+        <p>Thứ hai, tốc độ học (Learning Rate) không tĩnh mà tuân theo phương trình nhịp thở <strong>Cosine Annealing (OneCycleLR)</strong>. Khác với các thuật toán thông thường, khi Learning Rate \(\eta_t\) vọt lên cực đại, hệ số quán tính (Momentum) lại bị ép giảm xuống cực tiểu để tránh việc mô hình bay ra khỏi không gian nghiệm hợp lệ (Divergence):</p>
+        <div class="math-block">
+            \[ \eta_t = \eta_{min} + \frac{1}{2}(\eta_{max} - \eta_{min}) \left( 1 + \cos\left(\frac{T_{cur}}{T_{max}}\pi\right) \right) \]
+        </div>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Preprocessing: Chốt Chặn Giải Phẫu Học Góc Nghiêng (Sideways Profile Safeguard)</span>
+        <p>Hệ thống chuẩn hóa kích thước tọa độ dựa trên điểm giữa hai vai (Mid-Shoulder Centroid): \( \mu = \frac{\text{Shoulder}_L + \text{Shoulder}_R}{2} \). Tuy nhiên, nếu người dùng đứng quay ngang (Sideways Profile), khoảng cách 2D giữa 2 vai sẽ xấp xỉ Không, khiến tỷ lệ thu phóng (Scale) tiến tới vô cực (\(\infty\)) và làm nổ toàn bộ đồ thị (NaN Explosion).</p>
+        <p>Để khắc phục, hàm <code>CoordinateNormalizer</code> đã ngầm cài cắm hàm \(\max\) để chặn đáy mẫu số:</p>
+        <div class="math-block">
+            \[ \text{Scale} = \frac{\text{Target\_Shoulder\_Dist}}{\max\left(\| \text{Shoulder}_L - \text{Shoulder}_R \|_2, 10^{-4}\right)} \]
+            \[ X_{norm} = (X - \mu) \cdot \text{Scale} \]
+        </div>
+        <p>Phương trình này đảm bảo mô hình vẫn hoạt động hoàn hảo ngay cả khi người khiếm thính đứng nghiêng 90 độ so với ống kính camera, bảo toàn cấu trúc ma trận biến đổi trước khi đi vào mạng Conformer.</p>
+    </div>
+
+    <!-- ========================================== -->
+    
+
+    <h1 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-top: 50px;">CHƯƠNG 5: TRIỂN KHAI VÀ SUY LUẬN THỜI GIAN THỰC (Deployment & Inference)</h1>
+
+
+    <h1 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-top: 50px;">CHƯƠNG 5: TRIỂN KHAI VÀ SUY LUẬN THỜI GIAN THỰC (Deployment & Inference)</h1>
+
+
+    <h1 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-top: 50px;">CHƯƠNG 5: TRIỂN KHAI VÀ SUY LUẬN THỜI GIAN THỰC (Deployment & Inference)</h1>
+<h2>17. Khoảng Cách Levenshtein & Lượng Tử Hóa ONNX (Model Export)</h2>
+    <p>Để hoàn tất vòng đời của mô hình, chúng ta phải đối mặt với hai thử thách cuối cùng: Làm sao để chấm điểm xem mô hình dịch đúng hay sai (Evaluation)? Và làm sao để nén mô hình khổng lồ này nhét vừa vào một thiết bị di động nhỏ bé chạy CPU thời gian thực (Real-time CPU Inference)?</p>
+
+    <div class="q-box">
+        <span class="q-title">Toán Học Chấm Điểm: Khoảng Cách Levenshtein (Word Error Rate)</span>
+        <p>Lớp <code>eval_epoch.py</code> không sử dụng độ chính xác phần trăm (Accuracy) thông thường vì trong dịch thuật, dịch thiếu một từ không có nghĩa là sai toàn bộ câu. Hệ thống sử dụng <strong>Khoảng cách Levenshtein</strong> để tính toán số phép Biến đổi (Xóa, Thêm, Thay thế) tối thiểu cần thiết để biến câu dự đoán thành câu gốc:</p>
+        <div class="math-block">
+            \[ D_{a,b}(i, j) = \begin{cases} 
+            \max(i, j) & \text{nếu } \min(i, j) = 0 \\ 
+            \min \begin{cases} 
+            D_{a,b}(i-1, j) + 1 \\ 
+            D_{a,b}(i, j-1) + 1 \\ 
+            D_{a,b}(i-1, j-1) + \mathbb{I}(a_i \neq b_j)
+            \end{cases} & \text{nếu } \min(i, j) > 0 
+            \end{cases} \]
+        </div>
+        <p>Công thức Quy hoạch động (Dynamic Programming) này cho phép đánh giá công bằng: Nếu mô hình dịch "Tôi đi học" thành "Tôi học", khoảng cách Levenshtein chỉ là 1 (thiếu chữ "đi"), chứng tỏ mô hình vẫn hiểu được 66% ngữ nghĩa thay vì bị chấm 0 điểm.</p>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Lượng Tử Hóa Động Nguyên 8-bit (INT8 Dynamic Quantization)</span>
+        <p>File <code>export_cpu.py</code> thực hiện một phép màu toán học để nén mô hình. Nó ép toàn bộ các ma trận trọng số từ định dạng số thực 32-bit (Float32) xuống số nguyên 8-bit (INT8) thông qua công thức Lượng tử hóa Affine:</p>
+        <div class="math-block">
+            \[ q = \text{clip} \left( \text{round}\left( \frac{r}{S} \right) + Z, \ 0, \ 255 \right) \]
+        </div>
+        <p>Trong đó \( r \) là giá trị số thực ban đầu, \( S \) (Scale) là hệ số co giãn, và \( Z \) (Zero-point) là điểm neo dịch chuyển. Quá trình này chặt bỏ các số thập phân vô nghĩa, giảm dung lượng bộ nhớ xuống 4 lần và tăng tốc độ xử lý CPU (AVX2) lên vượt mức 60 FPS mà không làm suy giảm đáng kể độ chính xác toán học của khoảng cách Levenshtein.</p>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Đồ Thị Tính Toán Tĩnh (Static ONNX Graph)</span>
+        <p>Cuối cùng, kiến trúc động của PyTorch (Dynamic Graph) bị đóng băng hoàn toàn. Trình biên dịch sẽ loại bỏ tất cả các vòng lặp <code>for/if</code> và hợp nhất các phép toán ma trận lại thành một <strong>Đồ thị Tính toán Tĩnh (ONNX Opset 17)</strong>. Mọi chuỗi chiều dài thời gian (Time sequence) bị ép cứng về độ dài tối đa (Padding to 320 tokens). Điều này triệt tiêu hoàn toàn độ trễ của trình thông dịch Python (Overhead), cho phép ngôn ngữ C++ trực tiếp can thiệp vào tầng vật lý của CPU.</p>
+    </div>
+
+    <div class="simple-box">
+        <span class="simple-title">Góc Nhìn Khái Quát: "Chấm Thi Tự Luận & Ép Khuôn Đúc Tượng"</span>
+        <strong>Khoảng cách Levenshtein</strong> giống như một vị giám khảo chấm thi tự luận: Chấm điểm dựa trên "ý" chứ không phải bắt bẻ từng chữ mảy may. Nếu thí sinh viết thiếu một chữ, giám khảo chỉ trừ một phần nhỏ điểm chứ không đánh rớt toàn bộ bài. <strong>Lượng tử hóa INT8 & ONNX</strong> lại giống như quá trình Đúc Tượng đồng: Bạn xây dựng mô hình bằng đất sét mềm dẻo (PyTorch Float32), cho phép bạn uốn nắn, sửa chữa mọi chi tiết nhỏ nhất. Nhưng khi cần mang bức tượng ra trưng bày giữa giông bão ngoài đời thực (Real-time CPU), bạn phải đun chảy đồng và đổ nó vào một cái khuôn cứng ngắc (ONNX Graph). Bức tượng đồng (INT8) thô ráp hơn một chút xíu so với đất sét, nhưng nó không thể bị phá vỡ và có thể tồn tại vĩnh cửu ngoài đời thực với tốc độ cực nhanh.
+    </div>
+
+
+    <!-- ========================================== -->
+
+
+    <!-- ========================================== -->
+    <!-- MỤC 17: GIAO DIỆN C++ & SUY LUẬN THỜI GIAN THỰC -->
+    <!-- ========================================== -->
+    <h2>18. Giao Diện Môi Trường C++ & Suy Luận Thời Gian Thực (C++ Inference Engine)</h2>
+    <p>Giai đoạn cuối cùng của hệ thống không diễn ra trên môi trường Python/TPU mà được triển khai hoàn toàn bằng ngôn ngữ C++ hiệu năng cao thông qua tệp <code>cpp/inference_engine.cpp</code>. Môi trường này sử dụng thư viện ONNX Runtime kết hợp với các bộ gia tốc phần cứng (Hardware Accelerators) như Intel OpenVINO hoặc DirectML để đạt tốc độ nhận diện 60+ FPS trên các thiết bị cấu hình thấp.</p>
+
+    <div class="q-box">
+        <span class="q-title">Cơ Chế Bộ Đệm Vòng Zero-Copy (Ring Buffer)</span>
+        <p>Để xử lý luồng video liên tục (Streaming) mà không bị rò rỉ bộ nhớ, hệ thống C++ khởi tạo một bộ đệm vòng (Circular Buffer) giới hạn ở mức 120 khung hình (MAX_LEN). Thay vì cấp phát lại vùng nhớ (Memory Allocation) cho mỗi khung hình mới, con trỏ (Pointer) sẽ viết đè lên vùng nhớ cũ nhất. Phép tính này cho phép trích xuất một cửa sổ trượt (Sliding Window) với độ trễ (Latency) không đổi \(\mathcal{O}(1)\).</p>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Cổng Lọc Năng Lượng & Sai Phân (RestState & FrameDiff Gate)</span>
+        <p>Nhằm tiết kiệm tài nguyên CPU, hai lớp cổng logic vật lý được thiết lập trước khi dữ liệu chạm vào mạng Neural:</p>
+        <div class="math-block">
+            \[ E_{kinetic} = \frac{1}{3 \cdot K} \sum_{k=1}^{K} (v_{x,k}^2 + v_{y,k}^2 + v_{z,k}^2) < \theta_{rest} \]
+            \[ \Delta_{frame} = \frac{1}{D} \sum_{i=1}^{D} |x_{t,i} - x_{t-1,i}| < \theta_{diff} \]
+        </div>
+        <p>Nếu tổng động năng (Kinetic Energy) của 60 khớp xương hoặc sai phân tuyệt đối giữa hai khung hình nhỏ hơn ngưỡng cho phép, hệ thống C++ sẽ lập tức vứt bỏ khung hình đó mà không cần đưa qua ONNX (Bypass), giảm tới 40% tải tính toán trong các khoảng lặng của người nói.</p>
+    </div>
+
+    <div class="q-box">
+        <span class="q-title">Giải Mã Không Tự Hồi Quy (Non-Autoregressive CIF)</span>
+        <p>Thay vì sử dụng bộ giải mã sinh từ tuần tự (Autoregressive) tốn thời gian, động cơ C++ triển khai kiến trúc <strong>Continuous Integrate-and-Fire (CIF)</strong>. Cỗ máy này tích lũy trọng lượng âm thanh (Acoustic Weight) theo thời gian thực và tự động "phóng" (Fire) ra một từ vựng ngay khi trọng lượng vượt mốc 1.0. Quá trình này diễn ra chỉ trong một lần truyền tới (Single Forward Pass) qua ONNX, mang lại tốc độ phản hồi gần như tức thời cho người khiếm thính.</p>
+    </div>
+
+
+    <!-- ========================================== -->
+    <!-- MỤC 18: TOÁN HỌC TĂNG CƯỜNG DỮ LIỆU & BỘ LỌC GIA TỐC -->
+    <!-- ========================================== -->
+
+
+    <h2>Sơ Đồ Kiến Trúc Luồng Dữ Liệu Tổng Thể (End-to-End Pipeline)</h2>
+    <p>Dưới đây là sơ đồ luồng dữ liệu mô tả toàn bộ quá trình biến đổi của một video ngôn ngữ ký hiệu thông qua 31 triệu tham số, từ khi còn là tín hiệu thô cho đến khi giải mã thành văn bản và tối ưu hóa bằng các hàm suy hao toán học.</p>
+    
+    <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin: 2rem 0; overflow-x: auto;">
+        <div class="mermaid">
+        graph TD
+            %% Input & Preprocessing
+            Input["""Dữ liệu Video Gốc <br> 540 Khớp Xương Tọa độ x,y,z"""] --> Pre["""Tiền xử lý TPU"""]
+            Pre --> Norm["""Chuẩn hóa Hình học SE-3 <br> Trọng tâm vai"""]
+            Norm --> Kine["""Đạo hàm Động học 9 Kênh <br> Vị trí, Vận tốc, Gia tốc"""]
+            Kine --> Mask["""Mặt nạ Tĩnh <br> Đệm dữ liệu 384x288"""]
+            
+            %% Backbone Feature Extraction
+            Mask --> Backbone["""Kiến Trúc Lõi Đa Nhiệm"""]
+            
+            subgraph Backbone ["""Bộ Trích Xuất Đặc Trưng Chính 31M Tham Số"""]
+                direction TB
+                SE["""Spatial-Temporal Squeeze & Excitation"""] --> C1["""MobileConformer Block"""]
+                C1 --> M1["""BiMamba2 State-Space Model"""]
+                M1 --> C2["""MobileConformer Block"""]
+                C2 --> MoE["""Sparse Mixture of Experts - MoE <br> Phân bổ Top-K"""]
+                MoE --> GQA["""Grouped Query Attention"""]
+            end
+            
+            %% Multi-Task Decoders
+            Backbone --> Split{Điều Phối Đa Nhiệm}
+            
+            Split --> CTCHead["""Khối Giải Mã CTC <br> Dịch câu không đồng bộ"""]
+            Split --> ChiHead["""Khối ChicagoFSWild <br> Đánh vần từng ngón tay"""]
+            Split --> ReconHead["""Khối Tái Tạo 3D <br> Phóng chiếu Auto-encoder"""]
+            Split --> SemHead["""Khối Ngữ Nghĩa <br> Đối chiếu Cross-Attention"""]
+            
+            %% Losses
+            CTCHead --> CTCLoss["""Suy hao CTC <br> Hàm khử khoảng trống"""]
+            ChiHead --> ChiLoss["""Suy hao Chicago <br> Smooth L1 & Cắt EOS"""]
+            ReconHead --> L2Loss["""Suy hao L2 <br> Sai số hình học 3D"""]
+            SemHead --> InfoNCE["""Suy hao InfoNCE & Semantic <br> Khoảng cách Cosine"""]
+            Backbone --> LPCLoss["""Suy hao LPC <br> Trừng phạt sụp đổ phương sai"""]
+            
+            %% Optimization
+            CTCLoss --> Homo["""Homoscedastic Loss Wrapper <br> Cân bằng Bất định"""]
+            ChiLoss --> Homo
+            L2Loss --> Homo
+            InfoNCE --> Homo
+            LPCLoss --> Homo
+            
+            Homo --> Optimizer["""Tối Ưu Hóa AdamW & OneCycleLR"""]
+            Optimizer --> AllReduce["""XLA All-Reduce <br> Đồng bộ 8 Lõi TPU"""]
+            
+            %% EMA
+            AllReduce -. Cập nhật Bóng tối .-> EMA["""Bản Sao Bóng Tối EMA <br> Beta = 0.9999"""]
+            
+            %% Deployment & C++ Inference
+            EMA --> Quant["""Lượng Tử Hóa INT8 <br> q = round(r/S) + Z"""]
+            Quant --> ONNX["""Biên Dịch Đồ Thị Tĩnh ONNX <br> Opset 17"""]
+            
+            subgraph CppEnv ["""Môi Trường Suy Luận C++ Thời Gian Thực"""]
+                direction TB
+                Ring["""Zero-Copy Ring Buffer <br> Bộ đệm vòng O(1)"""] --> Gate["""Cổng Lọc Dữ Liệu <br> RestState & FrameDiff"""]
+                Gate --> CIF["""Cỗ Máy Continuous Integrate-and-Fire <br> Giải mã Non-Autoregressive"""]
+            end
+            
+            ONNX --> Ring
+            CIF -. Sinh Text Real-time .-> Output["""Văn Bản Ngôn Ngữ Ký Hiệu"""]
+
+            style Backbone fill:#e9f5e9,stroke:#2e7d32,stroke-width:2px
+            style Homo fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+            style EMA fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+            style CppEnv fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+        </div>
+    </div>
+
+    <!-- KẾT LUẬN & PHIÊN LÀM VIỆC TỔNG THỂ -->
+    <!-- ========================================== -->
+    <div class="conclusion-box">
+        <h2 style="margin-top: 0; color: #2e86c1;">Kết Luận: Tổng Quan Khoa Học Dữ Liệu</h2>
+        <p>Kiến trúc nền tảng ba mươi mốt triệu tham số được xây dựng tại đây không phải là một sự lắp ghép ngẫu nhiên của các thuật toán, mà là một sự dung hòa nghiêm ngặt giữa vật lý động học, hình học phi chuẩn, và tối ưu hóa phi tuyến tính bậc cao. Quy trình toán học hoạt động theo một thiết kế khép kín hoàn hảo:</p>
+        
+        <h3>Luồng Vận Hành Cơ Sở Toán Học (End-to-End Mathematics):</h3>
+        <ol>
+            <li><strong>Biến đổi Cơ sở Không Gian:</strong> Phương trình \( SE(3) \) phân rã dữ liệu từ không gian pixel và phóng chiếu hệ trục tọa độ lên trung tâm của hai điểm mốc giải phẫu học, triệt tiêu sai số quy mô thị giác.</li>
+            <li><strong>Sai Phân Bậc Hai:</strong> Hàm xấp xỉ đạo hàm thời gian tạo ra ma trận động lực học chín chiều, dồn nén mô-men vật lý thẳng vào đầu vào của hệ thống.</li>
+            <li><strong>Biến Cấu Cục Bộ & Xoay Hệ Trục:</strong> Sự tích chập làm thu hẹp khoảng cách thời gian \( T/2 \), trong khi ma trận xoay \( R_{\Theta} \) giúp hệ thống nhận diện pha lệch góc của từng khung hình so với tâm thời gian.</li>
+            <li><strong>Lọc Nhiễu Squeeze-and-Excitation:</strong> Giá trị trung bình toàn cục tái định vị trọng số, quyết định xem một chiều không gian có mang thông tin cốt lõi hay chỉ là nhiễu nền.</li>
+            <li><strong>Phân Rã Tổn Thất & Đạo Hàm Bayesian:</strong> Cuối cùng, <code>HomoscedasticLossWrapper</code> đánh giá phương sai rủi ro của hệ phương trình Poly1, CTC, và InfoNCE, tiến hành bóp méo dốc trượt đạo hàm, và lệnh cho lõi phần cứng cập nhật ma trận theo cụm (Tích lũy theo mẻ). Đồng thời, bộ sao lưu <code>ModelEMA</code> âm thầm tích hợp trọng số để bảo hiểm hệ thống trước các cú chớp phương sai bất thường.</li>
+        </ol>
+        <p><strong>Kết luận Khoa học:</strong> Thông qua việc áp dụng nghiêm ngặt hàng chục phương trình phi tuyến tính và bộ điều chuẩn toán học sâu sắc, đường ống điện toán này đã giải quyết triệt để vấn đề mất cân bằng mục tiêu, bùng nổ dữ liệu nhiễu và sụp đổ kiến trúc, tạo ra một cỗ máy học sâu vững chắc, hoạt động ổn định và chính xác tuyệt đối trên nền tảng điện toán hiệu năng cao.</p>
+    </div>
+
+</body>
+</html>

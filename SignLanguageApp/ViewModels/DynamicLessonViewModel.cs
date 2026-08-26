@@ -7,10 +7,10 @@ namespace SignLanguageApp.ViewModels;
 public partial class DynamicLessonViewModel : ObservableObject
 {
     [ObservableProperty]
-    private string lessonTitle = string.Empty;
+    public partial string LessonTitle { get; set; } = string.Empty;
 
     [ObservableProperty]
-    private string lessonDescription = string.Empty;
+    public partial string LessonDescription { get; set; } = string.Empty;
 
     [RelayCommand]
     public async Task StartPractice()

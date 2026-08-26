@@ -12,6 +12,8 @@ namespace SignLanguageApi.Data
 
         public string? AvatarUrl { get; set; }
 
+        public string? ProfileDescription { get; set; }
+
         public int LearningStreak { get; set; } = 0;
 
         public int TotalXp { get; set; } = 0;

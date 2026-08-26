@@ -1,31 +1,84 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:controls="clr-namespace:SignLanguageApp.Controls"
              x:Class="SignLanguageApp.MainPage"
-             Title="Translate"
-             BackgroundColor="{StaticResource ColorBackgroundDark}">
+             Title="Dashboard"
+             BackgroundColor="Transparent">
 
-    <ScrollView>
-        <VerticalStackLayout Padding="16,12,16,24" Spacing="14">
-            <Border StrokeThickness="0" Background="#123247" StrokeShape="RoundRectangle 20" Padding="18">
-                <VerticalStackLayout Spacing="8">
-                    <Label Text="Translation tools" FontSize="28" FontAttributes="Bold" TextColor="White" />
-                    <Label Text="Use camera translation for real-time sign detection." FontSize="13" TextColor="#BBD5E8" />
-                </VerticalStackLayout>
-            </Border>
+    <Grid>
+        <!-- Adding the background for consistency -->
+        <controls:AnimaticBackground />
+        
+        <ScrollView>
+            <VerticalStackLayout Padding="20,40,20,40" Spacing="25">
+                
+                <Label Text="Welcome back" FontSize="16" TextColor="#B0C4DE" Margin="5,0,0,0" />
+                <Label Text="Dashboard" FontSize="36" FontAttributes="Bold" TextColor="White" Margin="5,-10,0,15">
+                    <Label.Shadow>
+                        <Shadow Brush="#4FACFE" Opacity="0.5" Radius="15" Offset="0,0" />
+                    </Label.Shadow>
+                </Label>
 
-            <Border StrokeThickness="0" Background="{StaticResource ColorCardDark}" StrokeShape="RoundRectangle 16" Padding="16">
-                <VerticalStackLayout Spacing="10">
-                    <Label Text="Quick check" FontSize="16" FontAttributes="Bold" TextColor="White" />
-                    <Label Text="Tap the button to verify this page is responsive." FontSize="12" TextColor="#95B5CB" />
-                    <Button x:Name="CounterBtn"
-                            Text="Run quick check"
-                            Clicked="OnCounterClicked"
-                            BackgroundColor="{StaticResource Primary}"
-                            TextColor="White"
-                            FontAttributes="Bold" />
-                </VerticalStackLayout>
-            </Border>
-        </VerticalStackLayout>
-    </ScrollView>
+                <!-- Main Feature Card -->
+                <Border StrokeThickness="1" Stroke="#30FFFFFF" BackgroundColor="#1A000000" StrokeShape="RoundRectangle 25" Padding="25">
+                    <Border.Shadow>
+                        <Shadow Brush="Black" Opacity="0.4" Radius="25" Offset="0,15" />
+                    </Border.Shadow>
+                    
+                    <VerticalStackLayout Spacing="15">
+                        <Label Text="Translation Tools" FontSize="22" FontAttributes="Bold" TextColor="White" />
+                        <Label Text="Use camera translation for real-time sign detection." FontSize="14" TextColor="#B0C4DE" LineHeight="1.4" />
+                        
+                        <Border StrokeShape="RoundRectangle 16" StrokeThickness="0" HeightRequest="50" Margin="0,10,0,0" HorizontalOptions="Start" WidthRequest="180">
+                            <Border.Background>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                    <GradientStop Color="#00F2FE" Offset="0.0" />
+                                    <GradientStop Color="#4FACFE" Offset="1.0" />
+                                </LinearGradientBrush>
+                            </Border.Background>
+                            <Button Text="OPEN CAMERA"
+                                    BackgroundColor="Transparent"
+                                    TextColor="White"
+                                    FontSize="14"
+                                    FontAttributes="Bold"
+                                    CornerRadius="16" />
+                        </Border>
+                    </VerticalStackLayout>
+                </Border>
+
+                <!-- Sub Features Grid -->
+                <Grid ColumnDefinitions="*, *" ColumnSpacing="15">
+                    <Border Grid.Column="0" StrokeThickness="1" Stroke="#20FFFFFF" BackgroundColor="#10FFFFFF" StrokeShape="RoundRectangle 20" Padding="20">
+                        <VerticalStackLayout Spacing="10">
+                            <Label Text="Quick Check" FontSize="18" FontAttributes="Bold" TextColor="White" />
+                            <Label Text="Verify page responsiveness." FontSize="13" TextColor="#B0C4DE" />
+                            <Button x:Name="CounterBtn"
+                                    Text="Run Test"
+                                    Clicked="OnCounterClicked"
+                                    BackgroundColor="#2AFFFFFF"
+                                    TextColor="#00F2FE"
+                                    FontAttributes="Bold"
+                                    CornerRadius="12"
+                                    Margin="0,10,0,0" />
+                        </VerticalStackLayout>
+                    </Border>
+                    
+                    <Border Grid.Column="1" StrokeThickness="1" Stroke="#20FFFFFF" BackgroundColor="#10FFFFFF" StrokeShape="RoundRectangle 20" Padding="20">
+                        <VerticalStackLayout Spacing="10">
+                            <Label Text="Statistics" FontSize="18" FontAttributes="Bold" TextColor="White" />
+                            <Label Text="View your learning progress." FontSize="13" TextColor="#B0C4DE" />
+                            <Button Text="View Stats"
+                                    BackgroundColor="#2AFFFFFF"
+                                    TextColor="#00F2FE"
+                                    FontAttributes="Bold"
+                                    CornerRadius="12"
+                                    Margin="0,10,0,0" />
+                        </VerticalStackLayout>
+                    </Border>
+                </Grid>
+                
+            </VerticalStackLayout>
+        </ScrollView>
+    </Grid>
 </ContentPage>

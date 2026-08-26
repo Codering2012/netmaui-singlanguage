@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:SignLanguageApp.ViewModels"
+             xmlns:helpers="clr-namespace:SignLanguageApp.Helpers"
+             x:Class="SignLanguageApp.Pages.FeedbackPage"
+             x:DataType="vm:FeedbackViewModel"
+             Title="Help &amp; Feedback"
+             Background="{DynamicResource PageGradient}">
+
+    <ContentPage.Resources>
+        <helpers:InvertedBoolConverter x:Key="InvertedBoolConverter" />
+    </ContentPage.Resources>
+
+    <Grid>
+        <!-- Success State -->
+        <VerticalStackLayout IsVisible="{Binding IsSubmitted}" 
+                             Spacing="20" 
+                             VerticalOptions="Center" 
+                             HorizontalOptions="Center" 
+                             Padding="30">
+            <Label Text="🎉" FontSize="80" HorizontalOptions="Center" />
+            <Label Text="Thank You!" FontSize="28" FontAttributes="Bold" HorizontalOptions="Center" TextColor="{DynamicResource PrimaryTextColor}" />
+            <Label Text="Your feedback helps us improve the learning experience for everyone." 
+                   HorizontalTextAlignment="Center" 
+                   TextColor="{DynamicResource SecondaryTextColor}" />
+            <Button Text="SEND ANOTHER" 
+                    Command="{Binding ResetCommand}" 
+                    BackgroundColor="{DynamicResource PrimaryColor}" 
+                    TextColor="White" 
+                    CornerRadius="25" 
+                    HeightRequest="50" 
+                    Margin="0,20" />
+        </VerticalStackLayout>
+
+        <!-- Form State -->
+        <ScrollView IsVisible="{Binding IsSubmitted, Converter={StaticResource InvertedBoolConverter}}">
+            <VerticalStackLayout Spacing="25" Padding="25">
+                <VerticalStackLayout Spacing="5">
+                    <Label Text="Share Your Thoughts" FontSize="28" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+                    <Label Text="Report a bug or suggest a new feature" FontSize="14" TextColor="{DynamicResource SecondaryTextColor}" />
+                </VerticalStackLayout>
+
+                <Border StrokeThickness="0" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 20" Padding="20">
+                    <VerticalStackLayout Spacing="20">
+                        <VerticalStackLayout Spacing="8">
+                            <Label Text="Subject" FontSize="14" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+                            <Entry Text="{Binding Subject}" Placeholder="What is this about?" />
+                        </VerticalStackLayout>
+
+                        <VerticalStackLayout Spacing="8">
+                            <Label Text="How would you rate your experience?" FontSize="14" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+                            <Grid ColumnDefinitions="*,*,*,*,*" ColumnSpacing="5">
+                                <Button Grid.Column="0" Text="1" CommandParameter="1" BackgroundColor="{Binding Rating, Converter={StaticResource RatingColorConverter}, ConverterParameter=1}" />
+                                <Button Grid.Column="1" Text="2" CommandParameter="2" BackgroundColor="{Binding Rating, Converter={StaticResource RatingColorConverter}, ConverterParameter=2}" />
+                                <Button Grid.Column="2" Text="3" CommandParameter="3" BackgroundColor="{Binding Rating, Converter={StaticResource RatingColorConverter}, ConverterParameter=3}" />
+                                <Button Grid.Column="3" Text="4" CommandParameter="4" BackgroundColor="{Binding Rating, Converter={StaticResource RatingColorConverter}, ConverterParameter=4}" />
+                                <Button Grid.Column="4" Text="5" CommandParameter="5" BackgroundColor="{Binding Rating, Converter={StaticResource RatingColorConverter}, ConverterParameter=5}" />
+                            </Grid>
+                        </VerticalStackLayout>
+
+                        <VerticalStackLayout Spacing="8">
+                            <Label Text="Message" FontSize="14" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+                            <Editor Text="{Binding Message}" 
+                                    Placeholder="Describe your experience or suggestion..." 
+                                    HeightRequest="150" 
+                                    AutoSize="TextChanges" />
+                        </VerticalStackLayout>
+
+                        <Button Text="SUBMIT FEEDBACK" 
+                                Command="{Binding SubmitFeedbackCommand}" 
+                                BackgroundColor="{DynamicResource PrimaryColor}" 
+                                TextColor="White" 
+                                FontAttributes="Bold" 
+                                CornerRadius="12" 
+                                HeightRequest="55" 
+                                Margin="0,10,0,0" />
+                    </VerticalStackLayout>
+                </Border>
+                
+                <Label Text="{Binding ErrorMessage}" 
+                       TextColor="Red" 
+                       HorizontalOptions="Center" 
+                       IsVisible="{Binding HasError}" />
+            </VerticalStackLayout>
+        </ScrollView>
+
+        <ActivityIndicator IsVisible="{Binding IsBusy}" 
+                           IsRunning="{Binding IsBusy}" 
+                           HorizontalOptions="Center" 
+                           VerticalOptions="Center" 
+                           Color="{DynamicResource PrimaryColor}" />
+    </Grid>
+</ContentPage>

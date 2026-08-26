@@ -5,49 +5,49 @@
              x:Class="SignLanguageApp.Pages.ProfilePage"
              x:DataType="vm:AccountViewModel"
              Title="Profile"
-             BackgroundColor="{StaticResource ColorBackgroundDark}">
+             BackgroundColor="{DynamicResource PageBackgroundColor}">
 
     <ScrollView>
         <VerticalStackLayout Spacing="16" Padding="16,10,16,24">
-            <Border StrokeThickness="0" Background="#123247" StrokeShape="RoundRectangle 20" Padding="18">
+            <Border StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 20" Padding="18">
                 <VerticalStackLayout Spacing="8">
-                    <Label Text="Profile" FontSize="28" FontAttributes="Bold" TextColor="White" />
-                    <Label Text="Manage your account and device preferences" FontSize="13" TextColor="#BBD5E8" />
+                    <Label Text="Profile" FontSize="28" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+                    <Label Text="Manage your account and device preferences" FontSize="13" TextColor="{DynamicResource SecondaryTextColor}" />
                 </VerticalStackLayout>
             </Border>
 
-            <Border StrokeThickness="0" Background="#10283A" StrokeShape="RoundRectangle 16" Padding="14">
+            <Border StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource SecondaryBackgroundColor}" StrokeShape="RoundRectangle 16" Padding="14">
                 <Grid ColumnDefinitions="72,*" ColumnSpacing="12">
-                    <Border Grid.Column="0" StrokeThickness="0" Background="#0B1F2F" StrokeShape="RoundRectangle 36" HeightRequest="72" WidthRequest="72">
+                    <Border Grid.Column="0" StrokeThickness="0" BackgroundColor="{DynamicResource InputBackgroundColor}" StrokeShape="RoundRectangle 36" HeightRequest="72" WidthRequest="72">
                         <Image Source="{Binding UserAvatar}" Aspect="AspectFill" />
                     </Border>
                     <VerticalStackLayout Grid.Column="1" Spacing="3" VerticalOptions="Center">
-                        <Label Text="{Binding UserName, TargetNullValue='Learner'}" FontSize="20" FontAttributes="Bold" TextColor="White" />
-                        <Label Text="{Binding UserEmail, TargetNullValue='user@domain.com'}" FontSize="12" TextColor="#BFD7E8" />
-                        <Label Text="{Binding GlobalRanking, StringFormat='Global rank: #{0}'}" FontSize="11" TextColor="#9DBDD3" />
+                        <Label Text="{Binding UserName, TargetNullValue='Learner'}" FontSize="20" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+                        <Label Text="{Binding UserEmail, TargetNullValue='user@domain.com'}" FontSize="12" TextColor="{DynamicResource SecondaryTextColor}" />
+                        <Label Text="{Binding GlobalRanking, StringFormat='Global rank: #{0}'}" FontSize="11" TextColor="{DynamicResource SecondaryColor}" />
                     </VerticalStackLayout>
                 </Grid>
             </Border>
 
             <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
-                <Border Grid.Column="0" StrokeThickness="0" Background="#0D2335" StrokeShape="RoundRectangle 12" Padding="10">
+                <Border Grid.Column="0" StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 12" Padding="10">
                     <VerticalStackLayout Spacing="2">
-                        <Label Text="XP" FontSize="11" TextColor="#87A7BE" />
-                        <Label Text="{Binding TotalXp, StringFormat='{0:N0}'}" FontSize="16" FontAttributes="Bold" TextColor="White" />
+                        <Label Text="XP" FontSize="11" TextColor="{DynamicResource SecondaryTextColor}" />
+                        <Label Text="{Binding TotalXp, StringFormat='{0:N0}'}" FontSize="16" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
                     </VerticalStackLayout>
                 </Border>
-                <Border Grid.Column="1" StrokeThickness="0" Background="#0D2335" StrokeShape="RoundRectangle 12" Padding="10">
+                <Border Grid.Column="1" StrokeThickness="1" Stroke="{DynamicResource BorderBrush}" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 12" Padding="10">
                     <VerticalStackLayout Spacing="2">
-                        <Label Text="Streak" FontSize="11" TextColor="#87A7BE" />
-                        <Label Text="{Binding CurrentStreak, StringFormat='{0} days'}" FontSize="16" FontAttributes="Bold" TextColor="White" />
+                        <Label Text="Streak" FontSize="11" TextColor="{DynamicResource SecondaryTextColor}" />
+                        <Label Text="{Binding CurrentStreak, StringFormat='{0} days'}" FontSize="16" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
                     </VerticalStackLayout>
                 </Border>
             </Grid>
 
-            <Button Text="Refresh diagnostics" Command="{Binding RefreshDiagnosticsCommand}" BackgroundColor="{StaticResource Primary}" TextColor="White" FontAttributes="Bold" />
-            <Button Text="Export data" Command="{Binding ExportDataCommand}" BackgroundColor="#1D4A61" TextColor="White" FontAttributes="Bold" />
-            <Button Text="Privacy policy" Command="{Binding ViewPrivacyPolicyCommand}" BackgroundColor="Transparent" TextColor="#9EC0D7" BorderColor="#27445E" BorderWidth="1" />
-            <Button Text="Logout" Command="{Binding LogoutCommand}" BackgroundColor="#C2410C" TextColor="White" FontAttributes="Bold" />
+            <Button Text="Refresh diagnostics" Command="{Binding RefreshDiagnosticsCommand}" BackgroundColor="{DynamicResource PrimaryColor}" TextColor="{DynamicResource ButtonTextColor}" FontAttributes="Bold" />
+            <Button Text="Export data" Command="{Binding ExportDataCommand}" BackgroundColor="{DynamicResource SecondaryBackgroundColor}" TextColor="{DynamicResource PrimaryTextColor}" FontAttributes="Bold" />
+            <Button Text="Privacy policy" Command="{Binding ViewPrivacyPolicyCommand}" BackgroundColor="Transparent" TextColor="{DynamicResource SecondaryTextColor}" BorderColor="{DynamicResource BorderBrush}" BorderWidth="1" />
+            <Button Text="Logout" Command="{Binding LogoutCommand}" BackgroundColor="{DynamicResource ErrorColor}" TextColor="White" FontAttributes="Bold" />
         </VerticalStackLayout>
     </ScrollView>
 </ContentPage>

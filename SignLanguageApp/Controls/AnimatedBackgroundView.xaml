@@ -8,134 +8,119 @@
           ColumnDefinitions="*"
           IsClippedToBounds="True">
 
-        <!-- Base dark background -->
+        <!-- Base transparent layer so page gradient shows through -->
         <BoxView Grid.Row="0"
                  Grid.Column="0"
-                 BackgroundColor="#1a0033"
+                 BackgroundColor="Transparent"
                  x:Name="BaseLayer" />
 
-        <!-- Animated gradient blob 1 (Magenta) -->
+        <!-- Animated gradient blob 1 (Violet / Purple) -->
         <Grid Grid.Row="0"
               Grid.Column="0"
               x:Name="Blob1Container"
-              WidthRequest="691"
-              HeightRequest="691"
+              WidthRequest="650"
+              HeightRequest="650"
               HorizontalOptions="Start"
               VerticalOptions="Start">
-            <Ellipse WidthRequest="691"
-                     HeightRequest="691"
+            <Ellipse WidthRequest="650"
+                     HeightRequest="650"
                      x:Name="Blob1"
-                     Opacity="0.85">
+                     Opacity="{DynamicResource AmbientBlobOpacity}">
                 <Ellipse.Fill>
                     <RadialGradientBrush Center="0.5,0.5">
-                        <GradientStop Color="#FF00FF" Offset="0.0" />
-                        <GradientStop Color="#FF00FF" Offset="0.45" />
-                        <GradientStop Color="#00FFFF00" Offset="1.0" />
+                        <GradientStop Color="#808B5CF6" Offset="0.0" />
+                        <GradientStop Color="#408B5CF6" Offset="0.5" />
+                        <GradientStop Color="#008B5CF6" Offset="1.0" />
                     </RadialGradientBrush>
                 </Ellipse.Fill>
-                <Ellipse.Shadow>
-                    <Shadow Brush="#FF00FF" Offset="0,0" Radius="80" Opacity="0.4" />
-                </Ellipse.Shadow>
             </Ellipse>
         </Grid>
 
-        <!-- Animated gradient blob 2 (Cyan) -->
+        <!-- Animated gradient blob 2 (Electric Cyan) -->
         <Grid Grid.Row="0"
               Grid.Column="0"
               x:Name="Blob2Container"
-              WidthRequest="778"
-              HeightRequest="778"
+              WidthRequest="700"
+              HeightRequest="700"
               HorizontalOptions="End"
               VerticalOptions="Start">
-            <Ellipse WidthRequest="778"
-                     HeightRequest="778"
+            <Ellipse WidthRequest="700"
+                     HeightRequest="700"
                      x:Name="Blob2"
-                     Opacity="0.85">
+                     Opacity="{DynamicResource AmbientBlobOpacity}">
                 <Ellipse.Fill>
                     <RadialGradientBrush Center="0.5,0.5">
-                        <GradientStop Color="#00FFFF" Offset="0.0" />
-                        <GradientStop Color="#00FFFF" Offset="0.45" />
-                        <GradientStop Color="#FFFF0000" Offset="1.0" />
+                        <GradientStop Color="#8006B6D4" Offset="0.0" />
+                        <GradientStop Color="#4006B6D4" Offset="0.5" />
+                        <GradientStop Color="#0006B6D4" Offset="1.0" />
                     </RadialGradientBrush>
                 </Ellipse.Fill>
-                <Ellipse.Shadow>
-                    <Shadow Brush="#00FFFF" Offset="0,0" Radius="80" Opacity="0.4" />
-                </Ellipse.Shadow>
             </Ellipse>
         </Grid>
 
-        <!-- Animated gradient blob 3 (Yellow) -->
+        <!-- Animated gradient blob 3 (Vibrant Pink / Rose) -->
         <Grid Grid.Row="0"
               Grid.Column="0"
               x:Name="Blob3Container"
-              WidthRequest="864"
-              HeightRequest="691"
+              WidthRequest="750"
+              HeightRequest="650"
               HorizontalOptions="Center"
               VerticalOptions="Center">
-            <Ellipse WidthRequest="864"
-                     HeightRequest="691"
+            <Ellipse WidthRequest="750"
+                     HeightRequest="650"
                      x:Name="Blob3"
-                     Opacity="0.85">
+                     Opacity="{DynamicResource AmbientBlobOpacity}">
                 <Ellipse.Fill>
                     <RadialGradientBrush Center="0.5,0.5">
-                        <GradientStop Color="#FFFF00" Offset="0.0" />
-                        <GradientStop Color="#FFFF00" Offset="0.45" />
-                        <GradientStop Color="#FF660000" Offset="1.0" />
+                        <GradientStop Color="#80EC4899" Offset="0.0" />
+                        <GradientStop Color="#40EC4899" Offset="0.5" />
+                        <GradientStop Color="#00EC4899" Offset="1.0" />
                     </RadialGradientBrush>
                 </Ellipse.Fill>
-                <Ellipse.Shadow>
-                    <Shadow Brush="#FFFF00" Offset="0,0" Radius="100" Opacity="0.5" />
-                </Ellipse.Shadow>
             </Ellipse>
         </Grid>
 
-        <!-- Animated gradient blob 4 (Orange) -->
+        <!-- Animated gradient blob 4 (Royal Blue) -->
         <Grid Grid.Row="0"
               Grid.Column="0"
               x:Name="Blob4Container"
-              WidthRequest="726"
-              HeightRequest="726"
+              WidthRequest="680"
+              HeightRequest="680"
               HorizontalOptions="End"
               VerticalOptions="End">
-            <Ellipse WidthRequest="726"
-                     HeightRequest="726"
+            <Ellipse WidthRequest="680"
+                     HeightRequest="680"
                      x:Name="Blob4"
-                     Opacity="0.85">
+                     Opacity="{DynamicResource AmbientBlobOpacity}">
                 <Ellipse.Fill>
                     <RadialGradientBrush Center="0.5,0.5">
-                        <GradientStop Color="#FF6600" Offset="0.0" />
-                        <GradientStop Color="#FF6600" Offset="0.45" />
-                        <GradientStop Color="#0066FF00" Offset="1.0" />
+                        <GradientStop Color="#803B82F6" Offset="0.0" />
+                        <GradientStop Color="#403B82F6" Offset="0.5" />
+                        <GradientStop Color="#003B82F6" Offset="1.0" />
                     </RadialGradientBrush>
                 </Ellipse.Fill>
-                <Ellipse.Shadow>
-                    <Shadow Brush="#FF6600" Offset="0,0" Radius="80" Opacity="0.4" />
-                </Ellipse.Shadow>
             </Ellipse>
         </Grid>
 
-        <!-- Animated gradient blob 5 (Blue) -->
+        <!-- Animated gradient blob 5 (Indigo) -->
         <Grid Grid.Row="0"
               Grid.Column="0"
               x:Name="Blob5Container"
-              WidthRequest="657"
-              HeightRequest="657"
+              WidthRequest="620"
+              HeightRequest="620"
               HorizontalOptions="Start"
               VerticalOptions="End">
-            <Ellipse WidthRequest="657"
-                     HeightRequest="657"
+            <Ellipse WidthRequest="620"
+                     HeightRequest="620"
                      x:Name="Blob5"
-                     Opacity="0.85">
+                     Opacity="{DynamicResource AmbientBlobOpacity}">
                 <Ellipse.Fill>
                     <RadialGradientBrush Center="0.5,0.5">
-                        <GradientStop Color="#0066FF" Offset="0.0" />
-                        <GradientStop Color="#0066FF" Offset="0.45" />
-                        <GradientStop Color="#FF00FF00" Offset="1.0" />
+                        <GradientStop Color="#806366F1" Offset="0.0" />
+                        <GradientStop Color="#406366F1" Offset="0.5" />
+                        <GradientStop Color="#006366F1" Offset="1.0" />
                     </RadialGradientBrush>
                 </Ellipse.Fill>
-                <Ellipse.Shadow>
-                    <Shadow Brush="#0066FF" Offset="0,0" Radius="80" Opacity="0.4" />
-                </Ellipse.Shadow>
             </Ellipse>
         </Grid>
 

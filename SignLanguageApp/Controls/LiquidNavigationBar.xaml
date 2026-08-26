@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="SignLanguageApp.Controls.LiquidNavigationBar">
+    
+    <Grid VerticalOptions="End" HorizontalOptions="Center" Margin="0,0,0,24">
+        <!-- Figma Glass Top Edge Specular Highlight Ring -->
+        <Border StrokeShape="RoundRectangle 36"
+                BackgroundColor="Transparent"
+                Stroke="{DynamicResource NavBarGlassHighlight}"
+                StrokeThickness="1"
+                WidthRequest="362"
+                HeightRequest="68"
+                InputTransparent="True"
+                HorizontalOptions="Center"
+                VerticalOptions="Center" />
+
+        <!-- Main Figma Liquid Glass Pill Container with 75-80% Gradient Transformation -->
+        <Border StrokeShape="RoundRectangle 34"
+                Stroke="{DynamicResource NavBarStrokeColor}"
+                StrokeThickness="1"
+                Padding="6,5"
+                WidthRequest="360"
+                x:Name="MainContainer">
+                
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                    <GradientStop Color="{DynamicResource NavBarRimColor}" Offset="0.0" />
+                    <GradientStop Color="{DynamicResource NavBarCenterColor}" Offset="0.2" />
+                    <GradientStop Color="{DynamicResource NavBarCenterColor}" Offset="0.8" />
+                    <GradientStop Color="{DynamicResource NavBarRimColor}" Offset="1.0" />
+                </LinearGradientBrush>
+            </Border.Background>
+                
+            <Border.Shadow>
+                <Shadow Brush="Black" Offset="0,10" Radius="24" Opacity="{DynamicResource GlassShadowOpacity}"/>
+            </Border.Shadow>
+            
+            <Grid ColumnDefinitions="*,*,*,*,*" ColumnSpacing="2">
+                <!-- Home Tab -->
+                <Border Grid.Column="0" x:Name="PillHome" StrokeShape="RoundRectangle 20" Padding="2,6" BackgroundColor="Transparent" Stroke="Transparent" StrokeThickness="1">
+                    <Border.GestureRecognizers>
+                        <TapGestureRecognizer Tapped="OnTabTapped" CommandParameter="//home" />
+                    </Border.GestureRecognizers>
+                    <VerticalStackLayout x:Name="NavHome" Spacing="3" HorizontalOptions="Center" VerticalOptions="Center">
+                        <Path x:Name="IconHome"
+                              Data="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"
+                              Fill="{DynamicResource NavBarInactiveColor}"
+                              Aspect="Uniform"
+                              HeightRequest="20"
+                              WidthRequest="20"
+                              HorizontalOptions="Center" />
+                        <Label x:Name="TextHome" Text="Home" FontSize="10" TextColor="{DynamicResource NavBarInactiveColor}" HorizontalOptions="Center" />
+                    </VerticalStackLayout>
+                </Border>
+
+                <!-- Learn Tab -->
+                <Border Grid.Column="1" x:Name="PillLearn" StrokeShape="RoundRectangle 20" Padding="2,6" BackgroundColor="Transparent" Stroke="Transparent" StrokeThickness="1">
+                    <Border.GestureRecognizers>
+                        <TapGestureRecognizer Tapped="OnTabTapped" CommandParameter="//learn" />
+                    </Border.GestureRecognizers>
+                    <VerticalStackLayout x:Name="NavLearn" Spacing="3" HorizontalOptions="Center" VerticalOptions="Center">
+                        <Path x:Name="IconLearn"
+                              Data="M12 3L1 9l11 6l9-4.91V17h2V9L12 3z M5 13.18v4l7 3.82l7-3.82v-4L12 17L5 13.18z"
+                              Fill="{DynamicResource NavBarInactiveColor}"
+                              Aspect="Uniform"
+                              HeightRequest="20"
+                              WidthRequest="20"
+                              HorizontalOptions="Center" />
+                        <Label x:Name="TextLearn" Text="Learn" FontSize="10" TextColor="{DynamicResource NavBarInactiveColor}" HorizontalOptions="Center" />
+                    </VerticalStackLayout>
+                </Border>
+
+                <!-- Camera Tab -->
+                <Border Grid.Column="2" x:Name="PillCamera" StrokeShape="RoundRectangle 20" Padding="2,6" BackgroundColor="Transparent" Stroke="Transparent" StrokeThickness="1">
+                    <Border.GestureRecognizers>
+                        <TapGestureRecognizer Tapped="OnTabTapped" CommandParameter="//translation" />
+                    </Border.GestureRecognizers>
+                    <VerticalStackLayout x:Name="NavCamera" Spacing="3" HorizontalOptions="Center" VerticalOptions="Center">
+                        <Path x:Name="IconCamera"
+                              Data="M9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z"
+                              Fill="{DynamicResource NavBarInactiveColor}"
+                              Aspect="Uniform"
+                              HeightRequest="20"
+                              WidthRequest="20"
+                              HorizontalOptions="Center" />
+                        <Label x:Name="TextCamera" Text="Camera" FontSize="10" TextColor="{DynamicResource NavBarInactiveColor}" HorizontalOptions="Center" />
+                    </VerticalStackLayout>
+                </Border>
+
+                <!-- Dictionary Tab -->
+                <Border Grid.Column="3" x:Name="PillDict" StrokeShape="RoundRectangle 20" Padding="2,6" BackgroundColor="Transparent" Stroke="Transparent" StrokeThickness="1">
+                    <Border.GestureRecognizers>
+                        <TapGestureRecognizer Tapped="OnTabTapped" CommandParameter="dictionary" />
+                    </Border.GestureRecognizers>
+                    <VerticalStackLayout x:Name="NavDict" Spacing="3" HorizontalOptions="Center" VerticalOptions="Center">
+                        <Path x:Name="IconDict"
+                              Data="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-1 9H9V9h10v2zm-4 4H9v-2h6v2zm4-8H9V5h10v2z"
+                              Fill="{DynamicResource NavBarInactiveColor}"
+                              Aspect="Uniform"
+                              HeightRequest="20"
+                              WidthRequest="20"
+                              HorizontalOptions="Center" />
+                        <Label x:Name="TextDict" Text="Dictionary" FontSize="10" TextColor="{DynamicResource NavBarInactiveColor}" HorizontalOptions="Center" />
+                    </VerticalStackLayout>
+                </Border>
+
+                <!-- Profile Tab -->
+                <Border Grid.Column="4" x:Name="PillProfile" StrokeShape="RoundRectangle 20" Padding="2,6" BackgroundColor="Transparent" Stroke="Transparent" StrokeThickness="1">
+                    <Border.GestureRecognizers>
+                        <TapGestureRecognizer Tapped="OnTabTapped" CommandParameter="//profile" />
+                    </Border.GestureRecognizers>
+                    <VerticalStackLayout x:Name="NavProfile" Spacing="3" HorizontalOptions="Center" VerticalOptions="Center">
+                        <Path x:Name="IconProfile"
+                              Data="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"
+                              Fill="{DynamicResource NavBarInactiveColor}"
+                              Aspect="Uniform"
+                              HeightRequest="20"
+                              WidthRequest="20"
+                              HorizontalOptions="Center" />
+                        <Label x:Name="TextProfile" Text="Profile" FontSize="10" TextColor="{DynamicResource NavBarInactiveColor}" HorizontalOptions="Center" />
+                    </VerticalStackLayout>
+                </Border>
+            </Grid>
+        </Border>
+    </Grid>
+</ContentView>

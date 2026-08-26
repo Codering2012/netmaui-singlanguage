@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:controls="clr-namespace:SignLanguageApp.Controls"
+             x:Class="SignLanguageApp.Pages.CommunityHubPage"
+             Title="Community"
+             BackgroundColor="Transparent">
+    <controls:MainLayout>
+        <Grid RowDefinitions="Auto,*" Padding="20,40,20,0">
+            <Label Grid.Row="0" Text="Global Leaderboard" FontSize="28" FontAttributes="Bold" TextColor="White" Margin="0,0,0,20" />
+            
+            <ScrollView Grid.Row="1">
+                <VerticalStackLayout Spacing="15">
+                    <!-- Top 3 -->
+                    <Grid ColumnDefinitions="*,*,*" ColumnSpacing="10" HeightRequest="150">
+                        <Border Grid.Column="1" BackgroundColor="#FFD700" StrokeThickness="0" StrokeShape="RoundRectangle 20" VerticalOptions="End" HeightRequest="120" Padding="10">
+                            <VerticalStackLayout HorizontalOptions="Center" VerticalOptions="Center">
+                                <Label Text="1st" FontSize="24" FontAttributes="Bold" TextColor="Black" HorizontalOptions="Center" />
+                                <Label Text="Alex" FontSize="14" TextColor="Black" HorizontalOptions="Center" />
+                            </VerticalStackLayout>
+                        </Border>
+                        <Border Grid.Column="0" BackgroundColor="#C0C0C0" StrokeThickness="0" StrokeShape="RoundRectangle 20" VerticalOptions="End" HeightRequest="90" Padding="10">
+                            <VerticalStackLayout HorizontalOptions="Center" VerticalOptions="Center">
+                                <Label Text="2nd" FontSize="20" FontAttributes="Bold" TextColor="Black" HorizontalOptions="Center" />
+                                <Label Text="Sam" FontSize="12" TextColor="Black" HorizontalOptions="Center" />
+                            </VerticalStackLayout>
+                        </Border>
+                        <Border Grid.Column="2" BackgroundColor="#CD7F32" StrokeThickness="0" StrokeShape="RoundRectangle 20" VerticalOptions="End" HeightRequest="70" Padding="10">
+                            <VerticalStackLayout HorizontalOptions="Center" VerticalOptions="Center">
+                                <Label Text="3rd" FontSize="18" FontAttributes="Bold" TextColor="Black" HorizontalOptions="Center" />
+                                <Label Text="Jordan" FontSize="12" TextColor="Black" HorizontalOptions="Center" />
+                            </VerticalStackLayout>
+                        </Border>
+                    </Grid>
+
+                    <Label Text="Recent Community Clips" FontSize="20" FontAttributes="Bold" TextColor="White" Margin="0,20,0,10" />
+                    <!-- Community Feed -->
+                    <Border StrokeShape="RoundRectangle 15" BackgroundColor="#15FFFFFF" StrokeThickness="0" HeightRequest="200">
+                        <Grid>
+                            <Image Source="placeholder_video.png" Aspect="AspectFill" Opacity="0.5" />
+                            <ImageButton Source="play.png" HeightRequest="50" WidthRequest="50" BackgroundColor="Transparent" HorizontalOptions="Center" VerticalOptions="Center" />
+                            <Label Text="@DeafCreator - Learning basic greetings!" TextColor="White" VerticalOptions="End" Margin="15" FontAttributes="Bold" />
+                        </Grid>
+                    </Border>
+                </VerticalStackLayout>
+            </ScrollView>
+        </Grid>
+    </controls:MainLayout>
+</ContentPage>

@@ -6,7 +6,7 @@ using SignLanguageApp.Services;
 
 namespace SignLanguageApp.ViewModels;
 
-public class ShortItem
+public partial class ShortItem
 {
     public int Id { get; set; }
     public string Title { get; set; } = string.Empty;
@@ -16,7 +16,7 @@ public class ShortItem
     public string Duration { get; set; } = string.Empty;
 }
 
-public class LessonItem
+public partial class LessonItem
 {
     public int Id { get; set; }
     public string Title { get; set; } = string.Empty;
@@ -28,7 +28,7 @@ public class LessonItem
     public string Difficulty { get; set; } = string.Empty;
 }
 
-public class SignOfTheDayItem
+public partial class SignOfTheDayItem
 {
     public int Id { get; set; }
     public string SignName { get; set; } = string.Empty;
@@ -37,7 +37,7 @@ public class SignOfTheDayItem
     public string VideoUrl { get; set; } = string.Empty;
 }
 
-public class CommunityItem
+public partial class CommunityItem
 {
     public int Id { get; set; }
     public string Title { get; set; } = string.Empty;
@@ -57,32 +57,32 @@ public partial class HomeViewModel : ObservableObject
     // ============ Observable Collections ============
     public ObservableCollection<ShortItem> Shorts { get; } = [];
     public ObservableCollection<LessonItem> RecommendedLessons { get; } = [];
-    public ObservableCollection<CommunityItem> Community { get; } = [];
+    public ObservableCollection<CommunityItem> SourceCreators { get; } = [];
 
     // ============ Observable Properties ============
     [ObservableProperty]
-    private string greetingMessage = string.Empty;
+    public partial string GreetingMessage { get; set; } = string.Empty;
 
     [ObservableProperty]
-    private int learningStreak;
+    public partial int LearningStreak { get; set; }
 
     [ObservableProperty]
-    private SignOfTheDayItem? signOfTheDay;
+    public partial SignOfTheDayItem? SignOfTheDay { get; set; }
 
     [ObservableProperty]
-    private bool isSignOfTheDayExpanded;
+    public partial bool IsSignOfTheDayExpanded { get; set; }
 
     [ObservableProperty]
-    private bool isCameraPreviewVisible;
+    public partial bool IsCameraPreviewVisible { get; set; }
 
     [ObservableProperty]
-    private bool isLoadingShorts;
+    public partial bool IsLoadingShorts { get; set; }
 
     [ObservableProperty]
-    private bool isLoadingLessons;
+    public partial bool IsLoadingLessons { get; set; }
 
     [ObservableProperty]
-    private bool isLoadingMore;
+    public partial bool IsLoadingMore { get; set; }
 
     // ============ Constructor ============
     private readonly IApiService _apiService;
@@ -144,7 +144,7 @@ public partial class HomeViewModel : ObservableObject
         {
             Id = 1,
             Title = "Alphabet Basics",
-            Thumbnail = "https://via.placeholder.com/140x140?text=Alphabet",
+            Thumbnail = "https://images.unsplash.com/photo-1516979187457-637abb4f9353?auto=format&fit=crop&q=80&w=300&h=200",
             VideoId = "1",
             ViewCount = 2500,
             Duration = "0:45"
@@ -153,7 +153,7 @@ public partial class HomeViewModel : ObservableObject
         {
             Id = 2,
             Title = "Numbers 1-10",
-            Thumbnail = "https://via.placeholder.com/140x140?text=Numbers",
+            Thumbnail = "https://images.unsplash.com/photo-1620336655052-a549d414a1a5?auto=format&fit=crop&q=80&w=300&h=200",
             VideoId = "2",
             ViewCount = 1890,
             Duration = "1:20"
@@ -162,7 +162,7 @@ public partial class HomeViewModel : ObservableObject
         {
             Id = 3,
             Title = "Common Words",
-            Thumbnail = "https://via.placeholder.com/140x140?text=Words",
+            Thumbnail = "https://images.unsplash.com/photo-1516979187457-637abb4f9353?auto=format&fit=crop&q=80&w=300&h=200",
             VideoId = "3",
             ViewCount = 3200,
             Duration = "2:15"
@@ -171,7 +171,7 @@ public partial class HomeViewModel : ObservableObject
         {
             Id = 4,
             Title = "Greetings",
-            Thumbnail = "https://via.placeholder.com/140x140?text=Greetings",
+            Thumbnail = "https://images.unsplash.com/photo-1620336655052-a549d414a1a5?auto=format&fit=crop&q=80&w=300&h=200",
             VideoId = "4",
             ViewCount = 4100,
             Duration = "1:50"
@@ -184,24 +184,55 @@ public partial class HomeViewModel : ObservableObject
         IsLoadingLessons = true;
         try
         {
+            RecommendedLessons.Clear();
+
             var recommendation = await _apiService.GetPersonalizedRecommendationAsync();
             if (recommendation?.Data != null)
             {
+                var thumb = !string.IsNullOrWhiteSpace(recommendation.Data.ThumbnailUrl)
+                    ? recommendation.Data.ThumbnailUrl
+                    : "https://images.unsplash.com/photo-1516979187457-637abb4f9353?auto=format&fit=crop&q=80&w=300&h=200";
+
                 var lesson = new LessonItem
                 {
-                    Id = recommendation.Data.RecommendedLessonId,
+                    Id = recommendation.Data.RecommendedLessonId > 0 ? recommendation.Data.RecommendedLessonId : 1,
                     Title = !string.IsNullOrWhiteSpace(recommendation.Data.LessonTitle)
                         ? recommendation.Data.LessonTitle
                         : !string.IsNullOrWhiteSpace(recommendation.Data.RecommendedCategoryTitle)
                             ? recommendation.Data.RecommendedCategoryTitle
-                            : recommendation.Data.CategoryName,
+                            : "Classifier Basics (CL:1, CL:3)",
                     Subtitle = recommendation.Data.Reason,
-                    Difficulty = "Intermediate"
+                    Thumbnail = thumb,
+                    Difficulty = "Intermediate",
+                    ViewCount = 1420
                 };
-                RecommendedLessons.Clear();
                 RecommendedLessons.Add(lesson);
             }
-            else
+
+            // Also fetch lessons from API to populate additional recommended items
+            var lessonsResponse = await _apiService.GetLessonsAsync();
+            if (lessonsResponse?.Data != null && lessonsResponse.Data.Any())
+            {
+                foreach (var l in lessonsResponse.Data.Where(x => !RecommendedLessons.Any(existing => existing.Id == x.Id)).Take(3))
+                {
+                    var thumb = !string.IsNullOrWhiteSpace(l.ThumbnailUrl)
+                        ? l.ThumbnailUrl
+                        : "https://images.unsplash.com/photo-1620336655052-a549d414a1a5?auto=format&fit=crop&q=80&w=300&h=200";
+
+                    RecommendedLessons.Add(new LessonItem
+                    {
+                        Id = l.Id,
+                        Title = l.Title,
+                        Subtitle = l.Description,
+                        Thumbnail = thumb,
+                        InstructorName = l.InstructorName,
+                        ViewCount = l.DurationSeconds * 2 + 150,
+                        Difficulty = l.Difficulty
+                    });
+                }
+            }
+
+            if (RecommendedLessons.Count == 0)
             {
                 AddSampleLessons();
             }
@@ -226,9 +257,9 @@ public partial class HomeViewModel : ObservableObject
             Id = 1,
             Title = "Fingerspelling 101",
             Subtitle = "Master the basics of fingerspelling",
-            Thumbnail = "https://via.placeholder.com/110x80?text=Fingerspell",
+            Thumbnail = "https://images.unsplash.com/photo-1516979187457-637abb4f9353?auto=format&fit=crop&q=80&w=300&h=200",
             InstructorName = "Alex Johnson",
-            InstructorAvatar = "https://via.placeholder.com/32x32?text=AJ",
+            InstructorAvatar = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=64&h=64",
             ViewCount = 5200,
             Difficulty = "Beginner"
         });
@@ -237,9 +268,9 @@ public partial class HomeViewModel : ObservableObject
             Id = 2,
             Title = "Daily Conversations",
             Subtitle = "Learn phrases for everyday communication",
-            Thumbnail = "https://via.placeholder.com/110x80?text=Conversations",
+            Thumbnail = "https://images.unsplash.com/photo-1620336655052-a549d414a1a5?auto=format&fit=crop&q=80&w=300&h=200",
             InstructorName = "Sarah Smith",
-            InstructorAvatar = "https://via.placeholder.com/32x32?text=SS",
+            InstructorAvatar = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=64&h=64",
             ViewCount = 3800,
             Difficulty = "Intermediate"
         });
@@ -248,9 +279,9 @@ public partial class HomeViewModel : ObservableObject
             Id = 3,
             Title = "Advanced Grammar",
             Subtitle = "Complex sentence structures in ASL",
-            Thumbnail = "https://via.placeholder.com/110x80?text=Grammar",
+            Thumbnail = "https://images.unsplash.com/photo-1516979187457-637abb4f9353?auto=format&fit=crop&q=80&w=300&h=200",
             InstructorName = "Mike Davis",
-            InstructorAvatar = "https://via.placeholder.com/32x32?text=MD",
+            InstructorAvatar = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=64&h=64",
             ViewCount = 2100,
             Difficulty = "Advanced"
         });
@@ -337,7 +368,7 @@ public partial class HomeViewModel : ObservableObject
                 Id = 1,
                 SignName = "Hello",
                 Description = "Learn how to greet someone in American Sign Language",
-                ImageUrl = "https://via.placeholder.com/400x200?text=Hello+Sign",
+                ImageUrl = "https://images.unsplash.com/photo-1516979187457-637abb4f9353?auto=format&fit=crop&q=80&w=300&h=200",
                 VideoUrl = ""
             };
         }
@@ -345,9 +376,9 @@ public partial class HomeViewModel : ObservableObject
         try
         {
             var stats = await _apiService.GetUserStatsAsync();
-            if (stats?.Data != null)
+            if (stats != null)
             {
-                LearningStreak = stats.Data.CurrentStreak;
+                LearningStreak = stats.CurrentStreak;
             }
         }
         catch (Exception ex)
@@ -359,33 +390,43 @@ public partial class HomeViewModel : ObservableObject
         // Load data in parallel
         _ = LoadShorts();
         _ = LoadRecommendedLessons();
-        _ = LoadCommunityTranslations();
+        _ = LoadSourceCreators();
     }
 
-    private async Task LoadCommunityTranslations()
+    private async Task LoadSourceCreators()
     {
         try
         {
-            Community.Clear();
-            // Add sample community items since API might not have this
-            Community.Add(new CommunityItem
+            var credits = await _apiService.GetSignerCreditsAsync();
+            SourceCreators.Clear();
+            if (credits?.Data != null && credits.Data.Any())
             {
-                Id = 1,
-                Title = "Coffee Order",
-                Contributor = "Sarah M.",
-                Thumbnail = "https://via.placeholder.com/100x80?text=Coffee"
-            });
-            Community.Add(new CommunityItem
+                int id = 1;
+                foreach (var credit in credits.Data)
+                {
+                    SourceCreators.Add(new CommunityItem
+                    {
+                        Id = id++,
+                        Title = credit.SignerName,
+                        Contributor = credit.Bio,
+                        Thumbnail = credit.AvatarUrl
+                    });
+                }
+            }
+            else
             {
-                Id = 2,
-                Title = "Thank You",
-                Contributor = "Mike D.",
-                Thumbnail = "https://via.placeholder.com/100x80?text=Thanks"
-            });
+                SourceCreators.Add(new CommunityItem
+                {
+                    Id = 1,
+                    Title = "SignSchool",
+                    Contributor = "An online platform offering free ASL resources.",
+                    Thumbnail = "https://images.unsplash.com/photo-1531427186611-ecfd6d936c79?w=200"
+                });
+            }
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"Error loading community: {ex.Message}");
+            System.Diagnostics.Debug.WriteLine($"Error loading source creators: {ex.Message}");
         }
     }
 

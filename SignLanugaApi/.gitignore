@@ -1,0 +1,22 @@
+# .gitignore for .NET API
+[Bb]in/
+[Oo]bj/
+.vs/
+.vscode/
+*.user
+*.suo
+
+# Data
+*.db
+*.db-shm
+*.db-wal
+
+# Secrets
+appsettings.Development.json
+SignLanguageApi.pfx
+
+# Large Files (Models/Datasets)
+*.onnx
+*.task
+ASL_LETTERS/
+DATASETS/

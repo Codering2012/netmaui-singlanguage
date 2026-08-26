@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:SignLanguageApp.ViewModels"
+             x:Class="SignLanguageApp.Pages.EditProfilePage"
+             x:DataType="vm:EditProfileViewModel"
+             Title="Edit Profile"
+             BackgroundColor="{DynamicResource PageBackgroundColor}">
+
+    <Grid RowDefinitions="*,Auto">
+        <ScrollView Grid.Row="0">
+            <VerticalStackLayout Spacing="20" Padding="20">
+                
+                <!-- Avatar Section -->
+                <VerticalStackLayout Spacing="10" HorizontalOptions="Center">
+                    <Border StrokeThickness="0" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 50" HeightRequest="100" WidthRequest="100">
+                        <Image Source="{Binding AvatarUrl}" Aspect="AspectFill" />
+                    </Border>
+                    <Label Text="Profile Picture URL" FontSize="12" TextColor="{DynamicResource SecondaryTextColor}" HorizontalOptions="Center" />
+                    <Entry Text="{Binding AvatarUrl}" Placeholder="Enter image URL" BackgroundColor="{DynamicResource InputBackgroundColor}" TextColor="{DynamicResource PrimaryTextColor}" WidthRequest="250" />
+                </VerticalStackLayout>
+
+                <!-- Basic Info Section -->
+                <Border StrokeThickness="0" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 14" Padding="16">
+                    <VerticalStackLayout Spacing="16">
+                        <Label Text="General Information" FontSize="16" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+                        
+                        <VerticalStackLayout Spacing="6">
+                            <Label Text="Display Name" FontSize="12" TextColor="{DynamicResource SecondaryTextColor}" />
+                            <Entry Text="{Binding Name}" Placeholder="Your Name" BackgroundColor="{DynamicResource InputBackgroundColor}" TextColor="{DynamicResource PrimaryTextColor}" />
+                        </VerticalStackLayout>
+
+                        <VerticalStackLayout Spacing="6">
+                            <Label Text="Bio / Description" FontSize="12" TextColor="{DynamicResource SecondaryTextColor}" />
+                            <Editor Text="{Binding Description}" Placeholder="Tell us about your progress..." AutoSize="TextChanges" BackgroundColor="{DynamicResource InputBackgroundColor}" TextColor="{DynamicResource PrimaryTextColor}" HeightRequest="100" />
+                        </VerticalStackLayout>
+                        
+                        <Button Text="Save Profile" Command="{Binding SaveProfileCommand}" BackgroundColor="{DynamicResource PrimaryColor}" TextColor="White" FontAttributes="Bold" HeightRequest="45" CornerRadius="10" />
+                    </VerticalStackLayout>
+                </Border>
+
+                <!-- Security Section -->
+                <Border StrokeThickness="0" BackgroundColor="{DynamicResource CardBackgroundColor}" StrokeShape="RoundRectangle 14" Padding="16">
+                    <VerticalStackLayout Spacing="16">
+                        <Label Text="Security" FontSize="16" FontAttributes="Bold" TextColor="{DynamicResource PrimaryTextColor}" />
+                        
+                        <VerticalStackLayout Spacing="6">
+                            <Label Text="Current Password" FontSize="12" TextColor="{DynamicResource SecondaryTextColor}" />
+                            <Entry Text="{Binding OldPassword}" IsPassword="True" BackgroundColor="{DynamicResource InputBackgroundColor}" TextColor="{DynamicResource PrimaryTextColor}" />
+                        </VerticalStackLayout>
+
+                        <VerticalStackLayout Spacing="6">
+                            <Label Text="New Password" FontSize="12" TextColor="{DynamicResource SecondaryTextColor}" />
+                            <Entry Text="{Binding NewPassword}" IsPassword="True" BackgroundColor="{DynamicResource InputBackgroundColor}" TextColor="{DynamicResource PrimaryTextColor}" />
+                        </VerticalStackLayout>
+
+                        <VerticalStackLayout Spacing="6">
+                            <Label Text="Confirm New Password" FontSize="12" TextColor="{DynamicResource SecondaryTextColor}" />
+                            <Entry Text="{Binding ConfirmPassword}" IsPassword="True" BackgroundColor="{DynamicResource InputBackgroundColor}" TextColor="{DynamicResource PrimaryTextColor}" />
+                        </VerticalStackLayout>
+
+                        <Button Text="Update Password" Command="{Binding ChangePasswordCommand}" BackgroundColor="{DynamicResource SecondaryBackgroundColor}" TextColor="{DynamicResource PrimaryTextColor}" BorderColor="{DynamicResource BorderColor}" BorderWidth="1.5" CornerRadius="10" FontAttributes="Bold" HeightRequest="45" />
+                    </VerticalStackLayout>
+                </Border>
+
+                <Label Text="{Binding StatusMessage}" TextColor="{Binding IsSuccess, Converter={StaticResource SuccessToColorConverter}}" HorizontalOptions="Center" HorizontalTextAlignment="Center" FontSize="13" />
+
+            </VerticalStackLayout>
+        </ScrollView>
+
+        <ActivityIndicator Grid.RowSpan="2"
+                           IsVisible="{Binding IsLoading}"
+                           IsRunning="{Binding IsLoading}"
+                           HorizontalOptions="Center"
+                           VerticalOptions="Center"
+                           Color="{DynamicResource PrimaryColor}"
+                           Scale="1.3" />
+    </Grid>
+</ContentPage>

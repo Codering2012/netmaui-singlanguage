@@ -1,0 +1,7 @@
+Looking in links: https://download.openmmlab.com/mmcv/dist/cpu/torch2.11.0/index.html
+Collecting mmcv
+  Downloading mmcv-2.2.0.tar.gz (479 kB)
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Getting requirements to build wheel: started
+  Getting requirements to build wheel: finished with status 'error'

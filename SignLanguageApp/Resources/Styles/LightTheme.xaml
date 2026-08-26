@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<?xaml-comp compile="true" ?>
+<ResourceDictionary 
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    x:Class="SignLanguageApp.Resources.Styles.LightTheme">
+
+    <!-- Color Tokens (Light Mode - Enhanced 15% Contrast) -->
+    <Color x:Key="PrimaryColor">#0EA5E9</Color>
+    <Color x:Key="PrimaryDarkColor">#0284C7</Color>
+    <Color x:Key="SecondaryColor">#F59E0B</Color>
+    <Color x:Key="PageBackgroundColor">#F1F5F9</Color>
+    <Color x:Key="CardBackgroundColor">#FFFFFF</Color>
+    <Color x:Key="SecondaryBackgroundColor">#E2E8F0</Color>
+    <Color x:Key="PrimaryTextColor">#0F172A</Color>
+    <Color x:Key="SecondaryTextColor">#475569</Color>
+    <Color x:Key="BorderColor">#CBD5E1</Color>
+    <Color x:Key="ButtonTextColor">#FFFFFF</Color>
+    
+    <Color x:Key="AccentColor">#F59E0B</Color>
+    
+    <Color x:Key="CameraOverlayColor">#0EA5E9</Color>
+    <Color x:Key="ButtonBackgroundColor">#0EA5E9</Color>
+    
+    <Color x:Key="InputBackgroundColor">#F1F5F9</Color>
+    <Color x:Key="InputPlaceholderColor">#94A3B8</Color>
+    
+    <Color x:Key="SuccessColor">#10B981</Color>
+    <Color x:Key="ErrorColor">#EF4444</Color>
+    <Color x:Key="WarningColor">#F59E0B</Color>
+
+    <Color x:Key="NavigationBarBackgroundColor">#FFFFFF</Color>
+    <Color x:Key="NavigationBarTextColor">#0F172A</Color>
+
+    <LinearGradientBrush x:Key="PageGradient" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#F8FAFC" Offset="0.0" />
+        <GradientStop Color="#E2E8F0" Offset="1.0" />
+    </LinearGradientBrush>
+
+    <!-- Brushes -->
+    <SolidColorBrush x:Key="PrimaryBrush" Color="{StaticResource PrimaryColor}" />
+    <SolidColorBrush x:Key="SecondaryBrush" Color="{StaticResource SecondaryColor}" />
+    <SolidColorBrush x:Key="PageBackgroundBrush" Color="{StaticResource PageBackgroundColor}" />
+    <SolidColorBrush x:Key="CardBackgroundBrush" Color="{StaticResource CardBackgroundColor}" />
+    <SolidColorBrush x:Key="SecondaryBackgroundBrush" Color="{StaticResource SecondaryBackgroundColor}" />
+    <SolidColorBrush x:Key="PrimaryTextBrush" Color="{StaticResource PrimaryTextColor}" />
+    <SolidColorBrush x:Key="SecondaryTextBrush" Color="{StaticResource SecondaryTextColor}" />
+    <SolidColorBrush x:Key="BorderBrush" Color="{StaticResource BorderColor}" />
+    <SolidColorBrush x:Key="PrimaryThemeBrush" Color="{StaticResource PrimaryColor}" />
+
+    <!-- Navigation Bar Glassmorphism Colors (Light - Figma Liquid Glass Gradient Rim) -->
+    <Color x:Key="NavBarRimColor">#D5F1F5F9</Color>
+    <Color x:Key="NavBarCenterColor">#30FFFFFF</Color>
+    <Color x:Key="NavBarBackgroundColor">#D0F1F5F9</Color>
+    <Color x:Key="NavBarStrokeColor">#94A3B8</Color>
+    <Color x:Key="NavBarGlassHighlight">#E0FFFFFF</Color>
+    <Color x:Key="NavBarIconTintColor">#0F172A</Color>
+    <Color x:Key="NavBarInactiveColor">#334155</Color>
+    <Color x:Key="NavBarActiveColor">#0284C7</Color>
+    <Color x:Key="NavBarActivePillColor">#300284C7</Color>
+    <Color x:Key="NavBarActivePillStroke">#600284C7</Color>
+    <x:Single x:Key="GlassShadowOpacity">0.18</x:Single>
+    <x:Double x:Key="AmbientBlobOpacity">0.35</x:Double>
+
+    <!-- Gamification Glass Colors (Light) -->
+    <Color x:Key="SuccessGlassBackgroundColor">#1A10B981</Color>
+    <Color x:Key="SuccessGlassStrokeColor">#8010B981</Color>
+    <Color x:Key="SuccessGlassSolidColor">#F010B981</Color>
+
+    <Color x:Key="WarningGlassBackgroundColor">#1AF59E0B</Color>
+    <Color x:Key="WarningGlassStrokeColor">#80F59E0B</Color>
+
+    <Color x:Key="ErrorGlassBackgroundColor">#1AEF4444</Color>
+    <Color x:Key="ErrorGlassStrokeColor">#80EF4444</Color>
+    <Color x:Key="ErrorGlassSolidColor">#F0EF4444</Color>
+
+    <Color x:Key="PrimaryGlassBackgroundColor">#1A3B82F6</Color>
+    <Color x:Key="PrimaryGlassStrokeColor">#803B82F6</Color>
+    
+    <Color x:Key="CameraOverlayBackgroundColor">#D9FFFFFF</Color>
+
+</ResourceDictionary>
