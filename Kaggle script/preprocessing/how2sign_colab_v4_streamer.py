@@ -198,9 +198,11 @@ def run_streaming_pipeline(args):
             print(f"[NOTE] sentence-transformers not active ({e}); skipping offline sentence embeddings.")
 
     # Initialize PreprocessorV4 on GPU
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     preprocessor = VideoPreprocessorV4(
         target_fps=args.target_fps,
-        pose_backend=args.backend,
+        backend=args.backend,
+        device=device,
         canonicalize_hands=True,
     )
 

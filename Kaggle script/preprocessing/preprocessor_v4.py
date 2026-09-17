@@ -941,7 +941,13 @@ class VideoPreprocessorV4:
         flip_tta: bool = False,
         device: str = "cpu",
         canonicalize_hands: bool = True,
+        target_fps: float = 30.0,
+        pose_backend: Optional[str] = None,
+        **kwargs,
     ):
+        if pose_backend is not None:
+            backend = pose_backend
+        self.target_fps = target_fps
         self.roi_tracker = UpperBodyTrackerEMA(target_size=target_roi_size, hand_crop_size=hand_crop_size)
         self.enhancer = ImageEnhancer()
         self.backend = backend
@@ -1132,7 +1138,7 @@ class VideoPreprocessorV4:
         native_fps = cap.get(cv2.CAP_PROP_FPS)
         if native_fps <= 0.0 or math.isnan(native_fps):
             native_fps = 30.0
-        target_fps = 30.0
+        target_fps = getattr(self, "target_fps", 30.0)
 
         sample_step = max(1.0, native_fps / target_fps)
         next_sample_idx = 0.0
