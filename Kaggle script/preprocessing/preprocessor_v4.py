@@ -55,6 +55,91 @@ import cv2
 import numpy as np
 import torch
 
+def ensure_cuda_libraries():
+    """
+    Auto-detects and resolves missing CUDA & cuDNN libraries for ONNX Runtime.
+    Detects missing .so dependencies (e.g. libcudart.so.13) via ldd and
+    symlinks them to existing system CUDA libraries in Linux/Colab.
+    """
+    if sys.platform != "linux":
+        return
+
+    import glob
+    import re
+    import subprocess
+
+    try:
+        import site
+        sp_paths = site.getsitepackages()
+    except Exception:
+        sp_paths = []
+
+    wheel_lib_paths = []
+    for sp in sp_paths:
+        wheel_lib_paths.extend(glob.glob(os.path.join(sp, "nvidia", "*", "lib")))
+        wheel_lib_paths.extend(glob.glob(os.path.join(sp, "torch", "lib")))
+
+    system_cuda_paths = [
+        "/usr/local/cuda/lib64",
+        "/usr/local/cuda-12/lib64",
+        "/usr/local/cuda-12/targets/x86_64-linux/lib",
+        "/usr/lib64-nvidia",
+        "/usr/local/lib",
+        "/usr/lib/x86_64-linux-gnu",
+    ]
+
+    all_search_paths = [p for p in set(wheel_lib_paths + system_cuda_paths) if os.path.isdir(p)]
+
+    # Locate onnxruntime providers cuda library
+    ort_cuda_libs = glob.glob("/usr/local/lib/python3*/dist-packages/onnxruntime/capi/libonnxruntime_providers_cuda.so")
+    if not ort_cuda_libs:
+        for sp in sp_paths:
+            ort_cuda_libs.extend(glob.glob(os.path.join(sp, "onnxruntime", "capi", "libonnxruntime_providers_cuda.so")))
+
+    if ort_cuda_libs and os.path.isfile(ort_cuda_libs[0]):
+        try:
+            ldd_out = subprocess.check_output(["ldd", ort_cuda_libs[0]], text=True, stderr=subprocess.STDOUT)
+            missing = [line.split("=>")[0].strip() for line in ldd_out.splitlines() if "not found" in line]
+            if missing:
+                for lib in missing:
+                    base = re.sub(r"\.so.*", "", lib)
+                    candidates = []
+                    for sdir in all_search_paths:
+                        candidates.extend(glob.glob(os.path.join(sdir, f"{base}*.so*")))
+                    candidates = [c for c in candidates if not os.path.islink(c) and os.path.isfile(c) and not c.endswith(".a")]
+                    if candidates:
+                        candidates.sort(reverse=True)
+                        target = candidates[0]
+                        link_path = os.path.join("/usr/local/lib", lib)
+                        try:
+                            if os.path.exists(link_path) or os.path.islink(link_path):
+                                os.remove(link_path)
+                            os.symlink(target, link_path)
+                            print(f"[CUDA Auto-Linker] Resolved {lib} -> {target}", flush=True)
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+    # Refresh ldconfig cache
+    try:
+        conf_path = "/etc/ld.so.conf.d/cuda_ort.conf"
+        with open(conf_path, "w") as f:
+            f.write("/usr/local/lib\n")
+            for p in all_search_paths:
+                f.write(p + "\n")
+        subprocess.run(["ldconfig"], check=False, stdout=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+    cur_ld = os.environ.get("LD_LIBRARY_PATH", "")
+    add_paths = [p for p in all_search_paths if p not in cur_ld]
+    if add_paths:
+        os.environ["LD_LIBRARY_PATH"] = ":".join(add_paths) + ((":" + cur_ld) if cur_ld else "")
+
+
+ensure_cuda_libraries()
+
 try:
     import rtmlib
     from rtmlib import Wholebody

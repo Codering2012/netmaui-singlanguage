@@ -29,10 +29,12 @@ import numpy as np
 # Ensure local imports work
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
-    from preprocessor_v4 import VideoPreprocessorV4
+    from preprocessor_v4 import VideoPreprocessorV4, ensure_cuda_libraries
 except ImportError:
     # Try importing from current directory
-    from preprocessing.preprocessor_v4 import VideoPreprocessorV4
+    from preprocessing.preprocessor_v4 import VideoPreprocessorV4, ensure_cuda_libraries
+
+ensure_cuda_libraries()
 
 
 class ShardUploaderThread:
