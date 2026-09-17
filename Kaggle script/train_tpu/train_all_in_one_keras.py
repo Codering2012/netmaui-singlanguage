@@ -172,6 +172,10 @@ class KerasTwoStreamMeshVisualFusion(layers.Layer):
         self.norm2 = layers.LayerNormalization()
         self.gate_dense = layers.Dense(d_model, activation="sigmoid")
 
+    def build(self, input_shape=None):
+        self.built = True
+        super().build(input_shape)
+
     def call(
         self,
         kinematics: keras.KerasTensor,
@@ -179,6 +183,11 @@ class KerasTwoStreamMeshVisualFusion(layers.Layer):
         dense_visual_tokens: Optional[keras.KerasTensor] = None,
         training: bool = False,
     ) -> Tuple[keras.KerasTensor, keras.KerasTensor]:
+        # Handle 4D kinematics [B, T, 60, 9] from dataset collator
+        if ops.ndim(kinematics) == 4:
+            B = ops.shape(kinematics)[0]
+            T = ops.shape(kinematics)[1]
+            kinematics = ops.reshape(kinematics, (B, T, -1))
         h_kin = self.kinematic_proj(kinematics)
 
         if mesh_features is not None and dense_visual_tokens is not None:
@@ -202,22 +211,42 @@ class KerasBattisonDominanceSymmetry(layers.Layer):
         self.gate = layers.Dense(d_model, activation="sigmoid")
         self.norm = layers.LayerNormalization()
 
+    def build(self, input_shape=None):
+        self.built = True
+        super().build(input_shape)
+
     def call(
         self,
         h: keras.KerasTensor,
         kinematics: Optional[keras.KerasTensor] = None,
     ) -> Tuple[keras.KerasTensor, keras.KerasTensor]:
-        if kinematics is not None and kinematics.shape[-1] >= 510:
-            # Slices for left and right hands
-            lh = kinematics[:, :, 468:489]
-            rh = kinematics[:, :, 489:510]
-            asym = ops.mean(ops.square(lh - rh), axis=-1, keepdims=True)
-            loss_battison = ops.mean(asym)
+        if kinematics is not None:
+            if ops.ndim(kinematics) == 4 and kinematics.shape[2] >= 42:
+                # Canonical 60-keypoint 4D format [B, T, 60, 9]:
+                # 0..20: Left hand, 21..41: Right hand
+                lh = kinematics[:, :, 0:21, :]
+                rh = kinematics[:, :, 21:42, :]
+                diff_sq = ops.square(lh - rh)
+                asym_2d = ops.mean(diff_sq, axis=(-2, -1))  # [B, T]
+                asym = ops.expand_dims(asym_2d, axis=-1)   # [B, T, 1]
+                loss_battison = ops.mean(asym_2d)
+            elif ops.ndim(kinematics) == 3 and kinematics.shape[-1] >= 378:
+                # Canonical 60-keypoint flattened 540-dim format [B, T, 540]:
+                # Left hand (21*9=189): dims 0..189; Right hand (21*9=189): dims 189..378
+                lh = kinematics[:, :, 0:189]
+                rh = kinematics[:, :, 189:378]
+                diff_sq = ops.square(lh - rh)
+                asym_2d = ops.mean(diff_sq, axis=-1)        # [B, T]
+                asym = ops.expand_dims(asym_2d, axis=-1)   # [B, T, 1]
+                loss_battison = ops.mean(asym_2d)
+            else:
+                asym = ops.zeros_like(h[:, :, :1])
+                loss_battison = ops.convert_to_tensor(0.0, dtype="float32")
         else:
             asym = ops.zeros_like(h[:, :, :1])
             loss_battison = ops.convert_to_tensor(0.0, dtype="float32")
 
-        g = self.gate(ops.concatenate([h, ops.repeat(asym, self.d_model, axis=-1)], axis=-1))
+        g = self.gate(ops.concatenate([h, asym], axis=-1))
         h_out = self.norm(h * (1.0 + g))
         return h_out, loss_battison
 
@@ -444,8 +473,13 @@ class ASLKerasFoundationModel(keras.Model):
         # 5. Multimodal Perceiver Resampler (16 prefix latents)
         self.perceiver = KerasPerceiverResampler(dim=d_model, dim_llm=dim_llm, num_latents=num_latents, nhead=nhead)
 
-        # 6. Decoder & CTC Heads
+        # 6. Causal Translation Decoder & CTC Heads
         self.text_embed = layers.Embedding(vocab_size, dim_llm)
+        self.decoder_causal_attn = layers.MultiHeadAttention(
+            num_heads=nhead,
+            key_dim=dim_llm // nhead,
+        )
+        self.decoder_norm = layers.LayerNormalization()
         self.decoder_dense = layers.Dense(dim_llm, activation="gelu")
         self.lm_head = layers.Dense(vocab_size, use_bias=False)
         self.ctc_head = layers.Dense(vocab_size)
@@ -504,13 +538,22 @@ class ASLKerasFoundationModel(keras.Model):
         # 7. Perceiver Resampler (16 prefix latents)
         prefix_embeds = self.perceiver(h_reordered, training=training)
 
-        # 8. Translation decoder
+        # 8. Translation decoder with causal self-attention
         dec_logits = None
         if text_tokens is not None:
             safe_tokens = ops.clip(ops.cast(text_tokens, "int32"), 0, self.vocab_size - 1)
             text_emb = self.text_embed(safe_tokens)
             fused_dec = ops.concatenate([prefix_embeds, text_emb], axis=1)
-            fused_h = self.decoder_dense(fused_dec)
+            # Causal self-attention allows text tokens to attend to prefix latents and preceding text tokens
+            attn_dec = self.decoder_causal_attn(
+                query=fused_dec,
+                value=fused_dec,
+                key=fused_dec,
+                use_causal_mask=True,
+                training=training,
+            )
+            fused_normed = self.decoder_norm(fused_dec + attn_dec)
+            fused_h = self.decoder_dense(fused_normed)
             total_logits = self.lm_head(fused_h)
             dec_logits = total_logits[:, self.num_latents:, :]
 
@@ -553,6 +596,27 @@ class ASLKerasFoundationModel(keras.Model):
             text_embs = self.text_embed(targets)
             loss_dtw = self.soft_dtw_loss(y_pred["encoded_proj"], text_embs)
             multi_losses["loss_soft_dtw"] = loss_dtw
+
+        # 3. Auxiliary CTC Loss
+        if y is not None and y_pred.get("ctc_logits", None) is not None:
+            try:
+                targets = ops.clip(ops.cast(y, "int32"), 0, self.vocab_size - 1)
+                ctc_log_probs = ops.log_softmax(y_pred["ctc_logits"], axis=-1)
+                B = ops.shape(ctc_log_probs)[0]
+                T_ctc = ops.shape(ctc_log_probs)[1]
+                L_target = ops.shape(targets)[1]
+                target_lengths = ops.full((B,), L_target, dtype="int32")
+                input_lengths = ops.full((B,), T_ctc, dtype="int32")
+                ctc_loss_val = ops.ctc_loss(
+                    target=targets,
+                    output=ctc_log_probs,
+                    target_length=target_lengths,
+                    output_length=input_lengths,
+                    mask_index=0,
+                )
+                multi_losses["loss_ctc"] = ops.mean(ctc_loss_val)
+            except Exception:
+                pass
 
         # Kendall & Gal homoscedastic uncertainty balancing
         total_loss = self.loss_wrapper(multi_losses)

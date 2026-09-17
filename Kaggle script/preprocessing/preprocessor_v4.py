@@ -453,7 +453,10 @@ def reference_part_normalize(landmarks: np.ndarray, val_mask: np.ndarray) -> Tup
     return normed, scale_ref
 
 
-def clean_out_of_bounds_hands(feat_arr: np.ndarray) -> np.ndarray:
+def clean_out_of_bounds_hands(
+    feat_arr: np.ndarray,
+    val_mask: Optional[np.ndarray] = None,
+) -> np.ndarray:
     """
     Detects and zeroes out hand keypoints that are out-of-bounds, collapsed, or anatomically exploded:
       - Left Hand: indices 0..20 (wrist at 0)
@@ -464,6 +467,7 @@ def clean_out_of_bounds_hands(feat_arr: np.ndarray) -> np.ndarray:
       3. Collapsed cluster: spatial std across all 21 hand joints < 0.015 (tracking lost, points pinned to a single border point)
     When detected, the 21 keypoints of that hand in that frame are zeroed out across all feature channels.
     Fast-path: Dual-hand batched processing with squared distance thresholds and zero square root allocations.
+    Synchronously updates val_mask if provided.
     """
     if feat_arr.ndim < 2 or feat_arr.shape[1] < 42:
         return feat_arr
@@ -500,6 +504,8 @@ def clean_out_of_bounds_hands(feat_arr: np.ndarray) -> np.ndarray:
         valid_indices = np.where(~inv_h)[0]
         if len(valid_indices) == 0:
             out[:, h_start:h_end, :] = 0.0
+            if val_mask is not None:
+                val_mask[:, h_start:h_end] = False
             continue
         # Identify contiguous invalid chunks
         diff_inv = np.diff(inv_h.astype(np.int32))
@@ -520,8 +526,12 @@ def clean_out_of_bounds_hands(feat_arr: np.ndarray) -> np.ndarray:
                         out[t_coords, k, c] = np.interp(
                             t_coords, [s - 1, e + 1], [out[s - 1, k, c], out[e + 1, k, c]]
                         )
+                if val_mask is not None:
+                    val_mask[s:e + 1, h_start:h_end] = True
             else:
                 out[s:e + 1, h_start:h_end, :] = 0.0
+                if val_mask is not None:
+                    val_mask[s:e + 1, h_start:h_end] = False
     return out
 
 
@@ -640,7 +650,7 @@ def compute_9d_kinematics(landmarks_seq: np.ndarray, smooth: bool = True, fps: f
     vel_slice[is_inactive] = 0.0
     acc_slice[is_inactive] = 0.0
 
-    return kinematics_9d
+    return np.nan_to_num(kinematics_9d, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
 
 
 def interpolate_missing_hand_landmarks(
@@ -817,7 +827,7 @@ def compute_19d_phonology(landmarks_seq: np.ndarray, val_mask: np.ndarray) -> np
     rh_curl_raw = np.sqrt(np.sum(diff_rh * diff_rh, axis=-1))
     phonology[:, 14:19] = np.clip(rh_curl_raw / (1.85 * rh_palm_len), 0.0, 1.0)
 
-    return phonology
+    return np.nan_to_num(phonology, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
 
 
 # ==============================================================================
@@ -834,6 +844,15 @@ SWAP_LEFT_RIGHT_INDICES[44] = 45  # Left Hip <-> Right Hip
 SWAP_LEFT_RIGHT_INDICES[45] = 44
 SWAP_LEFT_RIGHT_INDICES[46] = 47  # Left Elbow <-> Right Elbow
 SWAP_LEFT_RIGHT_INDICES[47] = 46
+
+# Symmetrical bilateral face landmarks (indices 48..59):
+# (48: Nose, 49..51: Midline, 56: Forehead top, 59: Glabella remain fixed along midline)
+SWAP_LEFT_RIGHT_INDICES[52] = 53  # Left Eye <-> Right Eye
+SWAP_LEFT_RIGHT_INDICES[53] = 52
+SWAP_LEFT_RIGHT_INDICES[54] = 55  # Left Mouth Corner <-> Right Mouth Corner
+SWAP_LEFT_RIGHT_INDICES[55] = 54
+SWAP_LEFT_RIGHT_INDICES[57] = 58  # Left Eyebrow <-> Right Eyebrow
+SWAP_LEFT_RIGHT_INDICES[58] = 57
 
 
 def canonicalize_handedness(
@@ -1020,29 +1039,30 @@ class VideoPreprocessorV4:
                     norm_kps = kps_133.copy().astype(np.float32)
                     norm_kps[:, 0] /= max(1.0, fw)
                     norm_kps[:, 1] /= max(1.0, fh)
+                    dim = min(3, norm_kps.shape[1])
 
                     # 1. Left Hand (0..20)
                     for i, idx in enumerate(RTMW_LH_21):
                         if idx < len(norm_kps) and (scores_133 is None or scores_133[idx] >= 0.20):
-                            lm_60[i, :2] = norm_kps[idx, :2]
+                            lm_60[i, :dim] = norm_kps[idx, :dim]
                             val_60[i] = True
 
                     # 2. Right Hand (21..41)
                     for i, idx in enumerate(RTMW_RH_21):
                         if idx < len(norm_kps) and (scores_133 is None or scores_133[idx] >= 0.20):
-                            lm_60[21 + i, :2] = norm_kps[idx, :2]
+                            lm_60[21 + i, :dim] = norm_kps[idx, :dim]
                             val_60[21 + i] = True
 
                     # 3. Upper Body Pose (42..47: L_Shoulder=5, R_Shoulder=6, L_Hip=11, R_Hip=12, L_Elbow=7, R_Elbow=8)
                     for i, idx in enumerate(RTMW_POSE_6):
                         if idx < len(norm_kps) and (scores_133 is None or scores_133[idx] >= 0.20):
-                            lm_60[42 + i, :2] = norm_kps[idx, :2]
+                            lm_60[42 + i, :dim] = norm_kps[idx, :dim]
                             val_60[42 + i] = True
 
                     # 4. Face Mesh (48..59)
                     for i, idx in enumerate(RTMW_FACE_12):
                         if idx < len(norm_kps) and (scores_133 is None or scores_133[idx] >= 0.20):
-                            lm_60[48 + i, :2] = norm_kps[idx, :2]
+                            lm_60[48 + i, :dim] = norm_kps[idx, :dim]
                             val_60[48 + i] = True
 
                     frame_conf = float(val_60.sum() / 60.0)
@@ -1202,7 +1222,7 @@ class VideoPreprocessorV4:
 
         clean_landmarks = interpolate_missing_hand_landmarks(raw_landmarks, landmark_val_mask)
         # Sanitize out-of-bounds, exploded, or collapsed tracking artifacts
-        clean_landmarks = clean_out_of_bounds_hands(clean_landmarks)
+        clean_landmarks = clean_out_of_bounds_hands(clean_landmarks, landmark_val_mask)
 
         # Handedness canonicalization
         if self.canonicalize_hands:
@@ -1225,6 +1245,12 @@ class VideoPreprocessorV4:
 
         cranial_imu = compute_cranial_imu(clean_landmarks, landmark_val_mask)
         face_landmarks = clean_landmarks[:, 48:60, :3] if clean_landmarks.shape[1] >= 60 else np.zeros((clean_landmarks.shape[0], 12, 3), dtype=np.float32)
+
+        # Ensure finite numeric stability across all output tensors
+        kinematics_9d = np.nan_to_num(kinematics_9d, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+        phonology_19d = np.nan_to_num(phonology_19d, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+        cranial_imu = np.nan_to_num(cranial_imu, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+        face_landmarks = np.nan_to_num(face_landmarks, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
 
         res = {
             "features": torch.from_numpy(kinematics_9d).to(torch.bfloat16),
@@ -1295,7 +1321,7 @@ class VideoPreprocessorV4:
         landmark_val_mask = val_60[np.newaxis, :]  # [1, 60]
 
         # Sanitize out-of-bounds / exploded / collapsed hands
-        raw_landmarks = clean_out_of_bounds_hands(raw_landmarks)
+        raw_landmarks = clean_out_of_bounds_hands(raw_landmarks, landmark_val_mask)
 
         # For static alphabet single-hand images without an actual human body, neutralize phantom pose & face
         if landmark_val_mask[:, 42:48].sum() == 0 or np.linalg.norm(raw_landmarks[:, 42, :2] - raw_landmarks[:, 43, :2]) < 0.05:
@@ -1332,6 +1358,12 @@ class VideoPreprocessorV4:
 
         cranial_imu = compute_cranial_imu(raw_landmarks, landmark_val_mask)
         face_landmarks = raw_landmarks[:, 48:60, :3] if raw_landmarks.shape[1] >= 60 else np.zeros((raw_landmarks.shape[0], 12, 3), dtype=np.float32)
+
+        # Ensure finite numeric stability across all output tensors
+        kinematics_9d = np.nan_to_num(kinematics_9d, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+        phonology_19d = np.nan_to_num(phonology_19d, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+        cranial_imu = np.nan_to_num(cranial_imu, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+        face_landmarks = np.nan_to_num(face_landmarks, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
 
         res = {
             "features": torch.from_numpy(kinematics_9d).to(torch.bfloat16),

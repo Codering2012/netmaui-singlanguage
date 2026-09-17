@@ -138,9 +138,12 @@ def parse_how2sign_csv(csv_path: Path) -> Dict[str, str]:
         for line in f:
             parts = line.strip().split(delim)
             if len(parts) > max(id_col, text_col):
-                clip_id = parts[id_col].strip()
+                raw_clip_id = parts[id_col].strip()
                 text = parts[text_col].strip()
-                transcriptions[clip_id] = text
+                transcriptions[raw_clip_id] = text
+                stem_id = Path(raw_clip_id).stem
+                if stem_id not in transcriptions:
+                    transcriptions[stem_id] = text
 
     return transcriptions
 
