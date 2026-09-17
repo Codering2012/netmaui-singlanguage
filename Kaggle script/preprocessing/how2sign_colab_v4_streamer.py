@@ -23,65 +23,6 @@ import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 
-import glob
-import ctypes
-
-def _preload_nvidia_cuda_libraries():
-    """
-    Automatically locates and preloads pip-installed NVIDIA shared objects
-    (including libcublasLt.so.13 and libcudnn.so.9) using ctypes with RTLD_GLOBAL.
-    This guarantees ONNX Runtime's dlopen() can resolve symbols even if LD_LIBRARY_PATH
-    was not set prior to Python process launch.
-    """
-    try:
-        import site
-        site_dirs = []
-        if hasattr(site, "getsitepackages"):
-            site_dirs.extend(site.getsitepackages())
-        if hasattr(site, "getusersitepackages"):
-            site_dirs.append(site.getusersitepackages())
-        
-        nvidia_dirs = []
-        for s in site_dirs:
-            if s and os.path.isdir(s):
-                nvidia_dirs.extend(glob.glob(os.path.join(s, "nvidia", "*", "lib")))
-                nvidia_dirs.extend(glob.glob(os.path.join(s, "torch", "lib")))
-        
-        if nvidia_dirs:
-            os.environ["LD_LIBRARY_PATH"] = ":".join(nvidia_dirs) + ":" + os.environ.get("LD_LIBRARY_PATH", "")
-
-        candidates = []
-        for d in nvidia_dirs:
-            for so_file in glob.glob(os.path.join(d, "*.so*")):
-                if os.path.isfile(so_file) and not os.path.islink(so_file):
-                    candidates.append(so_file)
-        
-        priority = ["cuda_runtime", "cublaslt", "cublas", "cudnn"]
-        def rank(p):
-            n = os.path.basename(p).lower()
-            for idx, key in enumerate(priority):
-                if key in n:
-                    return idx
-            return len(priority)
-        
-        candidates = sorted(list(set(candidates)), key=rank)
-        for c in candidates:
-            try:
-                ctypes.CDLL(c, mode=ctypes.RTLD_GLOBAL)
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-    try:
-        import onnxruntime as ort
-        if hasattr(ort, "preload_dlls"):
-            ort.preload_dlls()
-    except Exception:
-        pass
-
-_preload_nvidia_cuda_libraries()
-
 import torch
 import numpy as np
 
