@@ -373,11 +373,11 @@ def run_streaming_pipeline(args):
                         )
                         clip_time = time.time() - t_clip_start
                         if result is not None:
-                            n_frames = (
-                                result["landmarks"].shape[0]
-                                if isinstance(result.get("landmarks"), (torch.Tensor, np.ndarray))
-                                else len(result.get("landmarks", []))
-                            )
+                            feat = result.get("features", result.get("landmarks", result.get("roi_visual")))
+                            if isinstance(feat, (torch.Tensor, np.ndarray)):
+                                n_frames = feat.shape[0]
+                            else:
+                                n_frames = len(feat) if feat is not None else 0
                             fps = (n_frames / clip_time) if clip_time > 0 else 0.0
                             result["id"] = clip_id
                             result["label"] = text
