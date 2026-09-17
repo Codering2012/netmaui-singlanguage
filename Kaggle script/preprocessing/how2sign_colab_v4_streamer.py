@@ -167,13 +167,17 @@ def run_streaming_pipeline(args):
         except Exception:
             completed_clips = set()
 
-    # Discover zip archives and CSVs
+    # Discover zip archives and raw video files
     zip_files = sorted(list(drive_dir.glob("*.zip")))
+    raw_video_files = []
     if not zip_files:
-        print(f"No .zip archives found in {drive_dir}")
-        return
-
-    print(f"Found {len(zip_files)} zip archives to stream.")
+        raw_video_files = sorted([p for p in drive_dir.rglob("*") if p.suffix.lower() in [".mp4", ".mkv", ".avi", ".mov"] and not p.name.startswith(".")])
+        if not raw_video_files:
+            print(f"[!] Error: No .zip archives or video files (.mp4) found in {drive_dir}")
+            return
+        print(f"Found {len(raw_video_files)} raw video files to stream.")
+    else:
+        print(f"Found {len(zip_files)} zip archives to stream.")
 
     # Load transcriptions from all CSV files found
     transcriptions = {}
@@ -204,41 +208,17 @@ def run_streaming_pipeline(args):
     current_buf, next_buf = buf_a, buf_b
     shard_idx = len(list(output_drive_dir.glob("shard_*.pt")))
 
-    for z_idx, zip_path in enumerate(zip_files):
-        print(f"\n[{z_idx+1}/{len(zip_files)}] Inspecting archive: {zip_path.name}")
-        with zipfile.ZipFile(str(zip_path), "r") as zf:
-            all_entries = [info for info in zf.infolist() if not info.is_dir() and info.filename.lower().endswith(".mp4")]
-            unprocessed_entries = [info for info in all_entries if Path(info.filename).stem not in completed_clips]
-
-        print(f"Archive contains {len(all_entries)} clips ({len(unprocessed_entries)} remaining).")
-        if not unprocessed_entries:
-            continue
-
-        # Process in chunks of chunk_size
+    if raw_video_files:
+        unprocessed_videos = [p for p in raw_video_files if p.stem not in completed_clips]
+        print(f"Streaming {len(unprocessed_videos)} remaining raw video files...")
         chunk_size = args.chunk_size
-        for chunk_start in range(0, len(unprocessed_entries), chunk_size):
-            chunk_infos = unprocessed_entries[chunk_start : chunk_start + chunk_size]
-
-            # 1. Clear current extraction buffer
-            shutil.rmtree(str(current_buf), ignore_errors=True)
-            current_buf.mkdir(parents=True, exist_ok=True)
-
-            # 2. Extract batch into current buffer
-            with zipfile.ZipFile(str(zip_path), "r") as zf:
-                for info in chunk_infos:
-                    zf.extract(info, path=str(current_buf))
-
-            # 3. Process each extracted clip on GPU
+        for chunk_start in range(0, len(unprocessed_videos), chunk_size):
+            chunk_files = unprocessed_videos[chunk_start : chunk_start + chunk_size]
             processed_data = []
             chunk_clip_ids = []
-            for info in chunk_infos:
-                video_file = current_buf / info.filename
-                if not video_file.exists():
-                    continue
-
+            for video_file in chunk_files:
                 clip_id = video_file.stem
                 text = transcriptions.get(clip_id, "")
-
                 try:
                     result = preprocessor.extract_from_video(
                         str(video_file),
@@ -262,13 +242,74 @@ def run_streaming_pipeline(args):
                 local_shard_path = local_root / shard_name
                 torch.save(processed_data, str(local_shard_path))
                 print(f"Saved local shard {shard_name} ({len(processed_data)} clips). Triggering background upload...")
-
-                # 4. Trigger asynchronous background upload to Google Drive
                 uploader.upload_async(local_shard_path, chunk_clip_ids)
                 shard_idx += 1
+    else:
+        for z_idx, zip_path in enumerate(zip_files):
+            print(f"\n[{z_idx+1}/{len(zip_files)}] Inspecting archive: {zip_path.name}")
+            with zipfile.ZipFile(str(zip_path), "r") as zf:
+                all_entries = [info for info in zf.infolist() if not info.is_dir() and info.filename.lower().endswith(".mp4")]
+                unprocessed_entries = [info for info in all_entries if Path(info.filename).stem not in completed_clips]
 
-            # 5. Swap ping-pong buffers
-            current_buf, next_buf = next_buf, current_buf
+            print(f"Archive contains {len(all_entries)} clips ({len(unprocessed_entries)} remaining).")
+            if not unprocessed_entries:
+                continue
+
+            # Process in chunks of chunk_size
+            chunk_size = args.chunk_size
+            for chunk_start in range(0, len(unprocessed_entries), chunk_size):
+                chunk_infos = unprocessed_entries[chunk_start : chunk_start + chunk_size]
+
+                # 1. Clear current extraction buffer
+                shutil.rmtree(str(current_buf), ignore_errors=True)
+                current_buf.mkdir(parents=True, exist_ok=True)
+
+                # 2. Extract batch into current buffer
+                with zipfile.ZipFile(str(zip_path), "r") as zf:
+                    for info in chunk_infos:
+                        zf.extract(info, path=str(current_buf))
+
+                # 3. Process each extracted clip on GPU
+                processed_data = []
+                chunk_clip_ids = []
+                for info in chunk_infos:
+                    video_file = current_buf / info.filename
+                    if not video_file.exists():
+                        continue
+
+                    clip_id = video_file.stem
+                    text = transcriptions.get(clip_id, "")
+
+                    try:
+                        result = preprocessor.extract_from_video(
+                            str(video_file),
+                            include_roi=args.include_roi,
+                            include_hand_crop=args.include_hand_crop,
+                        )
+                        if result is not None:
+                            result["id"] = clip_id
+                            result["label"] = text
+                            result["text"] = text
+                            if sent_model is not None and text:
+                                emb = sent_model.encode(text, convert_to_numpy=True, normalize_embeddings=True)
+                                result["sentence_embedding"] = torch.from_numpy(emb).half()
+                            processed_data.append(result)
+                            chunk_clip_ids.append(clip_id)
+                    except Exception as e:
+                        print(f"Error processing {clip_id}: {e}")
+
+                if processed_data:
+                    shard_name = f"shard_{shard_idx:05d}.pt"
+                    local_shard_path = local_root / shard_name
+                    torch.save(processed_data, str(local_shard_path))
+                    print(f"Saved local shard {shard_name} ({len(processed_data)} clips). Triggering background upload...")
+
+                    # 4. Trigger asynchronous background upload to Google Drive
+                    uploader.upload_async(local_shard_path, chunk_clip_ids)
+                    shard_idx += 1
+
+                # 5. Swap ping-pong buffers
+                current_buf, next_buf = next_buf, current_buf
 
     # Finalize any pending upload
     uploader.wait_for_completion()
