@@ -223,28 +223,62 @@ def run_streaming_pipeline(args):
         canonicalize_hands=True,
     )
 
+    # Verify if CUDAExecutionProvider is actually active (prevents silent CPU fallback freeze)
+    if args.backend == "rtmw" and device == "cuda":
+        active_providers = []
+        if preprocessor.rtmw_model is not None:
+            for sub_attr in ("pose_model", "det_model"):
+                sub_mod = getattr(preprocessor.rtmw_model, sub_attr, None)
+                if sub_mod is not None and hasattr(sub_mod, "session"):
+                    sess = getattr(sub_mod, "session", None)
+                    if sess is not None and hasattr(sess, "get_providers"):
+                        active_providers = sess.get_providers()
+                        break
+        print(f"[RTMW] Active ONNX Providers: {active_providers}", flush=True)
+        if active_providers and "CUDAExecutionProvider" not in active_providers:
+            print("\n" + "!" * 72, flush=True)
+            print("[CRITICAL WARNING] CUDA was requested, but ONNX Runtime failed to load CUDAExecutionProvider!", flush=True)
+            print(f"Active providers fallback: {active_providers}", flush=True)
+            print("On CPU, RTMW WholeBody runs at ~1-2 FPS (~2-3 minutes per video).", flush=True)
+            print("To fix this in Colab, install 'onnxruntime-gpu[cuda,cudnn]' and set LD_LIBRARY_PATH.", flush=True)
+            print("!" * 72 + "\n", flush=True)
+            if not getattr(args, "allow_cpu_fallback", False):
+                raise RuntimeError(
+                    "CUDAExecutionProvider failed to initialize. Aborting to prevent multi-hour silent CPU freeze. "
+                    "Use --allow-cpu-fallback if you explicitly want slow CPU processing."
+                )
+
     uploader = ShardUploaderThread(output_drive_dir, ledger_path)
     current_buf, next_buf = buf_a, buf_b
     shard_idx = len(list(output_drive_dir.glob("shard_*.pt")))
 
     if raw_video_files:
         unprocessed_videos = [p for p in raw_video_files if p.stem not in completed_clips]
-        print(f"Streaming {len(unprocessed_videos)} remaining raw video files...")
+        print(f"Streaming {len(unprocessed_videos)} remaining raw video files...", flush=True)
         chunk_size = args.chunk_size
         for chunk_start in range(0, len(unprocessed_videos), chunk_size):
             chunk_files = unprocessed_videos[chunk_start : chunk_start + chunk_size]
             processed_data = []
             chunk_clip_ids = []
-            for video_file in chunk_files:
+            t_chunk_start = time.time()
+            for v_idx, video_file in enumerate(chunk_files):
                 clip_id = video_file.stem
                 text = transcriptions.get(clip_id, "")
+                t_clip_start = time.time()
                 try:
                     result = preprocessor.extract_from_video(
                         str(video_file),
                         include_roi=args.include_roi,
                         include_hand_crop=args.include_hand_crop,
                     )
+                    clip_time = time.time() - t_clip_start
                     if result is not None:
+                        n_frames = (
+                            result["landmarks"].shape[0]
+                            if isinstance(result.get("landmarks"), (torch.Tensor, np.ndarray))
+                            else len(result.get("landmarks", []))
+                        )
+                        fps = (n_frames / clip_time) if clip_time > 0 else 0.0
                         result["id"] = clip_id
                         result["label"] = text
                         result["text"] = text
@@ -253,19 +287,32 @@ def run_streaming_pipeline(args):
                             result["sentence_embedding"] = torch.from_numpy(emb).half()
                         processed_data.append(result)
                         chunk_clip_ids.append(clip_id)
+                        text_preview = f'"{text[:32]}..."' if len(text) > 32 else (f'"{text}"' if text else "[No text]")
+                        print(
+                            f"  [{v_idx+1:3d}/{len(chunk_files):3d}] OK: {clip_id:<28} | "
+                            f"{n_frames:3d} frames | {clip_time:5.2f}s ({fps:4.1f} fps) | {text_preview}",
+                            flush=True,
+                        )
+                    else:
+                        print(f"  [{v_idx+1:3d}/{len(chunk_files):3d}] SKIPPED: {clip_id} (No valid pose extracted)", flush=True)
                 except Exception as e:
-                    print(f"Error processing {clip_id}: {e}")
+                    print(f"  [{v_idx+1:3d}/{len(chunk_files):3d}] ERROR: {clip_id}: {e}", flush=True)
 
+            chunk_elapsed = time.time() - t_chunk_start
             if processed_data:
                 shard_name = f"shard_{shard_idx:05d}.pt"
                 local_shard_path = local_root / shard_name
                 torch.save(processed_data, str(local_shard_path))
-                print(f"Saved local shard {shard_name} ({len(processed_data)} clips). Triggering background upload...")
+                print(
+                    f"\n[+] Shard Saved: {shard_name} ({len(processed_data)} clips in {chunk_elapsed:.1f}s, "
+                    f"{chunk_elapsed/max(1, len(processed_data)):.2f}s/clip). Uploading to Drive in background...",
+                    flush=True,
+                )
                 uploader.upload_async(local_shard_path, chunk_clip_ids)
                 shard_idx += 1
     else:
         for z_idx, zip_path in enumerate(zip_files):
-            print(f"\n[{z_idx+1}/{len(zip_files)}] Inspecting archive: {zip_path.name}")
+            print(f"\n[{z_idx+1}/{len(zip_files)}] Inspecting archive: {zip_path.name}", flush=True)
             try:
                 with zipfile.ZipFile(str(zip_path), "r") as zf:
                     all_entries = [info for info in zf.infolist() if not info.is_dir() and info.filename.lower().endswith(".mp4")]
@@ -273,24 +320,26 @@ def run_streaming_pipeline(args):
             except zipfile.BadZipFile as bzf:
                 split_parts = list(drive_dir.glob(f"*{zip_path.stem}*.z*")) + list(drive_dir.glob("*.z01"))
                 if split_parts:
-                    print(f"[!] Note: '{zip_path.name}' appears to be part of a split multi-part archive (.z01-.z09).")
-                    print(f"    Python standard zipfile cannot read split volumes directly. Skipping raw split archive.")
-                    print(f"    (If you have 'train_rgb_front_clips.zip', it will be processed next as the primary clips archive!)")
+                    print(f"[!] Note: '{zip_path.name}' appears to be part of a split multi-part archive (.z01-.z09).", flush=True)
+                    print(f"    Python standard zipfile cannot read split volumes directly. Skipping raw split archive.", flush=True)
+                    print(f"    (If you have 'train_rgb_front_clips.zip', it will be processed next as the primary clips archive!)", flush=True)
                 else:
-                    print(f"[!] Skipping unreadable archive '{zip_path.name}': {bzf}")
+                    print(f"[!] Skipping unreadable archive '{zip_path.name}': {bzf}", flush=True)
                 continue
             except Exception as e:
-                print(f"[!] Skipping '{zip_path.name}' due to error: {e}")
+                print(f"[!] Skipping '{zip_path.name}' due to error: {e}", flush=True)
                 continue
 
-            print(f"Archive contains {len(all_entries)} clips ({len(unprocessed_entries)} remaining).")
+            print(f"Archive contains {len(all_entries)} clips ({len(unprocessed_entries)} remaining).", flush=True)
             if not unprocessed_entries:
                 continue
 
             # Process in chunks of chunk_size
             chunk_size = args.chunk_size
-            for chunk_start in range(0, len(unprocessed_entries), chunk_size):
+            total_chunks = (len(unprocessed_entries) + chunk_size - 1) // chunk_size
+            for chunk_num, chunk_start in enumerate(range(0, len(unprocessed_entries), chunk_size)):
                 chunk_infos = unprocessed_entries[chunk_start : chunk_start + chunk_size]
+                print(f"\n--- [Archive {z_idx+1}/{len(zip_files)} | Chunk {chunk_num+1}/{total_chunks}] Extracting {len(chunk_infos)} clips ---", flush=True)
 
                 # 1. Clear current extraction buffer
                 shutil.rmtree(str(current_buf), ignore_errors=True)
@@ -304,13 +353,15 @@ def run_streaming_pipeline(args):
                 # 3. Process each extracted clip on GPU
                 processed_data = []
                 chunk_clip_ids = []
-                for info in chunk_infos:
+                t_chunk_start = time.time()
+                for c_i, info in enumerate(chunk_infos):
                     video_file = current_buf / info.filename
                     if not video_file.exists():
                         continue
 
                     clip_id = video_file.stem
                     text = transcriptions.get(clip_id, "")
+                    t_clip_start = time.time()
 
                     try:
                         result = preprocessor.extract_from_video(
@@ -318,7 +369,14 @@ def run_streaming_pipeline(args):
                             include_roi=args.include_roi,
                             include_hand_crop=args.include_hand_crop,
                         )
+                        clip_time = time.time() - t_clip_start
                         if result is not None:
+                            n_frames = (
+                                result["landmarks"].shape[0]
+                                if isinstance(result.get("landmarks"), (torch.Tensor, np.ndarray))
+                                else len(result.get("landmarks", []))
+                            )
+                            fps = (n_frames / clip_time) if clip_time > 0 else 0.0
                             result["id"] = clip_id
                             result["label"] = text
                             result["text"] = text
@@ -327,14 +385,27 @@ def run_streaming_pipeline(args):
                                 result["sentence_embedding"] = torch.from_numpy(emb).half()
                             processed_data.append(result)
                             chunk_clip_ids.append(clip_id)
+                            text_preview = f'"{text[:32]}..."' if len(text) > 32 else (f'"{text}"' if text else "[No text]")
+                            print(
+                                f"  [{c_i+1:3d}/{len(chunk_infos):3d}] OK: {clip_id:<28} | "
+                                f"{n_frames:3d} frames | {clip_time:5.2f}s ({fps:4.1f} fps) | {text_preview}",
+                                flush=True,
+                            )
+                        else:
+                            print(f"  [{c_i+1:3d}/{len(chunk_infos):3d}] SKIPPED: {clip_id} (No valid pose extracted)", flush=True)
                     except Exception as e:
-                        print(f"Error processing {clip_id}: {e}")
+                        print(f"  [{c_i+1:3d}/{len(chunk_infos):3d}] ERROR: {clip_id}: {e}", flush=True)
 
+                chunk_elapsed = time.time() - t_chunk_start
                 if processed_data:
                     shard_name = f"shard_{shard_idx:05d}.pt"
                     local_shard_path = local_root / shard_name
                     torch.save(processed_data, str(local_shard_path))
-                    print(f"Saved local shard {shard_name} ({len(processed_data)} clips). Triggering background upload...")
+                    print(
+                        f"\n[+] Shard Saved: {shard_name} ({len(processed_data)} clips in {chunk_elapsed:.1f}s, "
+                        f"{chunk_elapsed/max(1, len(processed_data)):.2f}s/clip). Uploading to Drive in background...",
+                        flush=True,
+                    )
 
                     # 4. Trigger asynchronous background upload to Google Drive
                     uploader.upload_async(local_shard_path, chunk_clip_ids)
@@ -345,7 +416,7 @@ def run_streaming_pipeline(args):
 
     # Finalize any pending upload
     uploader.wait_for_completion()
-    print("\n[SUCCESS] Double-buffered How2Sign V4 streaming preprocessing fully complete!")
+    print("\n[SUCCESS] Double-buffered How2Sign V4 streaming preprocessing fully complete!", flush=True)
 
 
 def main():
@@ -360,6 +431,7 @@ def main():
     parser.add_argument("--include-hand-crop", action="store_true", help="Include 128x128 hand crops")
     parser.add_argument("--extract-sentence-embeddings", action="store_true", default=False, help="Extract offline 384-D sentence embeddings via sentence-transformers (default: False)")
     parser.add_argument("--archive-pattern", type=str, default=None, help="Glob pattern or exact name of archive to process (e.g. '*clips*.zip' or 'train_rgb_front_clips.zip')")
+    parser.add_argument("--allow-cpu-fallback", action="store_true", default=False, help="Allow continuing on CPU if CUDA provider fails")
     args = parser.parse_args()
 
     run_streaming_pipeline(args)
