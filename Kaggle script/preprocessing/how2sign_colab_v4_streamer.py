@@ -171,7 +171,19 @@ def run_streaming_pipeline(args):
             completed_clips = set()
 
     # Discover zip archives and raw video files
-    zip_files = sorted(list(drive_dir.glob("*.zip")))
+    archive_pattern = getattr(args, "archive_pattern", None)
+    if archive_pattern:
+        zip_files = sorted(list(drive_dir.glob(archive_pattern)))
+        print(f"Using archive pattern '{archive_pattern}': matched {len(zip_files)} archives.")
+    else:
+        # Prioritize segmented sentence clips over raw video archives
+        all_zips = list(drive_dir.glob("*.zip"))
+        # Sort so that 'clips' or 'front' come first, and raw videos come last
+        zip_files = sorted(
+            all_zips,
+            key=lambda p: (0 if "clip" in p.name.lower() or "front" in p.name.lower() else (2 if "raw" in p.name.lower() else 1), p.name)
+        )
+
     raw_video_files = []
     if not zip_files:
         raw_video_files = sorted([p for p in drive_dir.rglob("*") if p.suffix.lower() in [".mp4", ".mkv", ".avi", ".mov"] and not p.name.startswith(".")])
@@ -180,7 +192,9 @@ def run_streaming_pipeline(args):
             return
         print(f"Found {len(raw_video_files)} raw video files to stream.")
     else:
-        print(f"Found {len(zip_files)} zip archives to stream.")
+        print(f"Found {len(zip_files)} zip archives to stream:")
+        for z in zip_files:
+            print(f"  - {z.name}")
 
     # Load transcriptions from all CSV files found
     transcriptions = {}
@@ -252,9 +266,22 @@ def run_streaming_pipeline(args):
     else:
         for z_idx, zip_path in enumerate(zip_files):
             print(f"\n[{z_idx+1}/{len(zip_files)}] Inspecting archive: {zip_path.name}")
-            with zipfile.ZipFile(str(zip_path), "r") as zf:
-                all_entries = [info for info in zf.infolist() if not info.is_dir() and info.filename.lower().endswith(".mp4")]
-                unprocessed_entries = [info for info in all_entries if Path(info.filename).stem not in completed_clips]
+            try:
+                with zipfile.ZipFile(str(zip_path), "r") as zf:
+                    all_entries = [info for info in zf.infolist() if not info.is_dir() and info.filename.lower().endswith(".mp4")]
+                    unprocessed_entries = [info for info in all_entries if Path(info.filename).stem not in completed_clips]
+            except zipfile.BadZipFile as bzf:
+                split_parts = list(drive_dir.glob(f"*{zip_path.stem}*.z*")) + list(drive_dir.glob("*.z01"))
+                if split_parts:
+                    print(f"[!] Note: '{zip_path.name}' appears to be part of a split multi-part archive (.z01-.z09).")
+                    print(f"    Python standard zipfile cannot read split volumes directly. Skipping raw split archive.")
+                    print(f"    (If you have 'train_rgb_front_clips.zip', it will be processed next as the primary clips archive!)")
+                else:
+                    print(f"[!] Skipping unreadable archive '{zip_path.name}': {bzf}")
+                continue
+            except Exception as e:
+                print(f"[!] Skipping '{zip_path.name}' due to error: {e}")
+                continue
 
             print(f"Archive contains {len(all_entries)} clips ({len(unprocessed_entries)} remaining).")
             if not unprocessed_entries:
@@ -332,6 +359,7 @@ def main():
     parser.add_argument("--include-roi", action="store_true", help="Include 256x256 upper-body ROI crops")
     parser.add_argument("--include-hand-crop", action="store_true", help="Include 128x128 hand crops")
     parser.add_argument("--extract-sentence-embeddings", action="store_true", default=False, help="Extract offline 384-D sentence embeddings via sentence-transformers (default: False)")
+    parser.add_argument("--archive-pattern", type=str, default=None, help="Glob pattern or exact name of archive to process (e.g. '*clips*.zip' or 'train_rgb_front_clips.zip')")
     args = parser.parse_args()
 
     run_streaming_pipeline(args)
